@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -9,6 +9,8 @@ namespace EasyCPDLC
 {
     public class FSUIPCData
     {
+        public static string LastError { get; private set; } = string.Empty;
+
         public FsAltitude altitude;
         public int groundspeed;
         public FsLatLonPoint position;
@@ -27,15 +29,24 @@ namespace EasyCPDLC
         {
             try
             {
-                FSUIPCConnection.Open();
+                LastError = string.Empty;
+
+                if (!FSUIPCConnection.IsOpen)
+                {
+                    FSUIPCConnection.Open();
+                }
+
                 if (FSUIPCConnection.IsOpen)
                 {
                     return true;
                 }
+
+                LastError = "FSUIPC connection did not open.";
                 return false;
             }
-            catch
+            catch (Exception ex)
             {
+                LastError = ex.Message;
                 return false;
             }
             
@@ -61,7 +72,17 @@ namespace EasyCPDLC
         {
             if (FSUIPCConnection.IsOpen)
             {
-                FSUIPCConnection.Process();
+                try
+                {
+                    LastError = string.Empty;
+                    FSUIPCConnection.Process();
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    throw;
+                }
+
                 latitude = new FsLatitude(latOffset.Value);
                 longitude = new FsLongitude(lonOffset.Value);
                 position = new FsLatLonPoint(latitude, longitude);
@@ -72,6 +93,7 @@ namespace EasyCPDLC
             }
             else
             {
+                LastError = "FSUIPC connection is not open.";
                 throw new FSUIPCException(FSUIPCError.FSUIPC_ERR_NOTOPEN, "Can't Refresh, Connection isn't open");
             }
 

@@ -1,0 +1,12 @@
+Clean manual fix for UITextBox.cs:
+
+Find the CanFlash property and add these attributes directly above it:
+
+[System.ComponentModel.Browsable(false)]
+[System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+public bool CanFlash { get; set; }
+
+If CanFlash should appear in the Designer property grid, use:
+[System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Visible)]
+
+The included Directory.Build.props already suppresses WFO1000 globally, so this manual edit is optional.

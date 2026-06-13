@@ -1,4 +1,4 @@
-﻿/*  EASYCPDLC: CPDLC Client for the VATSIM Network
+/*  EASYCPDLC: CPDLC Client for the VATSIM Network
     Copyright (C) 2021 Joshua Seagrave joshseagrave@googlemail.com
 
     This program is free software: you can redistribute it and/or modify
@@ -63,6 +63,9 @@ namespace EasyCPDLC
         private readonly Font textFontBold;
 
         private bool _needsLogon;
+
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public bool NeedsLogon
         {
             get
@@ -92,6 +95,11 @@ namespace EasyCPDLC
         public RequestForm(MainForm parent)
         {
             InitializeComponent();
+            requestFrame.AssetFileName = DcduStyleManager.AssetFile("RequestWindowFrame.png");
+            ApplyTransparentScreenOverlays();
+            ApplyWindowLayout();
+            DcduWindowHelper.ApplyDeviceWindow(this, requestFrame, 22);
+            InitialiseHotspots();
             this.MainForm = parent;
             this.TopMost = parent.TopMost;
             if (this.MainForm.CurrentATCUnit != null)
@@ -106,7 +114,7 @@ namespace EasyCPDLC
             userVATSIMData = parent.userVATSIMData;
             controlBackColor = parent.controlBackColor;
             controlFrontColor = parent.controlFrontColor;
-            controlFontBold = new Font(MainForm.fonts.Families[1], 12.5F, FontStyle.Bold);
+            controlFontBold = parent.controlFontBold ?? new Font("Consolas", 12.5F, FontStyle.Bold);
             textFont = parent.textFont;
             textFontBold = parent.textFontBold;
 
@@ -117,27 +125,191 @@ namespace EasyCPDLC
 
         }
 
+
+
+        private static Rectangle ScaleRect(Rectangle source, Size fromSize, Size toSize)
+        {
+            int x = (int)Math.Round(source.X * (toSize.Width / (double)fromSize.Width));
+            int y = (int)Math.Round(source.Y * (toSize.Height / (double)fromSize.Height));
+            int width = (int)Math.Round(source.Width * (toSize.Width / (double)fromSize.Width));
+            int height = (int)Math.Round(source.Height * (toSize.Height / (double)fromSize.Height));
+            return new Rectangle(x, y, width, height);
+        }
+
+        private void ApplyWindowLayout()
+        {
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            Size targetSize = isBoeing ? new Size(800, 252) : new Size(750, 250);
+            ClientSize = targetSize;
+            Size = targetSize;
+            MinimumSize = targetSize;
+            MaximumSize = targetSize;
+
+            requestFrame.Location = new Point(0, 0);
+            requestFrame.Size = targetSize;
+
+            if (isBoeing)
+            {
+                // Scale the Boeing request/ATC hitboxes and screen layout to the correct 800x252 form size.
+                Size baseSize = new Size(1120, 353);
+                pdcButton.Bounds = ScaleRect(new Rectangle(61, 69, 104, 48), baseSize, targetSize);
+                logonButton.Bounds = ScaleRect(new Rectangle(61, 129, 104, 48), baseSize, targetSize);
+                requestButton.Bounds = ScaleRect(new Rectangle(61, 189, 104, 48), baseSize, targetSize);
+                reportButton.Bounds = ScaleRect(new Rectangle(61, 249, 104, 48), baseSize, targetSize);
+                exitButton.Bounds = ScaleRect(new Rectangle(960, 69, 98, 48), baseSize, targetSize);
+                clearButton.Bounds = ScaleRect(new Rectangle(960, 189, 98, 48), baseSize, targetSize);
+                sendButton.Bounds = ScaleRect(new Rectangle(960, 249, 98, 48), baseSize, targetSize);
+
+                requestScreen.Bounds = ScaleRect(new Rectangle(236, 38, 660, 283), baseSize, targetSize);
+                messageFormatPanel.Bounds = ScaleRect(new Rectangle(10, 18, 638, 252), new Size(660, 283), requestScreen.Size);
+                messageFormatPanel.Padding = new Padding(8, 0, 0, 30);
+                radioContainer.Location = new Point(44, 228);
+                radioContainer.Size = new Size(110, 20);
+                requestContainer.Location = new Point(684, 228);
+                requestContainer.Size = new Size(110, 20);
+            }
+            else
+            {
+                pdcButton.Bounds = new Rectangle(17, 50, 84, 32);
+                logonButton.Bounds = new Rectangle(17, 88, 84, 32);
+                requestButton.Bounds = new Rectangle(17, 125, 84, 32);
+                reportButton.Bounds = new Rectangle(17, 162, 84, 32);
+                exitButton.Bounds = new Rectangle(646, 48, 81, 31);
+                clearButton.Bounds = new Rectangle(647, 127, 80, 32);
+                sendButton.Bounds = new Rectangle(646, 164, 81, 31);
+                requestScreen.Bounds = new Rectangle(112, 29, 532, 177);
+                messageFormatPanel.Bounds = new Rectangle(10, 10, 512, 155);
+                messageFormatPanel.Padding = new Padding(6, 0, 0, 18);
+                radioContainer.Location = new Point(18, 224);
+                radioContainer.Size = new Size(105, 18);
+                requestContainer.Location = new Point(628, 224);
+                requestContainer.Size = new Size(105, 18);
+            }
+
+            requestFrame.Invalidate();
+        }
+
+        private void InitialiseHotspots()
+        {
+            // The hotspot controls are NOT added to requestFrame.Controls.
+            // They exist only as bounds/event containers so they cannot punch transparent holes through the bitmap.
+        }
+
+        private Control GetAssetHotspotAt(Point location)
+        {
+            Control[] hotspots = { pdcButton, logonButton, requestButton, reportButton, clearButton, sendButton, exitButton };
+            foreach (Control hotspot in hotspots)
+            {
+                if (hotspot != null && hotspot.Enabled && hotspot.Bounds.Contains(location))
+                {
+                    return hotspot;
+                }
+            }
+            return null;
+        }
+
+        private void AssetFrame_MouseMove(object sender, MouseEventArgs e)
+        {
+            Control hit = GetAssetHotspotAt(e.Location);
+            requestFrame.HighlightRectangle = Rectangle.Empty;
+            requestFrame.Cursor = hit == null ? Cursors.Default : Cursors.Hand;
+        }
+
+        private void AssetFrame_MouseLeave(object sender, EventArgs e)
+        {
+            requestFrame.HighlightPressed = false;
+            requestFrame.HighlightRectangle = Rectangle.Empty;
+            requestFrame.Cursor = Cursors.Default;
+        }
+
+        private void AssetFrame_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            Control hit = GetAssetHotspotAt(e.Location);
+            if (hit != null)
+            {
+                requestFrame.HighlightRectangle = Rectangle.Empty;
+                requestFrame.HighlightPressed = false;
+                return;
+            }
+            WindowDrag(sender, e);
+        }
+
+        private void AssetFrame_MouseUp(object sender, MouseEventArgs e)
+        {
+            requestFrame.HighlightPressed = false;
+        }
+
+        private void AssetFrame_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (GetAssetHotspotAt(e.Location) is DcduHotspotButton button)
+            {
+                button.PerformClick();
+            }
+        }
+
+        private void ApplyTransparentScreenOverlays()
+        {
+            // Same visual behavior as the main DCDU: do not paint a separate dark block over the bitmap screen.
+            messageFormatPanel.BackColor = Color.Transparent;
+            radioContainer.BackColor = Color.Transparent;
+            requestContainer.BackColor = Color.Transparent;
+        }
+
         private ToolStripMenuItem CreateMenuItem(string name)
         {
             ToolStripMenuItem _temp = new(name)
             {
-                BackColor = Color.FromArgb(28, 28, 28),
-                ForeColor = controlFrontColor,
-                Font = controlFontBold
+                AutoSize = false,
+                BackColor = Color.FromArgb(5, 9, 15),
+                ForeColor = DcduTheme.CyanWhite,
+                Font = controlFontBold,
+                Size = new Size(142, 34),
+                Padding = new Padding(8, 0, 8, 0),
+                TextAlign = ContentAlignment.MiddleLeft
             };
-            //_temp.AutoSize = false;
-            //_temp.Size = new Size(104, 37);
 
             return _temp;
+        }
+
+        private void StyleDcduMenu(ContextMenuStrip menu)
+        {
+            menu.BackColor = Color.FromArgb(5, 9, 15);
+            menu.ForeColor = DcduTheme.CyanWhite;
+            menu.Font = controlFontBold;
+            menu.ShowImageMargin = false;
+            menu.ShowCheckMargin = false;
+            menu.RenderMode = ToolStripRenderMode.Professional;
+            menu.Renderer = new DcduMenuRenderer();
+            menu.Padding = new Padding(2);
+        }
+
+        private void ShowMenuAtHotspot(ContextMenuStrip menu, Control hotspot)
+        {
+            if (menu == null || hotspot == null) return;
+
+            Size preferred = menu.GetPreferredSize(Size.Empty);
+            int x = hotspot.Left;
+            int y = hotspot.Bottom + 5;
+
+            if (x + preferred.Width > requestFrame.Width)
+            {
+                x = Math.Max(4, hotspot.Right - preferred.Width);
+            }
+
+            if (y + preferred.Height > requestFrame.Height)
+            {
+                y = Math.Max(4, hotspot.Top - preferred.Height - 5);
+            }
+
+            menu.Show(requestFrame, new Point(x, y));
         }
 
         private void InitialisePopupMenu()
         {
 
-            popupMenu.BackColor = controlBackColor;
-            popupMenu.ForeColor = controlFrontColor;
-            popupMenu.Font = controlFontBold;
-            popupMenu.ShowImageMargin = false;
+            StyleDcduMenu(popupMenu);
 
             directRequestMenu = CreateMenuItem("DIRECT");
             directRequestMenu.Click += DirectRequestClick;
@@ -148,10 +320,7 @@ namespace EasyCPDLC
             whenCanWeRequestMenu = CreateMenuItem("WHEN CAN WE?");
             whenCanWeRequestMenu.Click += WhenCanWeRequestClick;
 
-            clxMenu.BackColor = controlBackColor;
-            clxMenu.ForeColor = controlFrontColor;
-            clxMenu.Font = controlFontBold;
-            clxMenu.ShowImageMargin = false;
+            StyleDcduMenu(clxMenu);
 
             depClxMenu = CreateMenuItem("DEP CLX");
             depClxMenu.Click += DepClxClick;
@@ -224,7 +393,7 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("REQUEST DIRECT TO "), 1, 1);
             messageFormatPanel.Controls.Add(CreateAutoFillTextBox("", 7, MainForm.reportFixes), 2, 1);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1 , 2);
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, 2);
             messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, 2);
 
             AddRemarksField(messageFormatPanel);
@@ -269,8 +438,8 @@ namespace EasyCPDLC
             wcwRadioButton.Checked = true;
 
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1 , 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2 , 0);
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("WHEN CAN WE EXPECT:"), 1, 1);
             messageFormatPanel.Controls.Add(CreateCheckBox("HIGHER LEVEL?", "wcwParam"), 1, 2);
             messageFormatPanel.Controls.Add(CreateCheckBox("LOWER LEVEL?", "wcwParam"), 2, 2);
@@ -287,10 +456,11 @@ namespace EasyCPDLC
 
         private void PdcButton_Click(object sender, EventArgs e)
         {
+            clxMenu.Items.Clear();
             clxMenu.Items.Add(depClxMenu);
             clxMenu.Items.Add(ocnClxMenu);
 
-            clxMenu.Show(pdcButton, new Point(0, pdcButton.Height));
+            ShowMenuAtHotspot(clxMenu, pdcButton);
         }
 
         private void ReportButton_Click(object sender, EventArgs e)
@@ -314,7 +484,7 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateTextBox(MainForm.UseFSUIPC ? (Math.Round(MainForm.fsuipc.altitude.Feet / 1000) * 10).ToString() : userVATSIMData.flight_plan.altitude[..3], 3), 4, 2);
             messageFormatPanel.Controls.Add(CreateTemplate("NEXT: "), 1, 3);
             messageFormatPanel.Controls.Add(fix2, 2, 3);
-            messageFormatPanel.Controls.Add(CreateTemplate("AT: "), 3 , 3);
+            messageFormatPanel.Controls.Add(CreateTemplate("AT: "), 3, 3);
             messageFormatPanel.Controls.Add(CreateTextBox("", 4), 4, 3);
             messageFormatPanel.Controls.Add(CreateTemplate("THEN: "), 1, 4);
             messageFormatPanel.Controls.Add(fix3, 2, 4);
@@ -353,7 +523,7 @@ namespace EasyCPDLC
         {
             messageFormatPanel.Controls.Clear();
             messageFormatPanel.Controls.Add(CreateTemplate("ATC UNIT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(NeedsLogon ? "" : MainForm.CurrentATCUnit, 4),2 , 0);
+            messageFormatPanel.Controls.Add(CreateTextBox(NeedsLogon ? "" : MainForm.CurrentATCUnit, 4), 2, 0);
 
             logonRadioButton.Checked = true;
         }
@@ -368,7 +538,7 @@ namespace EasyCPDLC
             popupMenu.Items.Add(levelRequestMenu);
             popupMenu.Items.Add(speedRequestMenu);
             popupMenu.Items.Add(whenCanWeRequestMenu);
-            popupMenu.Show(requestButton, new Point(0, requestButton.Height));
+            ShowMenuAtHotspot(popupMenu, requestButton);
         }
 
         private UITextBox CreateAutoFillTextBox(string _text, int _maxLength, string[] _source)
@@ -391,13 +561,13 @@ namespace EasyCPDLC
         {
             AccessibleLabel _temp = new(controlFrontColor)
             {
-                BackColor = controlBackColor,
+                BackColor = Color.Transparent,
                 ForeColor = controlFrontColor,
                 Font = textFont,
                 AutoSize = true,
                 Text = _text,
                 Top = 10,
-                Height = 30,
+                Height = 20,
 
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(0, 10, 0, 0),
@@ -413,13 +583,13 @@ namespace EasyCPDLC
         {
             AccessibleLabel _temp = new(controlFrontColor)
             {
-                BackColor = controlBackColor,
+                BackColor = Color.Transparent,
                 ForeColor = controlFrontColor,
                 Font = textFont,
                 AutoSize = true,
                 Text = _text,
                 Top = 10,
-                Height = 30,
+                Height = 20,
 
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(0, 10, 0, 0),
@@ -474,10 +644,10 @@ namespace EasyCPDLC
         }
 
         private UICheckBox CreateCheckBox(string _text, string _group)
-        {         
+        {
             UICheckBox _temp = new(_group)
             {
-                BackColor = controlBackColor,
+                BackColor = Color.Transparent,
                 ForeColor = controlFrontColor,
                 Font = textFont,
                 Text = _text,
@@ -511,15 +681,17 @@ namespace EasyCPDLC
                 ForeColor = controlFrontColor,
                 Font = textFontBold,
                 BorderStyle = BorderStyle.None,
-                Width = messageFormatPanel.Width - 50,
+                Width = Math.Max(520, messageFormatPanel.Width - 44),
                 Multiline = true,
                 WordWrap = true,
+                ScrollBars = ScrollBars.Vertical,
+                AcceptsReturn = true,
+                AcceptsTab = false,
                 Text = _text,
-                MaxLength = 99,
-                Height = 30,
+                MaxLength = 255,
+                Height = 64,
                 TabIndex = 0
             };
-            _temp.TextChanged += ExpandMultiLineBox;
 
             _temp.CharacterCasing = CharacterCasing.Upper;
             _temp.Padding = new Padding(3, 0, 3, -10);
@@ -556,7 +728,7 @@ namespace EasyCPDLC
 
                     case "ocnClxRadioButton":
 
-                        foreach (UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline = false))
+                        foreach (UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline == false))
                         {
                             if (_tb.Text.Length < 1)
                             {
@@ -577,7 +749,7 @@ namespace EasyCPDLC
 
                     case "depClxRadioButton":
 
-                        foreach(UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline = false))
+                        foreach (UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline == false))
                         {
                             if (_tb.Text.Length < 1)
                             {
@@ -663,7 +835,7 @@ namespace EasyCPDLC
 
                 }
 
-                if(_messageType == "CPDLC") { MainForm.messageOutCounter += 1; }
+                if (_messageType == "CPDLC") { MainForm.messageOutCounter += 1; }
                 _ = Task.Run(() => MainForm.SendCPDLCMessage(_recipient, _messageType, _formatMessage.Trim()));
 
                 this.Close();
@@ -825,17 +997,15 @@ namespace EasyCPDLC
 
         private void ExpandMultiLineBox(object sender, EventArgs e)
         {
-            TextBox _sender = (TextBox)sender;
-            // amount of padding to add
-            const int padding = 3;
-            // get number of lines (first line is 0, so add 1)
-            int numLines = _sender.GetLineFromCharIndex(_sender.TextLength) + 1;
-            // get border thickness
-            int border = _sender.Height - _sender.ClientSize.Height;
-            // set height (height of one line * number of lines + spacing)
-            _sender.Height = _sender.Font.Height * numLines + padding + border;
-
-            //ScrollToBottom(messageFormatPanel);
+            // Fixed-height remarks boxes use their own vertical scrollbar.
+            if (sender is TextBox textBox)
+            {
+                textBox.ScrollBars = ScrollBars.Vertical;
+                if (textBox.Height != 64)
+                {
+                    textBox.Height = 64;
+                }
+            }
         }
 
         protected override void WndProc(ref Message m)
@@ -863,8 +1033,10 @@ namespace EasyCPDLC
             if (Properties.Settings.Default.CPDLCWindowLocation != new Point(0, 0))
             {
                 Location = Properties.Settings.Default.CPDLCWindowLocation;
-                Size = Properties.Settings.Default.CPDLCWindowSize;
             }
+
+            ApplyWindowLayout();
+            DcduWindowHelper.ApplyDeviceWindow(this, requestFrame, 22);
         }
 
         private void RequestForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -872,6 +1044,11 @@ namespace EasyCPDLC
             Properties.Settings.Default.CPDLCWindowLocation = Location;
             Properties.Settings.Default.CPDLCWindowSize = Size;
             Properties.Settings.Default.Save();
+        }
+
+        private void messageFormatPanel_Paint(object sender, PaintEventArgs e)
+        {
+
         }
     }
 }

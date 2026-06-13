@@ -24,7 +24,6 @@ using System.Drawing.Text;
 using System.IO;
 using System.Linq;
 using System.Media;
-using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using Newtonsoft.Json;
@@ -49,6 +48,9 @@ namespace EasyCPDLC
         private static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool ReleaseCapture();
+        private const int ScrollBarBoth = 3;
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
 
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
@@ -76,6 +78,8 @@ namespace EasyCPDLC
         private RequestForm rForm;
         private TelexForm tForm;
         private SettingsForm sForm;
+
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
 
         public bool StayOnTop
         {
@@ -154,6 +158,9 @@ namespace EasyCPDLC
 
         public int messageOutCounter = 1;
         private bool _connected;
+
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public bool Connected
         {
             get
@@ -163,23 +170,35 @@ namespace EasyCPDLC
             set
             {
                 _connected = value;
-                if (_connected)
+
+                if (retrieveButton != null)
                 {
-                    retrieveButton.Text = "DISCONNECT";
-                    atcButton.Enabled = true;
-                    telexButton.Enabled = true;
+                    retrieveButton.Text = _connected ? "DISC" : "CONN";
                 }
-                else
+
+                if (statusValueLabel != null)
                 {
-                    retrieveButton.Text = "CONNECT";
-                    atcButton.Enabled = false;
-                    telexButton.Enabled = false;
+                    statusValueLabel.Text = _connected ? "CONNECTED" : "STANDBY";
+                    statusValueLabel.ForeColor = _connected ? DcduTheme.Green : DcduTheme.Amber;
+                }
+
+                if (atcButton != null)
+                {
+                    atcButton.Enabled = _connected;
+                }
+
+                if (telexButton != null)
+                {
+                    telexButton.Enabled = _connected;
                 }
             }
         }
 
         public string pendingLogon = null;
         private string _currentATCUnit;
+
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public string CurrentATCUnit
         {
             get
@@ -189,24 +208,30 @@ namespace EasyCPDLC
             set
             {
                 _currentATCUnit = value;
-                try
+
+                if (_currentATCUnit is null)
                 {
-                    if (_currentATCUnit is null)
+                    if (atcUnitDisplay != null)
                     {
                         atcUnitDisplay.Text = "----";
-                        rForm.NeedsLogon = true;
-
                     }
-                    else
-                    {
-                        atcUnitDisplay.Text = _currentATCUnit;
-                        rForm.NeedsLogon = false;
 
+                    if (rForm != null)
+                    {
+                        rForm.NeedsLogon = true;
                     }
                 }
-                catch (NullReferenceException)
+                else
                 {
+                    if (atcUnitDisplay != null)
+                    {
+                        atcUnitDisplay.Text = _currentATCUnit;
+                    }
 
+                    if (rForm != null)
+                    {
+                        rForm.NeedsLogon = false;
+                    }
                 }
             }
         }
@@ -216,7 +241,7 @@ namespace EasyCPDLC
             IntPtr pdv, [System.Runtime.InteropServices.In] ref uint pcFonts);
 
 
-        public byte[][] fontResources = {Properties.Resources.B612Mono_Bold, Properties.Resources.B612Mono_Regular, Properties.Resources.Oxygen_Regular, Properties.Resources.Oxygen_Bold };
+        public byte[][] fontResources = { Properties.Resources.B612Mono_Bold, Properties.Resources.B612Mono_Regular, Properties.Resources.Oxygen_Regular, Properties.Resources.Oxygen_Bold };
         public static PrivateFontCollection fonts = new PrivateFontCollection();
 
         public Font controlFont;// = new("Oxygen", 10.0f, FontStyle.Regular);
@@ -224,8 +249,8 @@ namespace EasyCPDLC
         public Font textFont;// = new("B612 Mono", 10.0f, FontStyle.Regular);
         public Font textFontBold;// = new("B612 Mono", 12.5f, FontStyle.Bold);
         public Font dataEntryFont;// = new("B612 Mono", 11.0f, FontStyle.Regular);
-        public Color controlBackColor = Color.FromArgb(5, 5, 5);
-        public Color controlFrontColor = SystemColors.ControlLight;
+        public Color controlBackColor = DcduTheme.Screen;
+        public Color controlFrontColor = DcduTheme.CyanWhite;
 
         private readonly ContextMenuStrip popupMenu = new();
         ToolStripMenuItem deleteAllMenu;
@@ -244,7 +269,8 @@ namespace EasyCPDLC
 
         private CPDLCMessage previewMessage;
 
-        private readonly SoundPlayer player = new();
+        private readonly SoundPlayer startupPlayer = new();
+        private readonly SoundPlayer messagePlayer = new();
 
         private static readonly Regex hoppieParse = new(@"{(.*?)}");
         private static readonly Regex cpdlcHeaderParse = new(@"(\/\s*)\w*");
@@ -253,6 +279,7 @@ namespace EasyCPDLC
         private static readonly TimeSpan updateTimer = TimeSpan.FromSeconds(20);
         private CancellationTokenSource requestCancellationTokenSource;
         private CancellationToken requestCancellationToken;
+        private const string HoppieConnectUrl = "https://www.hoppie.nl/acars/system/connect.html";
 
         public MainForm()
         {
@@ -262,58 +289,454 @@ namespace EasyCPDLC
             LogManager.Configuration = config;
             Logger.Info("Logging initialised, beginning setup");
 
-            foreach(byte[] fontData in fontResources)
-            {
-                IntPtr fontPtr = System.Runtime.InteropServices.Marshal.AllocCoTaskMem(fontData.Length);
-                System.Runtime.InteropServices.Marshal.Copy(fontData, 0, fontPtr, fontData.Length);
-                uint dummy = 0;
-                fonts.AddMemoryFont(fontPtr, fontData.Length);
-                AddFontMemResourceEx(fontPtr, (uint)fontData.Length, IntPtr.Zero, ref dummy);
-                System.Runtime.InteropServices.Marshal.FreeCoTaskMem(fontPtr);
-            }
+            textFont = new Font("Consolas", 10.5f, FontStyle.Regular);
+            textFontBold = new Font("Consolas", 11.5f, FontStyle.Bold);
+            controlFont = new Font("Segoe UI", 10.0f, FontStyle.Regular);
+            controlFontBold = new Font("Segoe UI", 10.0f, FontStyle.Bold);
+            dataEntryFont = new Font("Consolas", 13.0f, FontStyle.Bold);
 
-            textFont = new(fonts.Families[0], 10.0f, FontStyle.Regular);
-            textFontBold = new(fonts.Families[0], 12.5f, FontStyle.Bold);
-            controlFont = new(fonts.Families[1], 10.0f, FontStyle.Regular);
-            controlFontBold = new(fonts.Families[1], 10.0f, FontStyle.Bold);
-            dataEntryFont = new(fonts.Families[0], 11.0f, FontStyle.Regular);
+            AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
 
-        AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
-
-            string _customSoundFile = System.Windows.Forms.Application.StartupPath + @"\Sounds\Notification.wav";
-            if(File.Exists(_customSoundFile))
+            ConfigureSoundPlayers();
+            if (!string.IsNullOrWhiteSpace(startupPlayer.SoundLocation) || startupPlayer.Stream != null)
             {
-                player.SoundLocation = _customSoundFile;
+                startupPlayer.Play();
             }
-            else
-            {
-                player.Stream = Properties.Resources.notification;
-            }
-            player.Play();
             InitializeComponent();
+            ApplyDisplayStyle();
             this.TopMost = StayOnTop;
             this.FormBorderStyle = FormBorderStyle.None;
             this.DoubleBuffered = true;
             this.SetStyle(ControlStyles.ResizeRedraw, true);
+            ApplyMainWindowBounds(DcduStyleManager.IsBoeing);
             CurrentATCUnit = null;
-            ServicePointManager.Expect100Continue = true;
-            ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+
+        }
+
+
+        public void ApplyDisplayStyle()
+        {
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            ApplyMainWindowBounds(isBoeing);
+            if (dcduFrame != null)
+            {
+                dcduFrame.AssetFileName = DcduStyleManager.AssetFile("DCDU_Main_V15.png");
+                dcduFrame.HighlightRectangle = Rectangle.Empty;
+                dcduFrame.HighlightPressed = false;
+                dcduFrame.Invalidate();
+            }
+
+            ApplyMainScreenLayout(isBoeing);
+            ApplyMainButtonLayout(isBoeing);
+            ConfigureInboundMessageSound();
+            Invalidate(true);
+        }
+
+        private void ApplyMainWindowBounds(bool isBoeing)
+        {
+            Size targetSize = isBoeing ? new Size(654, 385) : new Size(700, 311);
+
+            if (ClientSize != targetSize)
+            {
+                ClientSize = targetSize;
+            }
+
+            Size = targetSize;
+            MinimumSize = targetSize;
+            MaximumSize = targetSize;
+
+            if (dcduFrame != null)
+            {
+                dcduFrame.Location = new Point(0, 0);
+                dcduFrame.Size = targetSize;
+                dcduFrame.Invalidate();
+            }
+
+            DcduWindowHelper.ApplyDeviceWindow(this, dcduFrame, 22);
+        }
+
+        private void ApplyMainScreenLayout(bool isBoeing)
+        {
+            if (isBoeing)
+            {
+                // Boeing main layout scaled for the new 654x385 main window asset.
+                if (outputTable.ColumnStyles.Count >= 3)
+                {
+                    outputTable.ColumnStyles[0].SizeType = SizeType.Absolute;
+                    outputTable.ColumnStyles[0].Width = 74F;
+                    outputTable.ColumnStyles[1].SizeType = SizeType.Percent;
+                    outputTable.ColumnStyles[1].Width = 100F;
+                    outputTable.ColumnStyles[2].SizeType = SizeType.Absolute;
+                    outputTable.ColumnStyles[2].Width = 44F;
+                }
+                screenPanel.Location = new Point(76, 22);
+                screenPanel.Size = new Size(490, 216);
+                screenPanel.BackColor = Color.Transparent;
+                screenPanel.DrawScreenBackground = false;
+
+                titleLabel.Location = new Point(12, 10);
+                clockLabel.Location = new Point(396, 6);
+                statusCaptionLabel.Location = new Point(12, 34);
+                statusValueLabel.Location = new Point(82, 34);
+                atcUnitLabel.Location = new Point(270, 34);
+                atcUnitDisplay.Location = new Point(412, 34);
+                messageHeaderLabel.Location = new Point(12, 58);
+
+                outputTable.Location = new Point(16, 80);
+                outputTable.Size = new Size(454, 105);
+                outputTable.Padding = new Padding(0, 4, 4, 4);
+
+                messageFormatPanel.Location = new Point(16, 80);
+                messageFormatPanel.Size = new Size(454, 105);
+
+                SendingProgress.Location = new Point(16, 190);
+                SendingProgress.Size = new Size(454, 10);
+
+                outputScrollBar.Location = new Point(470, 80);
+                outputScrollBar.Size = new Size(12, 105);
+                outputScrollBar.Target = outputTable;
+                outputScrollBar.Invalidate();
+                return;
+            }
+
+            // Airbus layout retuned to the new 700x311 frame artwork.
+            if (outputTable.ColumnStyles.Count >= 3)
+            {
+                outputTable.ColumnStyles[0].SizeType = SizeType.Absolute;
+                outputTable.ColumnStyles[0].Width = 68F;
+                outputTable.ColumnStyles[1].SizeType = SizeType.Percent;
+                outputTable.ColumnStyles[1].Width = 100F;
+                outputTable.ColumnStyles[2].SizeType = SizeType.Absolute;
+                outputTable.ColumnStyles[2].Width = 40F;
+            }
+            screenPanel.Location = new Point(103, 34);
+            screenPanel.Size = new Size(493, 232);
+            screenPanel.BackColor = Color.Transparent;
+            screenPanel.DrawScreenBackground = false;
+
+            titleLabel.Location = new Point(8, 10);
+            clockLabel.Location = new Point(386, 8);
+            statusCaptionLabel.Location = new Point(8, 38);
+            statusValueLabel.Location = new Point(84, 38);
+            atcUnitLabel.Location = new Point(238, 38);
+            atcUnitDisplay.Location = new Point(397, 38);
+            messageHeaderLabel.Location = new Point(8, 66);
+
+            outputTable.Location = new Point(8, 94);
+            outputTable.Size = new Size(466, 106);
+            outputTable.Padding = new Padding(0, 4, 12, 4);
+
+            messageFormatPanel.Location = new Point(8, 94);
+            messageFormatPanel.Size = new Size(466, 106);
+
+            SendingProgress.Location = new Point(8, 206);
+            SendingProgress.Size = new Size(466, 8);
+
+            outputScrollBar.Location = new Point(476, 94);
+            outputScrollBar.Size = new Size(8, 106);
+            outputScrollBar.Target = outputTable;
+            outputScrollBar.Invalidate();
+        }
+
+        private void ApplyMainButtonLayout(bool isBoeing)
+        {
+            if (isBoeing)
+            {
+                // Hitboxes tuned for the compact 654x385 Boeing main asset.
+                retrieveButton.Location = new Point(24, 266);
+                retrieveButton.Size = new Size(40, 28);
+
+                telexButton.Location = new Point(67, 266);
+                telexButton.Size = new Size(40, 28);
+
+                atcButton.Location = new Point(110, 266);
+                atcButton.Size = new Size(40, 28);
+
+                settingsButton.Location = new Point(153, 266);
+                settingsButton.Size = new Size(45, 28);
+
+                helpButton.Location = new Point(541, 266);
+                helpButton.Size = new Size(43, 28);
+
+                exitButton.Location = new Point(587, 266);
+                exitButton.Size = new Size(46, 28);
+                return;
+            }
+
+            // Airbus hitboxes aligned to the provided 700x311 DCDU_Main_V15.png.
+            retrieveButton.Location = new Point(26, 57);
+            retrieveButton.Size = new Size(47, 33);
+
+            telexButton.Location = new Point(26, 101);
+            telexButton.Size = new Size(48, 31);
+
+            atcButton.Location = new Point(25, 143);
+            atcButton.Size = new Size(48, 32);
+
+            settingsButton.Location = new Point(26, 185);
+            settingsButton.Size = new Size(47, 32);
+
+            helpButton.Location = new Point(623, 74);
+            helpButton.Size = new Size(47, 31);
+
+            exitButton.Location = new Point(623, 116);
+            exitButton.Size = new Size(47, 31);
+        }
+
+        private void ConfigureSoundPlayers()
+        {
+            // Sounds are embedded into the EXE for single-file publishing.
+            // Notification.wav remains app-start only.
+            // Notification2.wav is the Airbus inbound message sound.
+            // Notification3.wav is the Boeing inbound message sound.
+            ConfigureSoundPlayer(startupPlayer, "Notification.wav");   // app start only
+            ConfigureInboundMessageSound();
+        }
+
+        private void ConfigureInboundMessageSound()
+        {
+            ConfigureSoundPlayer(messagePlayer, DcduStyleManager.IsBoeing ? "Notification3.wav" : "Notification2.wav");
+        }
+
+        private void PlayInboundMessageSound()
+        {
+            ConfigureInboundMessageSound();
+
+            if (!string.IsNullOrWhiteSpace(messagePlayer.SoundLocation) || messagePlayer.Stream != null)
+            {
+                messagePlayer.Play();
+            }
+        }
+
+        private static bool ShouldPlayInboundMessageSound(string messageType, string recipient)
+        {
+            if (string.Equals(recipient, "SYSTEM", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(messageType))
+            {
+                return false;
+            }
+
+            string normalizedType = messageType.Trim().ToUpperInvariant();
+            return normalizedType == "CPDLC" ||
+                   normalizedType == "TELEX" ||
+                   normalizedType == "INFO" ||
+                   normalizedType == "INFOREQ" ||
+                   normalizedType == "METAR" ||
+                   normalizedType == "ATIS";
+        }
+
+        private static void ConfigureSoundPlayer(SoundPlayer soundPlayer, string fileName)
+        {
+            // Prefer embedded sounds for single-file publishing.
+            if (EmbeddedAssets.ConfigureSoundPlayer(soundPlayer, fileName))
+            {
+                Logger.Info($"Configured embedded sound {fileName}");
+                return;
+            }
+
+            // Developer fallback: allow loose sound files while running from the IDE/source tree.
+            string soundFile = Path.Combine(AppContext.BaseDirectory, "Sounds", fileName);
+            if (File.Exists(soundFile))
+            {
+                soundPlayer.Stream = null;
+                soundPlayer.SoundLocation = soundFile;
+                Logger.Info($"Configured sound {fileName}: {soundFile}");
+            }
+            else
+            {
+                Logger.Warn($"Sound file not found as embedded resource or loose file: {fileName}");
+            }
+        }
+
+        private static void SyncSoundFileToOutput(string fileName)
+        {
+            try
+            {
+                string sourceFile = GetProjectSoundFile(fileName);
+                if (string.IsNullOrWhiteSpace(sourceFile) || !File.Exists(sourceFile))
+                {
+                    return;
+                }
+
+                string outputSoundsDir = Path.Combine(AppContext.BaseDirectory, "Sounds");
+                Directory.CreateDirectory(outputSoundsDir);
+                string targetFile = Path.Combine(outputSoundsDir, fileName);
+                File.Copy(sourceFile, targetFile, true);
+                Logger.Info($"Synchronized sound {fileName}: {sourceFile} -> {targetFile}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn(ex, $"Could not synchronize sound file {fileName}");
+            }
+        }
+
+        private static string GetProjectSoundFile(string fileName)
+        {
+            string baseDir = AppContext.BaseDirectory;
+            DirectoryInfo dir = new(baseDir);
+            for (int i = 0; i < 10 && dir != null; i++, dir = dir.Parent)
+            {
+                string projectFile = Path.Combine(dir.FullName, "EasyCPDLC.csproj");
+                if (File.Exists(projectFile))
+                {
+                    string projectSound = Path.Combine(dir.FullName, "Sounds", fileName);
+                    if (File.Exists(projectSound))
+                    {
+                        return projectSound;
+                    }
+                    break;
+                }
+            }
+
+            string startupSound = Path.Combine(System.Windows.Forms.Application.StartupPath, "Sounds", fileName);
+            if (File.Exists(startupSound))
+            {
+                return startupSound;
+            }
+
+            string currentSound = Path.Combine(Environment.CurrentDirectory, "Sounds", fileName);
+            return File.Exists(currentSound) ? currentSound : null;
         }
 
         private static Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
         {
             if (new AssemblyName(args.Name).Name == "System.Runtime.CompilerServices.Unsafe")
-                return Assembly.LoadFrom(
-                    Path.Combine(System.Windows.Forms.Application.StartupPath, "System.Runtime.CompilerServices.Unsafe.dll"));
-            throw new Exception();
+            {
+                string unsafeDllPath = Path.Combine(System.Windows.Forms.Application.StartupPath, "System.Runtime.CompilerServices.Unsafe.dll");
+                if (File.Exists(unsafeDllPath))
+                {
+                    return Assembly.LoadFrom(unsafeDllPath);
+                }
+            }
+
+            return null;
         }
+        private void DcduFrame_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            if (HitDcduButton(retrieveButton, e.Location))
+            {
+                RetrieveButton_Click(retrieveButton, EventArgs.Empty);
+                return;
+            }
+
+            if (HitDcduButton(telexButton, e.Location))
+            {
+                TelexButton_Click(telexButton, EventArgs.Empty);
+                return;
+            }
+
+            if (HitDcduButton(atcButton, e.Location))
+            {
+                RequestButton_Click(atcButton, EventArgs.Empty);
+                return;
+            }
+
+            if (HitDcduButton(settingsButton, e.Location))
+            {
+                SettingsButton_Click(settingsButton, EventArgs.Empty);
+                return;
+            }
+
+            if (HitDcduButton(helpButton, e.Location))
+            {
+                HelpButton_Click(helpButton, EventArgs.Empty);
+                return;
+            }
+
+            if (HitDcduButton(exitButton, e.Location))
+            {
+                ExitButton_Click(exitButton, EventArgs.Empty);
+            }
+        }
+
+        private Control GetDcduButtonAt(Point location)
+        {
+            Control[] candidates =
+            {
+                retrieveButton,
+                telexButton,
+                atcButton,
+                settingsButton,
+                helpButton,
+                exitButton
+            };
+
+            foreach (Control button in candidates)
+            {
+                if (HitDcduButton(button, location))
+                {
+                    return button;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool HitDcduButton(Control button, Point location)
+        {
+            return button != null && button.Enabled && button.Bounds.Contains(location);
+        }
+
+        private void DcduFrame_MouseMove(object sender, MouseEventArgs e)
+        {
+            Control hit = GetDcduButtonAt(e.Location);
+            dcduFrame.HighlightRectangle = Rectangle.Empty;
+            dcduFrame.HighlightPressed = false;
+            dcduFrame.Cursor = hit == null ? Cursors.Default : Cursors.Hand;
+        }
+
+        private void DcduFrame_MouseLeave(object sender, EventArgs e)
+        {
+            dcduFrame.HighlightRectangle = Rectangle.Empty;
+            dcduFrame.HighlightPressed = false;
+            dcduFrame.Cursor = Cursors.Default;
+        }
+
+        private void DcduFrame_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            if (GetDcduButtonAt(e.Location) != null)
+            {
+                dcduFrame.HighlightRectangle = Rectangle.Empty;
+                dcduFrame.HighlightPressed = false;
+                return;
+            }
+
+            MoveWindow(sender, e);
+        }
+
+        private void DcduFrame_MouseUp(object sender, MouseEventArgs e)
+        {
+            dcduFrame.HighlightRectangle = Rectangle.Empty;
+            dcduFrame.HighlightPressed = false;
+        }
+
         private void MainForm_Load(object sender, EventArgs e)
         {
-            outputTable.BorderStyle = BorderStyle.FixedSingle;
+            outputTable.BorderStyle = BorderStyle.None;
+            outputTable.BackColor = Color.Transparent;
+            messageFormatPanel.BackColor = Color.Transparent;
             outputTable.HorizontalScroll.Maximum = 0;
             outputTable.AutoScroll = false;
             outputTable.VerticalScroll.Visible = false;
             outputTable.AutoScroll = true;
+            outputTable.Scroll += (scrollSender, scrollArgs) => HideNativeOutputScrollbars();
+            outputTable.ControlAdded += (controlSender, controlArgs) => HideNativeOutputScrollbars();
+            outputTable.SizeChanged += (sizeSender, sizeArgs) => HideNativeOutputScrollbars();
+            HideNativeOutputScrollbars();
 
             CheckNewVersion();
             //CheckAdministrator();
@@ -321,39 +744,139 @@ namespace EasyCPDLC
             ShowSetupForm();
             Setup();
 
-            if(Properties.Settings.Default.MainWindowLocation != new Point(0, 0))
+            if (Properties.Settings.Default.MainWindowLocation != new Point(0, 0))
             {
                 Location = Properties.Settings.Default.MainWindowLocation;
-                Size = Properties.Settings.Default.MainWindowSize;
             }
-            
+
+            ApplyMainWindowBounds(DcduStyleManager.IsBoeing);
+            ApplyMainScreenLayout(DcduStyleManager.IsBoeing);
+            ApplyMainButtonLayout(DcduStyleManager.IsBoeing);
+
             Logger.Info("Setup completed successfully");
+        }
+
+
+        private void HideNativeOutputScrollbars()
+        {
+            if (outputTable == null || outputTable.IsDisposed)
+            {
+                return;
+            }
+
+            try
+            {
+                if (outputTable.IsHandleCreated)
+                {
+                    ShowScrollBar(outputTable.Handle, ScrollBarBoth, false);
+                }
+            }
+            catch
+            {
+                // Cosmetic only: keep message handling safe if Win32 rejects the call.
+            }
+
+            if (outputScrollBar != null && !outputScrollBar.IsDisposed)
+            {
+                outputScrollBar.Visible = true;
+                outputScrollBar.BringToFront();
+                outputScrollBar.Invalidate();
+            }
         }
 
         private static async void CheckNewVersion()
         {
             try
             {
+                const string githubOwner = "fresH229a";
+                const string githubRepo = "EasyCPDLC";
+
                 var client = new GitHubClient(new ProductHeaderValue("EasyCPDLC"));
-                var releases = await client.Repository.Release.GetAll("josh-seagrave", "EasyCPDLC");
-                var latest = releases[0];
-                string latestVersion = latest.TagName.Replace("cpdlc", "");
-                if (latestVersion != System.Windows.Forms.Application.ProductVersion)
+                var releases = await client.Repository.Release.GetAll(githubOwner, githubRepo);
+
+                var latest = releases
+                    .Where(release => !release.Prerelease && !release.Draft)
+                    .OrderByDescending(release => release.PublishedAt ?? release.CreatedAt)
+                    .FirstOrDefault();
+
+                if (latest == null)
                 {
-                    DialogResult updateBox = MessageBox.Show(String.Format("New Version {0} Available to download from Github. Would you like me to take you to the Github page for the latest release?", latestVersion), "New Version Available", MessageBoxButtons.YesNo);
+                    return;
+                }
+
+                Version latestVersion = ParseReleaseVersion(latest.TagName);
+                Version currentVersion = ParseReleaseVersion(System.Windows.Forms.Application.ProductVersion);
+
+                if (latestVersion == null || currentVersion == null)
+                {
+                    return;
+                }
+
+                if (latestVersion > currentVersion)
+                {
+                    DialogResult updateBox = MessageBox.Show(
+                        string.Format(
+                            "New Version {0} available on GitHub. You are currently running {1}. Would you like to open the latest release page?",
+                            latest.TagName,
+                            System.Windows.Forms.Application.ProductVersion),
+                        "New Version Available",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Information);
+
                     if (updateBox == DialogResult.Yes)
                     {
-                        System.Diagnostics.Process.Start(latest.HtmlUrl);
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(latest.HtmlUrl) { UseShellExecute = true });
                     }
                 }
             }
+            catch
+            {
+                // Update checks must never block the application startup.
+            }
+        }
 
-            catch { }
+        private static Version ParseReleaseVersion(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            string cleaned = value.Trim();
+
+            if (cleaned.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned.Substring(1);
+            }
+
+            if (cleaned.StartsWith("cpdlc", StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned.Substring("cpdlc".Length);
+            }
+
+            cleaned = cleaned.Trim('-', '_', ' ', '.');
+
+            Match match = Regex.Match(cleaned, @"\d+(?:\.\d+){0,3}");
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            string versionText = match.Value;
+            int partCount = versionText.Split('.').Length;
+
+            while (partCount < 4)
+            {
+                versionText += ".0";
+                partCount++;
+            }
+
+            return Version.TryParse(versionText, out Version version) ? version : null;
         }
 
         public static void CheckAdministrator()
         {
-            if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) 
+            if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
             {
                 MessageBox.Show("EasyCPDLC does not appear to be running in Administrator mode. This will limit certain functionalities of the program. Please restart EasyCPDLC in admin mode. The program will now exit.", "Error");
                 System.Windows.Forms.Application.Exit();
@@ -428,20 +951,26 @@ namespace EasyCPDLC
 
         private void FreeTextMessage(CPDLCMessage message)
         {
+            tForm = message == null
+                ? new TelexForm(this)
+                : new TelexForm(this, message.recipient);
 
-            tForm = new TelexForm(this, message.recipient)
-            {
-                TopMost = StayOnTop
-            };
+            tForm.TopMost = StayOnTop;
             tForm.Show();
         }
 
         public void ClearPreview()
         {
-            messageFormatPanel.Controls.Clear();
-            outputTable.Visible = true;
-            messageFormatPanel.Visible = false;
+            if (messageFormatPanel != null)
+            {
+                messageFormatPanel.Controls.Clear();
+                messageFormatPanel.Visible = false;
+            }
 
+            if (outputTable != null)
+            {
+                outputTable.Visible = true;
+            }
         }
 
         private void ReturnMessage(object sender, EventArgs e)
@@ -449,7 +978,7 @@ namespace EasyCPDLC
             try
             {
                 KeyEventArgs kE = (KeyEventArgs)e;
-                if(kE.KeyCode == Keys.Enter || kE.KeyCode == Keys.Space)
+                if (kE.KeyCode == Keys.Enter || kE.KeyCode == Keys.Space)
                 {
                     throw new Exception();
                 }
@@ -479,9 +1008,17 @@ namespace EasyCPDLC
             }
             catch
             {
-                foreach (AccessibleLabel _label in replyOptionsList)
+                if (message == null || message.header == null)
                 {
-                    _label.Enabled = false;
+                    return;
+                }
+
+                foreach (AccessibleLabel _label in replyOptionsList ?? Array.Empty<AccessibleLabel>())
+                {
+                    if (_label != null)
+                    {
+                        _label.Enabled = false;
+                    }
                 }
 
                 message.header.ResponseID = messageOutCounter;
@@ -494,14 +1031,17 @@ namespace EasyCPDLC
                     outputTable.Controls[index + 1].ForeColor = controlFrontColor;
                     message.ForeColor = SystemColors.ControlDark;
                 }
-                
+
                 _ = Task.Run(() => SendCPDLCMessage(message.recipient, message.type, String.Format("/data2/{0}/{1}/N/{2}", message.header.ResponseID, message.header.MessageID, reply)));
                 messageOutCounter += 1;
                 ClearPreview();
 
-                foreach (AccessibleLabel _label in replyOptionsList)
+                foreach (AccessibleLabel _label in replyOptionsList ?? Array.Empty<AccessibleLabel>())
                 {
-                    _label.Enabled = true;
+                    if (_label != null)
+                    {
+                        _label.Enabled = true;
+                    }
                 }
             }
         }
@@ -548,8 +1088,17 @@ namespace EasyCPDLC
                 Logger.Debug("Attempting to poll Hoppie for new messages");
 
                 await SendCPDLCMessage("NONE", "poll", "");
-                await Task.Delay(interval, cancellationToken);
-                if(UseFSUIPC && fsConnectionOpen)
+
+                try
+                {
+                    await Task.Delay(interval, cancellationToken);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+
+                if (UseFSUIPC && fsConnectionOpen)
                 {
                     try
                     {
@@ -577,19 +1126,58 @@ namespace EasyCPDLC
 
                     }
                 }
-                
-                
+
+
             }
         }
+        private void SafeUi(Action action)
+        {
+            if (action == null || IsDisposed)
+            {
+                return;
+            }
+
+            try
+            {
+                if (IsHandleCreated && InvokeRequired)
+                {
+                    BeginInvoke(action);
+                }
+                else
+                {
+                    action();
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // The form is closing.
+            }
+            catch (InvalidOperationException)
+            {
+                // The form is closing or its handle is no longer available.
+            }
+        }
+
+        private void UpdateSendingProgress(Action action)
+        {
+            SafeUi(() =>
+            {
+                if (SendingProgress != null && !SendingProgress.IsDisposed)
+                {
+                    action();
+                }
+            });
+        }
+
         public async Task SendCPDLCMessage(string recipient, string messageType, string packetData, bool _write = true)
         {
 
             var connectionValues = new Dictionary<string, string> {
-                {"logon", logonCode},
-                {"from", callsign},
-                {"to", recipient},
-                {"type", messageType},
-                {"packet", packetData}
+                {"logon", logonCode ?? String.Empty},
+                {"from", callsign ?? String.Empty},
+                {"to", recipient ?? String.Empty},
+                {"type", messageType ?? String.Empty},
+                {"packet", packetData ?? String.Empty}
             };
 
             var content = new FormUrlEncodedContent(connectionValues);
@@ -598,14 +1186,14 @@ namespace EasyCPDLC
 
                 if (_write && messageType != "poll")
                 {
-                    SendingProgress.Invoke(() => SendingProgress.Visible = true);
-                    SendingProgress.Invoke(() => SendingProgress.Value = 0);
-                    SendingProgress.Invoke(() => SendingProgress.PerformStep());
+                    UpdateSendingProgress(() => SendingProgress.Visible = true);
+                    UpdateSendingProgress(() => SendingProgress.Value = 0);
+                    UpdateSendingProgress(() => SendingProgress.PerformStep());
                 }
 
-                var response = await webclient.PostAsync("http://www.hoppie.nl/acars/system/connect.html", content);
+                var response = await webclient.PostAsync(HoppieConnectUrl, content);
 
-                SendingProgress.Invoke(() => SendingProgress.PerformStep());
+                UpdateSendingProgress(() => SendingProgress.PerformStep());
 
                 Logger.Debug(String.Format("PACKET SENT: {0} | {1} | {2} | {3} | {4}", recipient, messageType, packetData, true, _write));
                 var responseString = await response.Content.ReadAsStringAsync();
@@ -618,13 +1206,13 @@ namespace EasyCPDLC
                 }
                 else
                 {
-                    if(isErrorState)
+                    if (isErrorState)
                     {
                         WriteMessage("HOPPIE CONNECTIVITY RESTORED.", "SYSTEM", "SYSTEM");
                         isErrorState = false;
                     }
-                    
-                    SendingProgress.Invoke(() => SendingProgress.PerformStep());
+
+                    UpdateSendingProgress(() => SendingProgress.PerformStep());
 
                     if (_write && messageType != "poll")
                     {
@@ -637,18 +1225,18 @@ namespace EasyCPDLC
                     await TelexParser(printString);
                 }
 
-                SendingProgress.Invoke(() => SendingProgress.Visible = false);
+                UpdateSendingProgress(() => SendingProgress.Visible = false);
             }
 
             catch (Exception e)
             {
-                if(!isErrorState)
+                if (!isErrorState)
                 {
                     Logger.Error(String.Format("{0}: {1}", e.GetType().FullName, e.Message));
                     WriteMessage("ERROR CHECKING FOR NEW MESSAGES. THIS IS LIKELY AN ERROR WITH THE HOPPIE NETWORK. THE SYSTEM WILL CONTINUE ATTEMPTING TO CONTACT THE SERVER AND LET YOU KNOW WHEN CONNECTION IS RE-ESTABLISHED.", "SYSTEM", "SYSTEM");
                     isErrorState = true;
                 }
-                SendingProgress.Invoke(() => SendingProgress.Visible = false);
+                UpdateSendingProgress(() => SendingProgress.Visible = false);
             }
 
             return;
@@ -659,8 +1247,8 @@ namespace EasyCPDLC
             CPDLCMessage _message = new(_type, _recipient, _contents, _outbound, _header)
             {
                 AutoSize = true,
-                BackColor = controlBackColor,
-                ForeColor = SystemColors.ControlDark,
+                BackColor = Color.Transparent,
+                ForeColor = DcduTheme.CyanWhite,
                 Font = textFont,
                 Text = _type == "SYSTEM" ? "SYSTEM MESSAGE" : _outbound ? String.Format("{1} MESSAGE TO {0}", _recipient, _type.ToUpper()) : String.Format("{1} MESSAGE FROM {0}", _recipient, _type.ToUpper()),
                 BorderStyle = BorderStyle.None,
@@ -678,12 +1266,12 @@ namespace EasyCPDLC
             {
                 Width = 65
             };
-            AccessibleLabel _message = new(SystemColors.ControlDark)
+            AccessibleLabel _message = new(DcduTheme.CyanWhite)
             {
                 Width = 65,
                 AutoSize = true,
-                BackColor = controlBackColor,
-                ForeColor = SystemColors.ControlDark,
+                BackColor = Color.Transparent,
+                ForeColor = DcduTheme.CyanWhite,
                 Font = textFont,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
@@ -705,12 +1293,12 @@ namespace EasyCPDLC
             {
                 Width = 65
             };
-            AccessibleLabel _message = new(SystemColors.ControlLight)
+            AccessibleLabel _message = new(DcduTheme.Cyan)
             {
                 Width = 65,
                 AutoSize = true,
-                BackColor = controlBackColor,
-                ForeColor = SystemColors.ControlLight,
+                BackColor = Color.Transparent,
+                ForeColor = DcduTheme.Cyan,
                 Font = textFont,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
@@ -735,12 +1323,14 @@ namespace EasyCPDLC
             {
                 Width = 65,
                 AutoSize = true,
-                BackColor = controlBackColor,
-                ForeColor = SystemColors.ControlLight,
+                BackColor = Color.Transparent,
+                ForeColor = DcduTheme.CyanWhite,
                 Font = textFontBold,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
-                Margin = new Padding(10, 0, 0, 0),
+                Margin = new Padding(0, 0, 2, 0),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                TextAlign = ContentAlignment.TopRight,
             };
             if (_useMaxSize)
             {
@@ -776,7 +1366,12 @@ namespace EasyCPDLC
 
         private void MessageClicked(object sender, EventArgs e)
         {
-            int messageIndex = outputTable.Controls.GetChildIndex((System.Windows.Forms.Label)sender) - 1;
+            if (sender is not System.Windows.Forms.Label clickedLabel || outputTable == null)
+            {
+                return;
+            }
+
+            int messageIndex = outputTable.Controls.GetChildIndex(clickedLabel) - 1;
             try
             {
                 KeyEventArgs kE = (KeyEventArgs)e;
@@ -792,7 +1387,15 @@ namespace EasyCPDLC
             }
             catch
             {
-                CPDLCMessage _sender = (CPDLCMessage)outputTable.Controls[messageIndex];
+                if (messageIndex < 0 || messageIndex >= outputTable.Controls.Count)
+                {
+                    return;
+                }
+
+                if (outputTable.Controls[messageIndex] is not CPDLCMessage _sender)
+                {
+                    return;
+                }
                 previewMessage = _sender;
                 System.Windows.Forms.Label _timeStamp = (System.Windows.Forms.Label)outputTable.Controls[messageIndex - 1];
                 List<System.Windows.Forms.Label> responses = new();
@@ -898,7 +1501,7 @@ namespace EasyCPDLC
                 return Task.CompletedTask;
             }
             Contract _contract;
-            switch(responseElements[1])
+            switch (responseElements[1])
             {
                 case "PERIODIC":
                     _contract = new Contract(this, _sender, responseElements[2]);
@@ -909,7 +1512,7 @@ namespace EasyCPDLC
 
                 case "CANCEL":
                     _contract = contracts.Where(x => x.sender == _sender && x.contractLength == responseElements[2]).FirstOrDefault();
-                    if(!_contract.Equals(default(Contract)))
+                    if (_contract != null)
                     {
                         _contract.StopContract();
                         contracts.Remove(_contract);
@@ -1026,7 +1629,7 @@ namespace EasyCPDLC
                 pendingLogon = null;
             }
 
-            if(_showUser)
+            if (_showUser)
             {
                 WriteMessage(message, "CPDLC", _sender, false, header);
 
@@ -1046,25 +1649,37 @@ namespace EasyCPDLC
             else
             {
                 message = CreateCPDLCMessage(_response, _type, _recipient, _outbound, _header);
-                if (PlaySound && _recipient != "SYSTEM") { player.Play(); }
+                if (PlaySound && ShouldPlayInboundMessageSound(_type, _recipient))
+                {
+                    PlayInboundMessageSound();
+                }
             }
 
             Logger.Debug("Writing message: " + _response);
 
             TimerLabel menuLabel = CreateTimerLabel(">>", true);
-            if (_type == "CPDLC" && !_outbound && _header.Responses != "NE")
+            if (_type == "CPDLC" && !_outbound && _header != null && _header.Responses != "NE")
             {
                 menuLabel.CanFlash = true;
             }
             menuLabel.Click += MessageClicked;
             message.KeyDown += MessageClicked;
 
-            outputTable.Invoke(new Action(() => outputTable.Controls.Add(CreateLabel(DateTime.Now.ToString("HH:mm")), 0, outputTable.RowCount - 1)));
-            outputTable.Invoke(new Action(() => outputTable.Controls.Add(message, 1, outputTable.RowCount - 1)));
-            outputTable.Invoke(new Action(() => outputTable.Controls.Add(menuLabel, 2, outputTable.RowCount - 1)));
-            outputTable.Invoke(new Action(() => outputTable.RowCount += 1));
-            outputTable.Invoke(new Action(() => outputTable.RowStyles.Add(new RowStyle(SizeType.AutoSize))));
-            outputTable.Invoke(new Action(() => outputTable.ScrollControlIntoView(message)));
+            SafeUi(() =>
+            {
+                if (outputTable == null || outputTable.IsDisposed)
+                {
+                    return;
+                }
+
+                outputTable.Controls.Add(CreateLabel(DateTime.Now.ToString("HH:mm")), 0, outputTable.RowCount - 1);
+                outputTable.Controls.Add(message, 1, outputTable.RowCount - 1);
+                outputTable.Controls.Add(menuLabel, 2, outputTable.RowCount - 1);
+                outputTable.RowCount += 1;
+                outputTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                outputTable.ScrollControlIntoView(message);
+                HideNativeOutputScrollbars();
+            });
 
             return message;
         }
@@ -1079,7 +1694,7 @@ namespace EasyCPDLC
         {
             try
             {
-                requestCancellationTokenSource.Cancel();
+                requestCancellationTokenSource?.Cancel();
             }
             catch (NullReferenceException) { }
             this.Close();
@@ -1113,34 +1728,38 @@ namespace EasyCPDLC
                     }
 
                     userVATSIMData = vatsimData.pilots.Where(i => i.cid == cid).FirstOrDefault();
-                    if(userVATSIMData is null)
+                    if (userVATSIMData is null)
                     {
-                        throw new IndexOutOfRangeException();
+                        response += "VATSIM: PILOT NOT FOUND. WAIT 60 SECONDS AND RETRY.\n";
+                        atcButton.Enabled = false;
+                        telexButton.Enabled = false;
+                        Connected = false;
+                        WriteMessage(response, "SYSTEM", "SYSTEM");
+                        return;
                     }
 
-                    string _fpTest = userVATSIMData.flight_plan.altitude;
                     callsign = userVATSIMData.callsign;
+
+                    if (userVATSIMData.flight_plan is null)
+                    {
+                        response += "VATSIM: NO FLIGHT PLAN FILED. FILE A FLIGHT PLAN AND RETRY.\n";
+                        atcButton.Enabled = false;
+                        telexButton.Enabled = false;
+                        Connected = false;
+                        WriteMessage(response, "SYSTEM", "SYSTEM");
+                        return;
+                    }
 
                     Connected = true;
 
                     requestCancellationTokenSource = new CancellationTokenSource();
                     requestCancellationToken = requestCancellationTokenSource.Token;
-                    _ = PeriodicCheckMessage(updateTimer, requestCancellationToken);                
+                    _ = PeriodicCheckMessage(updateTimer, requestCancellationToken);
 
                 }
-                catch (IndexOutOfRangeException)
+                catch (Exception ex) when (ex is IndexOutOfRangeException || ex is NullReferenceException)
                 {
                     response += "VATSIM: ERROR. WAIT 60 SECONDS AND RETRY.\n";
-                    atcButton.Enabled = false;
-                    telexButton.Enabled = false;
-                    Connected = false;
-                    WriteMessage(response, "SYSTEM", "SYSTEM");
-                    return;
-                }
-
-                catch (NullReferenceException)
-                {
-                    response += "FLIGHT PLAN: ERROR. WAIT 60 SECONDS AND RETRY.\n";
                     atcButton.Enabled = false;
                     telexButton.Enabled = false;
                     Connected = false;
@@ -1176,16 +1795,19 @@ namespace EasyCPDLC
                         fsConnectionOpen = FSUIPCData.OpenConnection();
                         if (fsConnectionOpen)
                         {
+                            await fsuipc.RefreshData();
                             response += "SIMULATOR OK.";
                         }
                         else
                         {
-                            throw new FSUIPCException(FSUIPCError.FSUIPC_ERR_NOTOPEN, "CONNECTION FAILED");
+                            string fsuipcError = string.IsNullOrWhiteSpace(FSUIPCData.LastError) ? "CONNECTION FAILED" : FSUIPCData.LastError;
+                            response += "SIMULATOR ERROR: " + fsuipcError;
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        response += "SIMULATOR ERROR.";
+                        string fsuipcError = !string.IsNullOrWhiteSpace(FSUIPCData.LastError) ? FSUIPCData.LastError : ex.Message;
+                        response += "SIMULATOR ERROR: " + fsuipcError;
                     }
                 }
                 WriteMessage(response, "SYSTEM", "SYSTEM");
@@ -1197,11 +1819,11 @@ namespace EasyCPDLC
                 {
                     await SendCPDLCMessage(CurrentATCUnit, "CPDLC", String.Format("/data2/{0}//N/LOGOFF", messageOutCounter), false);
                 }
-                foreach(Contract _contract in contracts)
+                foreach (Contract _contract in contracts)
                 {
                     await SendCPDLCMessage(_contract.sender, "ADS-C", "REJECT " + _contract.contractLength, false);
                 }
-                requestCancellationTokenSource.Cancel();
+                requestCancellationTokenSource?.Cancel();
                 callsign = "";
                 response = "DISCONNECTED CLIENT";
                 vatsimData = new VATSIMRootobject();
@@ -1240,7 +1862,7 @@ namespace EasyCPDLC
             if (CurrentATCUnit is not null)
             {
                 await SendCPDLCMessage(CurrentATCUnit, "CPDLC", String.Format("/data2/{0}//N/LOGOFF", messageOutCounter), false);
-                requestCancellationTokenSource.Cancel();
+                requestCancellationTokenSource?.Cancel();
             }
         }
 
@@ -1291,7 +1913,7 @@ namespace EasyCPDLC
         private void HelpButton_Click(object sender, EventArgs e)
         {
             //worst bodge I've ever had to pull, thanks to this: github.com/dotnet/runtime/issues/17938
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/josh-seagrave/EasyCPDLC/wiki"){ UseShellExecute = true });
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/josh-seagrave/EasyCPDLC/wiki") { UseShellExecute = true });
             MessageBox.Show(
                 @"EasyCPDLC
 Copyright(C) 2022 Joshua Seagrave
@@ -1308,6 +1930,11 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.If not, see <https://www.gnu.org/licenses/>.", String.Format("EasyCPDLC v{0} Licensing & Copyright Notice", System.Windows.Forms.Application.ProductVersion), MessageBoxButtons.OK);
+        }
+
+        private void messageFormatPanel_Paint(object sender, PaintEventArgs e)
+        {
+
         }
     }
     internal class NoHighlightRenderer : ToolStripProfessionalRenderer
@@ -1333,7 +1960,10 @@ along with this program.If not, see <https://www.gnu.org/licenses/>.", String.Fo
             for (int i = 0; i < panel.ColumnCount; i++)
             {
                 var control = panel.GetControlFromPosition(i, rowIndex);
-                panel.Controls.Remove(control);
+                if (control != null)
+                {
+                    panel.Controls.Remove(control);
+                }
             }
 
             // move up row controls that comes after row we want to remove

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <ApplicationIcon>Resources\EasyCPDLC.ico</ApplicationIcon>
+    <NoWarn>$(NoWarn);WFO1000</NoWarn>
+  </PropertyGroup>
+</Project>

@@ -1,4 +1,4 @@
-﻿/*  EASYCPDLC: CPDLC Client for the VATSIM Network
+/*  EASYCPDLC: CPDLC Client for the VATSIM Network
     Copyright (C) 2021 Joshua Seagrave joshseagrave@googlemail.com
 
     This program is free software: you can redistribute it and/or modify
@@ -51,6 +51,11 @@ namespace EasyCPDLC
         public TelexForm(MainForm _parent, string _recipient = null)
         {
             InitializeComponent();
+            telexFrame.AssetFileName = DcduStyleManager.AssetFile("TelexWindowFrame.png");
+            ApplyTransparentScreenOverlays();
+            ApplyWindowLayout();
+            DcduWindowHelper.ApplyDeviceWindow(this, telexFrame, 22);
+            InitialiseHotspots();
             parent = _parent;
             controlBackColor = parent.controlBackColor;
             controlFrontColor = parent.controlFrontColor;
@@ -62,11 +67,129 @@ namespace EasyCPDLC
             this.TopMost = parent.TopMost;
         }
 
+
+
+        private void ApplyWindowLayout()
+        {
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            Size targetSize = isBoeing ? new Size(800, 258) : new Size(700, 233);
+            ClientSize = targetSize;
+            Size = targetSize;
+            MinimumSize = targetSize;
+            MaximumSize = targetSize;
+
+            telexFrame.Location = new Point(0, 0);
+            telexFrame.Size = targetSize;
+
+            if (isBoeing)
+            {
+                // Tuned to the current Boeing telex artwork used by the user (800x258).
+                freeTextButton.Bounds = new Rectangle(37, 34, 76, 34);
+                metarButton.Bounds = new Rectangle(37, 80, 76, 34);
+                atisButton.Bounds = new Rectangle(37, 126, 76, 34);
+
+                exitButton.Bounds = new Rectangle(692, 34, 76, 34);
+                clearButton.Bounds = new Rectangle(692, 116, 76, 34);
+                sendButton.Bounds = new Rectangle(692, 160, 76, 34);
+
+                telexScreen.Bounds = new Rectangle(131, 17, 529, 210);
+                messageFormatPanel.Bounds = new Rectangle(14, 14, 501, 182);
+                messageFormatPanel.Padding = new Padding(8, 0, 0, 24);
+                radioContainer.Location = new Point(37, 230);
+                radioContainer.Size = new Size(100, 20);
+            }
+            else
+            {
+                freeTextButton.Bounds = new Rectangle(23, 52, 58, 28);
+                metarButton.Bounds = new Rectangle(23, 90, 58, 30);
+                atisButton.Bounds = new Rectangle(23, 128, 58, 29);
+
+                exitButton.Bounds = new Rectangle(619, 51, 54, 28);
+                clearButton.Bounds = new Rectangle(619, 128, 54, 28);
+                sendButton.Bounds = new Rectangle(619, 165, 54, 29);
+
+                telexScreen.Bounds = new Rectangle(104, 37, 496, 157);
+                messageFormatPanel.Bounds = new Rectangle(12, 12, 470, 135);
+                messageFormatPanel.Padding = new Padding(6, 0, 0, 18);
+                radioContainer.Location = new Point(24, 205);
+                radioContainer.Size = new Size(100, 18);
+            }
+
+            telexFrame.Invalidate();
+        }
+
+        private void InitialiseHotspots()
+        {
+            // The hotspot controls are NOT added to telexFrame.Controls.
+            // They exist only as bounds/event containers so they cannot punch transparent holes through the bitmap.
+        }
+
+        private Control GetAssetHotspotAt(Point location)
+        {
+            Control[] hotspots = { freeTextButton, metarButton, atisButton, clearButton, sendButton, exitButton };
+            foreach (Control hotspot in hotspots)
+            {
+                if (hotspot != null && hotspot.Enabled && hotspot.Bounds.Contains(location))
+                {
+                    return hotspot;
+                }
+            }
+            return null;
+        }
+
+        private void AssetFrame_MouseMove(object sender, MouseEventArgs e)
+        {
+            Control hit = GetAssetHotspotAt(e.Location);
+            telexFrame.HighlightRectangle = Rectangle.Empty;
+            telexFrame.Cursor = hit == null ? Cursors.Default : Cursors.Hand;
+        }
+
+        private void AssetFrame_MouseLeave(object sender, EventArgs e)
+        {
+            telexFrame.HighlightPressed = false;
+            telexFrame.HighlightRectangle = Rectangle.Empty;
+            telexFrame.Cursor = Cursors.Default;
+        }
+
+        private void AssetFrame_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            Control hit = GetAssetHotspotAt(e.Location);
+            if (hit != null)
+            {
+                telexFrame.HighlightRectangle = Rectangle.Empty;
+                telexFrame.HighlightPressed = false;
+                return;
+            }
+            WindowDrag(sender, e);
+        }
+
+        private void AssetFrame_MouseUp(object sender, MouseEventArgs e)
+        {
+            telexFrame.HighlightPressed = false;
+        }
+
+        private void AssetFrame_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (GetAssetHotspotAt(e.Location) is DcduHotspotButton button)
+            {
+                button.PerformClick();
+            }
+        }
+
+        private void ApplyTransparentScreenOverlays()
+        {
+            // Same visual behavior as the main DCDU: do not paint a separate dark block over the bitmap screen.
+            messageFormatPanel.BackColor = Color.Transparent;
+            radioContainer.BackColor = Color.Transparent;
+        }
+
         private AccessibleLabel CreateTemplate(string _text)
         {
             AccessibleLabel _temp = new(controlFrontColor)
             {
-                BackColor = controlBackColor,
+                BackColor = Color.Transparent,
                 ForeColor = controlFrontColor,
                 Font = textFont,
                 AutoSize = true,
@@ -120,13 +243,14 @@ namespace EasyCPDLC
                 ForeColor = controlFrontColor,
                 Font = textFontBold,
                 BorderStyle = BorderStyle.None,
-                Width = messageFormatPanel.Width - 50,
+                Width = Math.Max(320, messageFormatPanel.Width - 40),
                 Multiline = true,
                 WordWrap = true,
+                ScrollBars = ScrollBars.Vertical,
                 PlaceholderText = "Your message here...",
                 Text = _text,
                 MaxLength = 255,
-                Height = 20,
+                Height = 88,
                 TabIndex = 0
             };
             _temp.TextChanged += ExpandMultiLineBox;
@@ -157,14 +281,16 @@ namespace EasyCPDLC
             if (Properties.Settings.Default.TelexWindowLocation != new Point(0, 0))
             {
                 Location = Properties.Settings.Default.TelexWindowLocation;
-                Size = Properties.Settings.Default.TelexWindowSize;
             }
-            freeTextButton.PerformClick();
+
+            ApplyWindowLayout();
+            DcduWindowHelper.ApplyDeviceWindow(this, telexFrame, 22);
+            FreeTextButton_Click(freeTextButton, EventArgs.Empty);
         }
 
         private void ResetPanel(object sender, EventArgs e)
         {
-            freeTextButton.PerformClick();
+            FreeTextButton_Click(freeTextButton, EventArgs.Empty);
         }
 
         private void ExpandMultiLineBox(object sender, EventArgs e)

@@ -1,4 +1,4 @@
-﻿/*  EASYCPDLC: CPDLC Client for the VATSIM Network
+/*  EASYCPDLC: CPDLC Client for the VATSIM Network
     Copyright (C) 2021 Joshua Seagrave joshseagrave@googlemail.com
 
     This program is free software: you can redistribute it and/or modify
@@ -25,10 +25,11 @@ namespace EasyCPDLC
     public partial class SettingsForm : Form
     {
 
-        UICheckBox stayOnTopBox;
-        UICheckBox audiblePingBox;
-        UICheckBox useFSUIPCBox;
+        DcduCheckBox stayOnTopBox;
+        DcduCheckBox audiblePingBox;
+        DcduCheckBox useFSUIPCBox;
         UITextBox simbriefTextBox;
+        ComboBox styleSelector;
 
         private readonly MainForm parent;
 
@@ -45,7 +46,118 @@ namespace EasyCPDLC
         {
             parent = _parent;
             InitializeComponent();
+            settingsFrame.AssetFileName = DcduStyleManager.AssetFile("SettingsWindowFrame.png");
+            ApplyTransparentScreenOverlays();
+            ApplyWindowLayout();
+            DcduWindowHelper.ApplyDeviceWindow(this, settingsFrame, 10);
+            InitialiseHotspots();
             InitialiseSettings();
+        }
+
+
+
+        private void ApplyWindowLayout()
+        {
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            Size targetSize = isBoeing ? new Size(600, 210) : new Size(670, 235);
+            ClientSize = targetSize;
+            Size = targetSize;
+            MinimumSize = targetSize;
+            MaximumSize = targetSize;
+
+            settingsFrame.Location = new Point(0, 0);
+            settingsFrame.Size = targetSize;
+
+            if (isBoeing)
+            {
+                settingsCard.Location = new Point(103, 22);
+                settingsCard.Size = new Size(380, 169);
+                settingsFormatPanel.Location = new Point(10, 17);
+                settingsFormatPanel.Size = new Size(360, 146);
+                exitButton.Bounds = new Rectangle(520, 39, 53, 29);
+                cancelButton.Bounds = new Rectangle(520, 74, 53, 29);
+                okButton.Bounds = new Rectangle(520, 108, 53, 29);
+            }
+            else
+            {
+                settingsCard.Location = new Point(90, 32);
+                settingsCard.Size = new Size(434, 167);
+                settingsFormatPanel.Location = new Point(22, 12);
+                settingsFormatPanel.Size = new Size(390, 148);
+                exitButton.Bounds = new Rectangle(555, 43, 59, 31);
+                cancelButton.Bounds = new Rectangle(555, 83, 59, 31);
+                okButton.Bounds = new Rectangle(555, 123, 59, 31);
+            }
+
+            settingsFrame.Invalidate();
+        }
+
+        private void InitialiseHotspots()
+        {
+            // The hotspot controls are NOT added to settingsFrame.Controls.
+            // They exist only as bounds/event containers so they cannot punch transparent holes through the bitmap.
+        }
+
+        private Control GetAssetHotspotAt(Point location)
+        {
+            Control[] hotspots = { exitButton, cancelButton, okButton };
+            foreach (Control hotspot in hotspots)
+            {
+                if (hotspot != null && hotspot.Enabled && hotspot.Bounds.Contains(location))
+                {
+                    return hotspot;
+                }
+            }
+            return null;
+        }
+
+        private void AssetFrame_MouseMove(object sender, MouseEventArgs e)
+        {
+            Control hit = GetAssetHotspotAt(e.Location);
+            settingsFrame.HighlightRectangle = Rectangle.Empty;
+            settingsFrame.Cursor = hit == null ? Cursors.Default : Cursors.Hand;
+        }
+
+        private void AssetFrame_MouseLeave(object sender, EventArgs e)
+        {
+            settingsFrame.HighlightPressed = false;
+            settingsFrame.HighlightRectangle = Rectangle.Empty;
+            settingsFrame.Cursor = Cursors.Default;
+        }
+
+        private void AssetFrame_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            Control hit = GetAssetHotspotAt(e.Location);
+            if (hit != null)
+            {
+                settingsFrame.HighlightRectangle = Rectangle.Empty;
+                settingsFrame.HighlightPressed = false;
+                return;
+            }
+            WindowDrag(sender, e);
+        }
+
+        private void AssetFrame_MouseUp(object sender, MouseEventArgs e)
+        {
+            settingsFrame.HighlightPressed = false;
+        }
+
+        private void AssetFrame_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (GetAssetHotspotAt(e.Location) is DcduHotspotButton button)
+            {
+                button.PerformClick();
+            }
+        }
+
+        private void ApplyTransparentScreenOverlays()
+        {
+            // Keep the settings content transparent so the bitmap screen remains visible behind it.
+            settingsCard.BackColor = Color.Transparent;
+            settingsFormatPanel.BackColor = Color.Transparent;
+            settingsFormatPanel.AutoScroll = false;
         }
 
         private void InitialiseSettings()
@@ -65,38 +177,105 @@ namespace EasyCPDLC
             settingsFormatPanel.SetFlowBreak(audiblePingBox, true);
             settingsFormatPanel.Controls.Add(useFSUIPCBox);
             settingsFormatPanel.SetFlowBreak(useFSUIPCBox, true);
-            settingsFormatPanel.Controls.Add(CreateTemplate("SIMBRIEF PILOT ID: "));
-            settingsFormatPanel.Controls.Add(simbriefTextBox);
+
+            FlowLayoutPanel styleRow = CreateStyleSelectorRow();
+            settingsFormatPanel.Controls.Add(styleRow);
+            settingsFormatPanel.SetFlowBreak(styleRow, true);
+
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            FlowLayoutPanel simbriefRow = new()
+            {
+                BackColor = Color.Transparent,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = false,
+                Size = isBoeing ? new Size(350, 24) : new Size(390, 25),
+                Margin = isBoeing ? new Padding(0, 3, 0, 0) : new Padding(0, 3, 0, 0),
+                Padding = new Padding(0, 0, 0, 0)
+            };
+            Label simbriefLabel = CreateTemplate("SIMBRIEF PILOT ID:");
+            simbriefLabel.Width = isBoeing ? 148 : 156;
+            simbriefLabel.AutoSize = false;
+            simbriefLabel.Padding = new Padding(0, 2, 0, 0);
+            simbriefLabel.Margin = new Padding(0, 0, 6, 0);
+            simbriefRow.Controls.Add(simbriefLabel);
+            simbriefRow.Controls.Add(simbriefTextBox);
+            settingsFormatPanel.Controls.Add(simbriefRow);
         }
 
-        private UICheckBox CreateCheckBox(string _text, string _group)
+
+        private FlowLayoutPanel CreateStyleSelectorRow()
         {
-            UICheckBox _temp = new(_group)
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            FlowLayoutPanel styleRow = new()
             {
-                BackColor = parent.controlBackColor,
-                ForeColor = parent.controlFrontColor,
-                Font = parent.textFont,
+                BackColor = Color.Transparent,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = false,
+                Size = isBoeing ? new Size(350, 24) : new Size(390, 25),
+                Margin = isBoeing ? new Padding(0, 3, 0, 0) : new Padding(0, 3, 0, 0),
+                Padding = new Padding(0, 0, 0, 0)
+            };
+
+            Label styleLabel = CreateTemplate("DCDU STYLE:");
+            styleLabel.Width = isBoeing ? 148 : 156;
+            styleLabel.AutoSize = false;
+            styleLabel.Padding = new Padding(0, 2, 0, 0);
+            styleLabel.Margin = new Padding(0, 0, 6, 0);
+
+            styleSelector = new ComboBox()
+            {
+                BackColor = DcduTheme.ScreenAlt,
+                ForeColor = DcduTheme.CyanWhite,
+                Font = new Font("Consolas", isBoeing ? 8.0f : 8.2f, FontStyle.Bold),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Popup,
+                Width = isBoeing ? 104 : 120,
+                Height = isBoeing ? 20 : 21,
+                Margin = isBoeing ? new Padding(0, 0, 0, 0) : new Padding(0, 1, 0, 0)
+            };
+
+            styleSelector.Items.Add(DcduStyleManager.Airbus);
+            styleSelector.Items.Add(DcduStyleManager.Boeing);
+            styleSelector.SelectedItem = DcduStyleManager.CurrentStyle;
+            styleSelector.SelectedIndexChanged += StyleSelector_SelectedIndexChanged;
+
+            styleRow.Controls.Add(styleLabel);
+            styleRow.Controls.Add(styleSelector);
+            return styleRow;
+        }
+
+        private DcduCheckBox CreateCheckBox(string _text, string _group)
+        {
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            DcduCheckBox _temp = new()
+            {
+                BackColor = Color.Transparent,
+                ForeColor = DcduTheme.CyanWhite,
+                Font = new Font("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
                 Text = _text,
-                Padding = new Padding(3, 10, 3, -30),
-                AutoSize = true
+                Margin = isBoeing ? new Padding(0, 0, 0, 4) : new Padding(0, 0, 0, 4),
+                Size = isBoeing ? new Size(350, 23) : new Size(390, 25)
             };
             return _temp;
         }
 
         private Label CreateTemplate(string _text)
         {
+            bool isBoeing = DcduStyleManager.IsBoeing;
             Label _temp = new()
             {
-                BackColor = parent.controlBackColor,
-                ForeColor = parent.controlFrontColor,
-                Font = parent.textFont,
+                BackColor = Color.Transparent,
+                ForeColor = DcduTheme.CyanWhite,
+                Font = new Font("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
                 AutoSize = true,
                 Text = _text,
                 Top = 10,
-                Height = 20,
+                Height = 16,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(0, 10, 0, 0),
-                Margin = new Padding(0, 0, 0, 0)
+                Padding = new Padding(0, 2, 0, 0),
+                Margin = isBoeing ? new Padding(0, 3, 0, 2) : new Padding(0, 3, 0, 2)
             };
 
             return _temp;
@@ -104,18 +283,21 @@ namespace EasyCPDLC
 
         private UITextBox CreateTextBox(string _text, int _maxLength, bool _readOnly = false, bool _numsOnly = false)
         {
+            bool isBoeing = DcduStyleManager.IsBoeing;
             UITextBox _temp = new(parent.controlFrontColor)
             {
-                BackColor = parent.controlBackColor,
-                ForeColor = parent.controlFrontColor,
-                Font = parent.textFontBold,
+                BackColor = DcduTheme.ScreenAlt,
+                ForeColor = DcduTheme.CyanWhite,
+                Font = new Font("Consolas", DcduStyleManager.IsBoeing ? 8.0f : 8.2f, FontStyle.Bold),
                 MaxLength = _maxLength,
-                BorderStyle = BorderStyle.None,
+                BorderStyle = BorderStyle.FixedSingle,
                 Text = _text,
                 CharacterCasing = CharacterCasing.Upper,
                 Top = 10,
-                Padding = new Padding(3, 0, 3, -10),
-                Height = 20,
+                Margin = isBoeing ? new Padding(0, 1, 0, 0) : new Padding(0, 1, 0, 0),
+                Padding = new Padding(3, 1, 3, 1),
+                Height = isBoeing ? 20 : 21,
+                Width = isBoeing ? 104 : 120,
                 ReadOnly = _readOnly,
                 TextAlign = HorizontalAlignment.Center
             };
@@ -123,12 +305,6 @@ namespace EasyCPDLC
             if (_numsOnly)
             {
                 _temp.KeyPress += NumsOnly;
-            }
-
-            using (Graphics G = _temp.CreateGraphics())
-            {
-                _temp.Width = (int)(_temp.MaxLength *
-                              G.MeasureString("x", _temp.Font).Width);
             }
 
             return _temp;
@@ -147,12 +323,43 @@ namespace EasyCPDLC
             this.Close();
         }
 
+
+        private void StyleSelector_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            bool stayOnTop = stayOnTopBox?.Checked ?? parent.StayOnTop;
+            bool playSound = audiblePingBox?.Checked ?? MainForm.PlaySound;
+            bool useFsuipc = useFSUIPCBox?.Checked ?? MainForm.UseFSUIPC;
+            string simbriefId = simbriefTextBox?.Text ?? MainForm.SimbriefID;
+
+            string selectedStyle = styleSelector?.SelectedItem?.ToString() ?? DcduStyleManager.Airbus;
+            DcduStyleManager.CurrentStyle = selectedStyle;
+
+            // Update the currently open Settings window immediately.
+            if (settingsFrame != null)
+            {
+                settingsFrame.AssetFileName = DcduStyleManager.AssetFile("SettingsWindowFrame.png");
+            }
+            ApplyWindowLayout();
+
+            // Rebuild the Settings content with style-specific spacing.
+            InitialiseSettings();
+            stayOnTopBox.Checked = stayOnTop;
+            audiblePingBox.Checked = playSound;
+            useFSUIPCBox.Checked = useFsuipc;
+            simbriefTextBox.Text = simbriefId;
+
+            // Update the already open Main window immediately.
+            parent?.ApplyDisplayStyle();
+        }
+
         private void OkButton_Click(object sender, EventArgs e)
         {
             parent.StayOnTop = stayOnTopBox.Checked;
             MainForm.PlaySound = audiblePingBox.Checked;
             MainForm.UseFSUIPC = useFSUIPCBox.Checked;
             MainForm.SimbriefID = simbriefTextBox.Text;
+            DcduStyleManager.CurrentStyle = styleSelector?.SelectedItem?.ToString() ?? DcduStyleManager.Airbus;
+            parent.ApplyDisplayStyle();
 
             Properties.Settings.Default.Save();
             this.Close();

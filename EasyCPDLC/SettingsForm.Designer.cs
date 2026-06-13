@@ -1,17 +1,9 @@
-﻿
 namespace EasyCPDLC
 {
     partial class SettingsForm
     {
-        /// <summary>
-        /// Required designer variable.
-        /// </summary>
         private System.ComponentModel.IContainer components = null;
 
-        /// <summary>
-        /// Clean up any resources being used.
-        /// </summary>
-        /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
             if (disposing && (components != null))
@@ -23,117 +15,135 @@ namespace EasyCPDLC
 
         #region Windows Form Designer generated code
 
-        /// <summary>
-        /// Required method for Designer support - do not modify
-        /// the contents of this method with the code editor.
-        /// </summary>
         private void InitializeComponent()
         {
-            this.exitButton = new System.Windows.Forms.Button();
-            this.titleLabel = new System.Windows.Forms.Label();
-            this.settingsFormatPanel = new System.Windows.Forms.FlowLayoutPanel();
-            this.cancelButton = new System.Windows.Forms.Button();
-            this.okButton = new System.Windows.Forms.Button();
-            this.SuspendLayout();
+            settingsFrame = new DcduAssetPanel();
+            settingsCard = new System.Windows.Forms.Panel();
+            titleLabel = new System.Windows.Forms.Label();
+            subtitleLabel = new System.Windows.Forms.Label();
+            exitButton = new DcduHotspotButton();
+            settingsFormatPanel = new System.Windows.Forms.FlowLayoutPanel();
+            cancelButton = new DcduHotspotButton();
+            okButton = new DcduHotspotButton();
+            settingsFrame.SuspendLayout();
+            settingsCard.SuspendLayout();
+            SuspendLayout();
             // 
-            // exitButton
+            // settingsFrame
             // 
-            this.exitButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.exitButton.BackgroundImageLayout = System.Windows.Forms.ImageLayout.Center;
-            this.exitButton.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(((int)(((byte)(28)))), ((int)(((byte)(28)))), ((int)(((byte)(28)))));
-            this.exitButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.exitButton.Font = new System.Drawing.Font(MainForm.fonts.Families[1], 9F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.exitButton.ForeColor = System.Drawing.SystemColors.ControlLight;
-            this.exitButton.Location = new System.Drawing.Point(514, -1);
-            this.exitButton.Name = "exitButton";
-            this.exitButton.Size = new System.Drawing.Size(24, 24);
-            this.exitButton.TabIndex = 10;
-            this.exitButton.Text = "X";
-            this.exitButton.UseVisualStyleBackColor = true;
-            this.exitButton.Click += new System.EventHandler(this.ExitButton_Click);
+            settingsFrame.AssetFileName = "SettingsWindowFrame.png";
+            settingsFrame.ShowHotspotHighlight = false;
+            settingsFrame.Controls.Add(settingsCard);
+            settingsFrame.Location = new System.Drawing.Point(0, 0);
+            settingsFrame.Name = "settingsFrame";
+            settingsFrame.Size = new System.Drawing.Size(670, 235);
+            settingsFrame.TabIndex = 0;
+            settingsFrame.MouseMove += AssetFrame_MouseMove;
+            settingsFrame.MouseLeave += AssetFrame_MouseLeave;
+            settingsFrame.MouseDown += AssetFrame_MouseDown;
+            settingsFrame.MouseUp += AssetFrame_MouseUp;
+            settingsFrame.MouseClick += AssetFrame_MouseClick;
+            // 
+            // settingsCard
+            // 
+            settingsCard.BackColor = System.Drawing.Color.Transparent;
+            settingsCard.Controls.Add(titleLabel);
+            settingsCard.Controls.Add(subtitleLabel);
+            settingsCard.Controls.Add(settingsFormatPanel);
+            settingsCard.Location = new System.Drawing.Point(90, 32);
+            settingsCard.Name = "settingsCard";
+            settingsCard.Size = new System.Drawing.Size(434, 167);
+            settingsCard.TabIndex = 1;
+            settingsCard.MouseDown += WindowDrag;
             // 
             // titleLabel
             // 
-            this.titleLabel.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.titleLabel.AutoSize = true;
-            this.titleLabel.Font = new System.Drawing.Font(MainForm.fonts.Families[1], 24F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.titleLabel.ForeColor = System.Drawing.SystemColors.ControlLight;
-            this.titleLabel.Location = new System.Drawing.Point(335, -1);
-            this.titleLabel.Name = "titleLabel";
-            this.titleLabel.Size = new System.Drawing.Size(186, 41);
-            this.titleLabel.TabIndex = 9;
-            this.titleLabel.Text = "EasyCPDLC";
-            this.titleLabel.MouseDown += new System.Windows.Forms.MouseEventHandler(this.WindowDrag);
+            titleLabel.AutoSize = true;
+            titleLabel.Location = new System.Drawing.Point(3, 0);
+            titleLabel.Name = "titleLabel";
+            titleLabel.Size = new System.Drawing.Size(0, 15);
+            titleLabel.TabIndex = 0;
+            titleLabel.Visible = false;
+            // 
+            // subtitleLabel
+            // 
+            subtitleLabel.AutoSize = true;
+            subtitleLabel.Location = new System.Drawing.Point(3, 0);
+            subtitleLabel.Name = "subtitleLabel";
+            subtitleLabel.Size = new System.Drawing.Size(0, 15);
+            subtitleLabel.TabIndex = 1;
+            subtitleLabel.Visible = false;
+            // 
+            // exitButton
+            // 
+            exitButton.AccessibleName = "Close";
+            exitButton.BackColor = System.Drawing.Color.Transparent;
+            exitButton.Location = new System.Drawing.Point(555, 43);
+            exitButton.Name = "exitButton";
+            exitButton.Size = new System.Drawing.Size(59, 31);
+            exitButton.TabIndex = 2;
+            exitButton.Click += ExitButton_Click;
             // 
             // settingsFormatPanel
             // 
-            this.settingsFormatPanel.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
-            this.settingsFormatPanel.AutoScroll = true;
-            this.settingsFormatPanel.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(5)))), ((int)(((byte)(5)))), ((int)(((byte)(5)))));
-            this.settingsFormatPanel.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            this.settingsFormatPanel.Location = new System.Drawing.Point(11, 43);
-            this.settingsFormatPanel.Name = "settingsFormatPanel";
-            this.settingsFormatPanel.Padding = new System.Windows.Forms.Padding(10, 0, 0, 30);
-            this.settingsFormatPanel.Size = new System.Drawing.Size(510, 176);
-            this.settingsFormatPanel.TabIndex = 13;
+            settingsFormatPanel.AutoScroll = false;
+            settingsFormatPanel.BackColor = System.Drawing.Color.Transparent;
+            settingsFormatPanel.BorderStyle = System.Windows.Forms.BorderStyle.None;
+            settingsFormatPanel.FlowDirection = System.Windows.Forms.FlowDirection.TopDown;
+            settingsFormatPanel.Location = new System.Drawing.Point(22, 12);
+            settingsFormatPanel.Name = "settingsFormatPanel";
+            settingsFormatPanel.Padding = new System.Windows.Forms.Padding(8, 4, 8, 4);
+            settingsFormatPanel.Size = new System.Drawing.Size(390, 148);
+            settingsFormatPanel.TabIndex = 2;
+            settingsFormatPanel.WrapContents = false;
+            settingsFormatPanel.MouseDown += WindowDrag;
             // 
             // cancelButton
             // 
-            this.cancelButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.cancelButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.cancelButton.Font = new System.Drawing.Font(MainForm.fonts.Families[1], 12F, System.Drawing.FontStyle.Bold);
-            this.cancelButton.ForeColor = System.Drawing.SystemColors.ControlLight;
-            this.cancelButton.ImageAlign = System.Drawing.ContentAlignment.TopCenter;
-            this.cancelButton.Location = new System.Drawing.Point(307, 225);
-            this.cancelButton.Name = "cancelButton";
-            this.cancelButton.Size = new System.Drawing.Size(104, 37);
-            this.cancelButton.TabIndex = 15;
-            this.cancelButton.Text = "CANCEL";
-            this.cancelButton.UseVisualStyleBackColor = true;
-            this.cancelButton.Click += new System.EventHandler(this.CancelButton_Click);
+            cancelButton.AccessibleName = "Cancel";
+            cancelButton.BackColor = System.Drawing.Color.Transparent;
+            cancelButton.Location = new System.Drawing.Point(555, 83);
+            cancelButton.Name = "cancelButton";
+            cancelButton.Size = new System.Drawing.Size(59, 31);
+            cancelButton.TabIndex = 3;
+            cancelButton.Click += CancelButton_Click;
             // 
             // okButton
             // 
-            this.okButton.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.okButton.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.okButton.Font = new System.Drawing.Font(MainForm.fonts.Families[1], 12F, System.Drawing.FontStyle.Bold);
-            this.okButton.ForeColor = System.Drawing.SystemColors.ControlLight;
-            this.okButton.ImageAlign = System.Drawing.ContentAlignment.TopCenter;
-            this.okButton.Location = new System.Drawing.Point(417, 225);
-            this.okButton.Name = "okButton";
-            this.okButton.Size = new System.Drawing.Size(104, 37);
-            this.okButton.TabIndex = 14;
-            this.okButton.Text = "OK";
-            this.okButton.UseVisualStyleBackColor = true;
-            this.okButton.Click += new System.EventHandler(this.OkButton_Click);
+            okButton.AccessibleName = "Save";
+            okButton.BackColor = System.Drawing.Color.Transparent;
+            okButton.Location = new System.Drawing.Point(555, 123);
+            okButton.Name = "okButton";
+            okButton.Size = new System.Drawing.Size(59, 31);
+            okButton.TabIndex = 4;
+            okButton.Click += OkButton_Click;
             // 
             // SettingsForm
             // 
-            this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.BackColor = System.Drawing.Color.FromArgb(((int)(((byte)(28)))), ((int)(((byte)(28)))), ((int)(((byte)(28)))));
-            this.ClientSize = new System.Drawing.Size(537, 274);
-            this.Controls.Add(this.cancelButton);
-            this.Controls.Add(this.okButton);
-            this.Controls.Add(this.settingsFormatPanel);
-            this.Controls.Add(this.exitButton);
-            this.Controls.Add(this.titleLabel);
-            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
-            this.MinimumSize = new System.Drawing.Size(537, 274);
-            this.Name = "SettingsForm";
-            this.Text = "Settings";
-            this.ResumeLayout(false);
-            this.PerformLayout();
-
+            AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
+            AutoScaleMode = System.Windows.Forms.AutoScaleMode.None;
+            BackColor = System.Drawing.Color.FromArgb(8, 10, 12);
+            ClientSize = new System.Drawing.Size(670, 235);
+            Controls.Add(settingsFrame);
+            FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
+            MaximumSize = new System.Drawing.Size(670, 235);
+            MinimumSize = new System.Drawing.Size(670, 235);
+            Name = "SettingsForm";
+            Text = "Settings";
+            settingsFrame.ResumeLayout(false);
+            settingsCard.ResumeLayout(false);
+            settingsCard.PerformLayout();
+            ResumeLayout(false);
         }
 
         #endregion
-        private System.Windows.Forms.Button exitButton;
+        private DcduAssetPanel settingsFrame;
+        private System.Windows.Forms.Panel settingsCard;
+        private DcduHotspotButton exitButton;
         private System.Windows.Forms.Label titleLabel;
+        private System.Windows.Forms.Label subtitleLabel;
         private System.Windows.Forms.FlowLayoutPanel settingsFormatPanel;
-        private System.Windows.Forms.Button cancelButton;
-        private System.Windows.Forms.Button okButton;
+        private DcduHotspotButton cancelButton;
+        private DcduHotspotButton okButton;
     }
 }
