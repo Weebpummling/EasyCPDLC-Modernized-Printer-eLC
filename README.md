@@ -15,7 +15,7 @@ This build updates the project for **.NET 10** and introduces a redesigned cockp
 
 | Login | Airbus-style | Boeing-style |
 |---|---|---|
-| ![EasyCPDLC login screen](assets/screenshots/login.png) | ![EasyCPDLC DCDU Airbus-style panel](assets/screenshots/dcdu-airbus.png) | ![EasyCPDLC DCDU Boeing-style panel](assets/screenshots/dcdu-boeing.png) |
+| ![EasyCPDLC login screen](assets/screenshots/login.png) | ![EasyCPDLC DCDU Airbus-style panel](assets/screenshots/dcdu-airbus1.png) | ![EasyCPDLC DCDU Boeing-style panel](assets/screenshots/dcdu-boeing1.png) |
 
 ---
 
