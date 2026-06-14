@@ -180,17 +180,12 @@ run(() => {
     return 250;
 });
 
-state(() => {
-    return "ECPDLC";
-});
 
 info(() => {
     return "Toggle EasyCPDLC";
 });
 
-style(() => {
-    return "armed";
-});
+
 ```
 
 ---
