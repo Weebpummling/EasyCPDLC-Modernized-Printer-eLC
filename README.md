@@ -148,31 +148,6 @@ To create a Flow Pro button that opens EasyCPDLC in-game:
 6. Open the widget editor.
 7. Paste this JavaScript code:
 
-```js
-run(() => {
-    this.$api.command.open_browser("easycpdlc://show");
-    return 250;
-});
-
-state(() => {
-    return "ECPDLC";
-});
-
-info(() => {
-    return "Open EasyCPDLC";
-});
-
-style(() => {
-    return "active";
-});
-```
-
-8. Save/compile the widget.
-9. Click the widget in MSFS to bring EasyCPDLC forward.
-
-### Optional toggle version
-
-Use this instead if you want a toggle-style button:
 
 ```js
 run(() => {
@@ -180,17 +155,12 @@ run(() => {
     return 250;
 });
 
-state(() => {
-    return "ECPDLC";
-});
 
 info(() => {
     return "Toggle EasyCPDLC";
 });
 
-style(() => {
-    return "armed";
-});
+
 ```
 
 ---
