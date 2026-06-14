@@ -377,6 +377,15 @@ namespace EasyCPDLC
             }
         }
 
+        private bool IsAtisAutoRefreshSelected()
+        {
+            ComboBox combo = GetComboBoxesRecursive(messageFormatPanel)
+                .FirstOrDefault(x => x.Name == "atisAutoRefreshComboBox");
+
+            string selected = combo?.SelectedItem?.ToString()?.Trim().ToUpperInvariant() ?? "OFF";
+            return selected == "ON";
+        }
+
         private string GetSelectedAtisRequestIdentifier(string station)
         {
             string normalizedStation = (station ?? string.Empty).Trim().ToUpperInvariant();
@@ -552,7 +561,7 @@ namespace EasyCPDLC
             Panel row = new()
             {
                 Width = width,
-                Height = 56,
+                Height = 84,
                 Margin = new Padding(0, 0, 0, 4),
                 BackColor = Color.Transparent
             };
@@ -623,6 +632,35 @@ namespace EasyCPDLC
             atisTypeCombo.SelectedItem = "NONE";
             row.Controls.Add(atisTypeCombo);
 
+            Label autoLabel = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = AccentLabelColor(),
+                Font = textFont,
+                Text = "AUTO:",
+                Location = new Point(typeLabelX, 36),
+                Size = new Size(48, 22),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            row.Controls.Add(autoLabel);
+
+            ComboBox atisAutoCombo = new()
+            {
+                Name = "atisAutoRefreshComboBox",
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Popup,
+                BackColor = Color.FromArgb(4, 10, 18),
+                ForeColor = AccentTitleColor(),
+                Font = new Font(textFontBold.FontFamily, Math.Max(8.2f, textFontBold.Size - 1.4f), FontStyle.Bold),
+                Location = new Point(autoLabel.Right + 6, 34),
+                Size = new Size(82, DcduStyleManager.IsBoeing ? 30 : 28)
+            };
+            atisAutoCombo.Items.Add("OFF");
+            atisAutoCombo.Items.Add("ON");
+            atisAutoCombo.SelectedItem = parent != null && parent.IsAtisAutoRefreshEnabled() ? "ON" : "OFF";
+            row.Controls.Add(atisAutoCombo);
+
             Label hint = new()
             {
                 AutoSize = true,
@@ -630,7 +668,7 @@ namespace EasyCPDLC
                 ForeColor = AccentMutedColor(),
                 Font = new Font(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.2f), FontStyle.Regular),
                 Text = "NONE = ICAO   ARR = ICAO_A   DEP = ICAO_D",
-                Location = new Point(0, 34),
+                Location = new Point(0, 66),
                 Margin = new Padding(0)
             };
             row.Controls.Add(hint);
@@ -819,6 +857,8 @@ namespace EasyCPDLC
 
                 case "atisRadioButton":
                     string atisRequestIdentifier = GetSelectedAtisRequestIdentifier(recipientText);
+                    bool autoRefreshAtis = IsAtisAutoRefreshSelected();
+                    this.parent.SetAtisAutoRefresh(atisRequestIdentifier, autoRefreshAtis);
                     this.parent.WriteMessage("ATIS REQUEST", "ATIS", atisRequestIdentifier, true);
                     this.parent.ArtificialDelay("VATATIS " + atisRequestIdentifier, "INFOREQ", "REQUEST");
                     break;

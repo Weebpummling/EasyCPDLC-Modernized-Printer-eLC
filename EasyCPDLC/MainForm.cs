@@ -75,6 +75,17 @@ namespace EasyCPDLC
                 Color accent = ForeColor;
                 bool focused = Focused;
                 bool hovered = ClientRectangle.Contains(PointToClient(Cursor.Position));
+                string badgeText = Text ?? string.Empty;
+                bool isIndicatorBadge = badgeText.Contains("●") || badgeText.Contains("✓");
+
+                // LED status badges need more contrast on the Boeing display.
+                // Keep the LED color for state, but draw the box itself in a pale DCDU glass tone.
+                Color frameAccent = isIndicatorBadge
+                    ? Color.FromArgb(224, 244, 226)
+                    : accent;
+                Color titleColor = hovered
+                    ? Color.White
+                    : isIndicatorBadge ? Color.FromArgb(224, 255, 230) : accent;
 
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
@@ -82,19 +93,21 @@ namespace EasyCPDLC
                 using GraphicsPath path = MainForm.RoundedButtonRect(bounds, 3);
                 using LinearGradientBrush fill = new LinearGradientBrush(
                     bounds,
-                    Color.FromArgb(34, accent),
-                    Color.FromArgb(12, accent),
+                    isIndicatorBadge ? Color.FromArgb(34, frameAccent) : Color.FromArgb(34, accent),
+                    isIndicatorBadge ? Color.FromArgb(10, frameAccent) : Color.FromArgb(12, accent),
                     LinearGradientMode.Vertical);
-                using Pen border = new Pen(Color.FromArgb((focused || hovered) ? 180 : 112, accent), (focused || hovered) ? 1.35f : 1.0f);
-                using Pen topLine = new Pen(Color.FromArgb(45, Color.White), 1.0f);
+                using Pen border = new Pen(
+                    isIndicatorBadge
+                        ? Color.FromArgb((focused || hovered) ? 220 : 158, frameAccent)
+                        : Color.FromArgb((focused || hovered) ? 180 : 112, accent),
+                    (focused || hovered) ? 1.35f : 1.0f);
+                using Pen topLine = new Pen(Color.FromArgb(isIndicatorBadge ? 82 : 45, Color.White), 1.0f);
 
                 e.Graphics.FillPath(fill, path);
                 e.Graphics.DrawPath(border, path);
                 e.Graphics.DrawLine(topLine, bounds.Left + 4, bounds.Top + 1, bounds.Right - 4, bounds.Top + 1);
 
-                string badgeText = Text ?? string.Empty;
-
-                if (badgeText.Contains("●") || badgeText.Contains("✓"))
+                if (isIndicatorBadge)
                 {
                     bool showCheck = badgeText.Contains("✓");
                     string title = badgeText.Replace("●", string.Empty).Replace("✓", string.Empty).Trim();
@@ -105,7 +118,7 @@ namespace EasyCPDLC
                         title,
                         Font,
                         textRect,
-                        hovered ? Color.White : accent,
+                        titleColor,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
 
                     int indicatorSize = Math.Min(10, Math.Max(7, bounds.Height - 8));
@@ -115,7 +128,7 @@ namespace EasyCPDLC
                         indicatorSize,
                         indicatorSize);
 
-                    using SolidBrush glowBrush = new SolidBrush(Color.FromArgb((focused || hovered) ? 80 : 46, accent));
+                    using SolidBrush glowBrush = new SolidBrush(Color.FromArgb((focused || hovered) ? 94 : 58, accent));
                     Rectangle glowRect = Rectangle.Inflate(indicatorRect, 3, 3);
                     e.Graphics.FillEllipse(glowBrush, glowRect);
 
@@ -155,7 +168,7 @@ namespace EasyCPDLC
                         Color.FromArgb(245, Color.White),
                         accent,
                         LinearGradientMode.ForwardDiagonal);
-                    using Pen ledBorder = new Pen(Color.FromArgb(220, accent), 1.0f);
+                    using Pen ledBorder = new Pen(Color.FromArgb(230, accent), 1.0f);
                     using Pen ledShadow = new Pen(Color.FromArgb(120, Color.Black), 1.0f);
 
                     e.Graphics.FillEllipse(ledFill, indicatorRect);
@@ -577,10 +590,17 @@ namespace EasyCPDLC
         private System.Windows.Forms.Label atisStatusLabel;
         private System.Windows.Forms.Label callsignCaptionLabel;
         private System.Windows.Forms.Label callsignDisplayLabel;
+        private Panel clearanceTimelinePopupPanel;
+        private System.Windows.Forms.Label clearanceTimelinePopupLabel;
+        private bool clearanceTimelinePopupPinned = false;
+        private string lastClearanceHoverText = string.Empty;
+        private Panel atisAvailabilityPopupPanel;
+        private System.Windows.Forms.Label atisAvailabilityPopupLabel;
+        private bool atisAvailabilityPopupPinned = false;
         private string activeMessageFilter = "ALL";
         private string clearanceStatusText = "CLR --";
         private string datalinkStatusText = "PDC --";
-        private string atisStatusText = "ATIS --";
+        private string atisStatusText = BuildDotBadgeText("ATIS");
         private readonly string[] messageFilterOrder = { "ALL", "NEW", "ATIS", "METAR", "CPDLC", "TELEX", "SYSTEM" };
 
         private readonly System.Windows.Forms.Timer vatsimOnlineTimer = new();
@@ -598,6 +618,24 @@ namespace EasyCPDLC
         }
 
         private readonly Dictionary<string, WeatherCacheItem> weatherCache = new();
+
+        private sealed class AtisHoverCacheItem
+        {
+            public string Target { get; set; }
+            public string Header { get; set; }
+            public string Content { get; set; }
+            public DateTime TimestampUtc { get; set; }
+        }
+
+        private readonly Dictionary<string, AtisHoverCacheItem> atisHoverCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object atisHoverLock = new();
+        private string pendingSilentAtisHoverTarget = string.Empty;
+        private DateTime pendingSilentAtisHoverRequestUtc = DateTime.MinValue;
+        private string atisAvailabilityState = "UNKNOWN";
+        private DateTime lastSilentAtisHoverRequestUtc = DateTime.MinValue;
+        private static readonly TimeSpan atisHoverRequestCooldown = TimeSpan.FromMinutes(2);
+        private static readonly TimeSpan atisHoverPendingLifetime = TimeSpan.FromSeconds(90);
+        private static readonly TimeSpan atisHoverCacheLifetime = TimeSpan.FromMinutes(5);
 
         private AccessibleLabel wilcoLabel;
         private AccessibleLabel rogerLabel;
@@ -624,6 +662,17 @@ namespace EasyCPDLC
         private static readonly TimeSpan pendingAtisStaleJumpThreshold = TimeSpan.FromSeconds(30);
         private readonly Queue<string> pendingMetarRequestTargets = new();
         private readonly object pendingMetarRequestLock = new();
+
+        private readonly System.Windows.Forms.Timer atisAutoRefreshTimer = new();
+        private readonly TimeSpan atisAutoRefreshInterval = TimeSpan.FromMinutes(5);
+        private readonly TimeSpan atisAutoRefreshInitialDelay = TimeSpan.FromSeconds(90);
+        private readonly object atisAutoRefreshLock = new();
+        private bool atisAutoRefreshEnabled = false;
+        private string atisAutoRefreshTarget = string.Empty;
+        private string atisAutoRefreshDisplayTarget = string.Empty;
+        private string atisAutoRefreshLastLetter = string.Empty;
+        private DateTime nextAtisAutoRefreshUtc = DateTime.MinValue;
+        private string lastPdcAvailabilityHintStation = string.Empty;
 
         private readonly TimeSpan freeTextCooldown = TimeSpan.FromMinutes(5);
         private readonly object freeTextCooldownLock = new();
@@ -657,6 +706,7 @@ namespace EasyCPDLC
             ConfigureSoundPlayers();
             ConfigureUnreadMessageReminder();
             ConfigureVatsimOnlineRefresh();
+            ConfigureAtisAutoRefresh();
             if (!string.IsNullOrWhiteSpace(startupPlayer.SoundLocation) || startupPlayer.Stream != null)
             {
                 startupPlayer.Play();
@@ -816,16 +866,16 @@ namespace EasyCPDLC
 
         private Color AtisStatusColor()
         {
-            string upper = (atisStatusText ?? string.Empty).ToUpperInvariant();
+            string upper = (atisAvailabilityState ?? string.Empty).ToUpperInvariant();
 
-            if (upper.Contains("A") || upper.Contains("D") || upper.Contains("N"))
+            if (upper == "ONLINE")
             {
-                return MainPrimaryTextColor();
+                return DcduTheme.Green;
             }
 
-            if (upper.Contains("-") || upper.Contains("?"))
+            if (upper == "OFFLINE")
             {
-                return DcduTheme.Amber;
+                return Color.FromArgb(255, 86, 74);
             }
 
             return MainPrimaryTextColor();
@@ -1034,7 +1084,16 @@ namespace EasyCPDLC
 
             if (clearanceStatusLabel == null)
             {
-                clearanceStatusLabel = CreateMainStatusBadge(BuildClearanceBadgeText(), Cursors.Default);
+                clearanceStatusLabel = CreateMainStatusBadge(BuildClearanceBadgeText(), Cursors.Hand);
+                clearanceStatusLabel.MouseEnter += (_, __) => ShowClearanceTimelinePopup(false);
+                clearanceStatusLabel.MouseLeave += (_, __) =>
+                {
+                    if (!clearanceTimelinePopupPinned)
+                    {
+                        HideClearanceTimelinePopup();
+                    }
+                };
+                clearanceStatusLabel.Click += (_, __) => ToggleClearanceTimelinePopup();
                 screenPanel.Controls.Add(clearanceStatusLabel);
             }
 
@@ -1046,7 +1105,16 @@ namespace EasyCPDLC
 
             if (atisStatusLabel == null)
             {
-                atisStatusLabel = CreateMainStatusBadge(atisStatusText, Cursors.Default);
+                atisStatusLabel = CreateMainStatusBadge(atisStatusText, Cursors.Hand);
+                atisStatusLabel.MouseEnter += (_, __) => ShowAtisAvailabilityPopup(false);
+                atisStatusLabel.MouseLeave += (_, __) =>
+                {
+                    if (!atisAvailabilityPopupPinned)
+                    {
+                        HideAtisAvailabilityPopup();
+                    }
+                };
+                atisStatusLabel.Click += (_, __) => ToggleAtisAvailabilityPopup();
                 screenPanel.Controls.Add(atisStatusLabel);
             }
 
@@ -1055,6 +1123,8 @@ namespace EasyCPDLC
             atisStatusLabel.BringToFront();
             callsignCaptionLabel.BringToFront();
             callsignDisplayLabel.BringToFront();
+            ConfigureClearanceTimelinePopup();
+            ConfigureAtisAvailabilityPopup();
             messageFilterLabel.BringToFront();
             ConfigureFilterDropdownMenu();
             UpdateSmartStatusLabelColors();
@@ -1119,6 +1189,18 @@ namespace EasyCPDLC
                 datalinkStatusLabel.Size = new Size(58, 19);
                 atisStatusLabel.Location = new Point(386, 57);
                 atisStatusLabel.Size = new Size(72, 19);
+
+                if (clearanceTimelinePopupPanel != null)
+                {
+                    clearanceTimelinePopupPanel.Location = new Point(238, 82);
+                    clearanceTimelinePopupPanel.Size = new Size(230, 72);
+                }
+
+                if (atisAvailabilityPopupPanel != null)
+                {
+                    atisAvailabilityPopupPanel.Location = new Point(166, 82);
+                    atisAvailabilityPopupPanel.Size = new Size(300, 118);
+                }
             }
             else
             {
@@ -1138,6 +1220,18 @@ namespace EasyCPDLC
                 datalinkStatusLabel.Size = new Size(58, 19);
                 atisStatusLabel.Location = new Point(388, 65);
                 atisStatusLabel.Size = new Size(72, 19);
+
+                if (clearanceTimelinePopupPanel != null)
+                {
+                    clearanceTimelinePopupPanel.Location = new Point(240, 90);
+                    clearanceTimelinePopupPanel.Size = new Size(230, 72);
+                }
+
+                if (atisAvailabilityPopupPanel != null)
+                {
+                    atisAvailabilityPopupPanel.Location = new Point(170, 90);
+                    atisAvailabilityPopupPanel.Size = new Size(300, 118);
+                }
             }
 
             if (onlineStatusLabel != null)
@@ -1149,6 +1243,14 @@ namespace EasyCPDLC
             clearanceStatusLabel.BringToFront();
             datalinkStatusLabel.BringToFront();
             atisStatusLabel.BringToFront();
+            if (clearanceTimelinePopupPanel != null && clearanceTimelinePopupPanel.Visible)
+            {
+                clearanceTimelinePopupPanel.BringToFront();
+            }
+            if (atisAvailabilityPopupPanel != null && atisAvailabilityPopupPanel.Visible)
+            {
+                atisAvailabilityPopupPanel.BringToFront();
+            }
             messageFilterLabel.BringToFront();
         }
 
@@ -1192,6 +1294,11 @@ namespace EasyCPDLC
             }
 
             UpdateSmartStatusLabelColors();
+
+            if (clearanceTimelinePopupPanel != null && clearanceTimelinePopupPanel.Visible)
+            {
+                UpdateClearanceHoverPopupText();
+            }
         }
 
         private void SetClearanceStatus(string status)
@@ -1233,6 +1340,7 @@ namespace EasyCPDLC
 
             if (outbound)
             {
+                lastClearanceHoverText = string.Empty;
                 SetClearanceStatus("CLR REQ");
                 return;
             }
@@ -1243,6 +1351,7 @@ namespace EasyCPDLC
                 return;
             }
 
+            lastClearanceHoverText = NormalizeClearanceHoverText(contents);
             SetClearanceStatus("CLR RX");
         }
 
@@ -1461,6 +1570,201 @@ namespace EasyCPDLC
             HideNativeOutputScrollbars();
         }
 
+        private void ConfigureAtisAutoRefresh()
+        {
+            atisAutoRefreshTimer.Interval = 15000;
+            atisAutoRefreshTimer.Tick += (_, __) => AtisAutoRefreshTimer_Tick();
+            atisAutoRefreshTimer.Start();
+        }
+
+        private void AtisAutoRefreshTimer_Tick()
+        {
+            string target;
+
+            lock (atisAutoRefreshLock)
+            {
+                if (!atisAutoRefreshEnabled || !Connected || string.IsNullOrWhiteSpace(atisAutoRefreshTarget))
+                {
+                    return;
+                }
+
+                if (DateTime.UtcNow < nextAtisAutoRefreshUtc)
+                {
+                    return;
+                }
+
+                target = atisAutoRefreshTarget;
+                nextAtisAutoRefreshUtc = DateTime.UtcNow + atisAutoRefreshInterval;
+            }
+
+            RememberAtisRequestTarget(target);
+            ArtificialDelay("VATATIS " + target, "INFOREQ", "REQUEST", 2, 8);
+        }
+
+        public void SetAtisAutoRefresh(string target, bool enabled)
+        {
+            string cleanTarget = (target ?? string.Empty).Trim().ToUpperInvariant();
+
+            lock (atisAutoRefreshLock)
+            {
+                if (!enabled || string.IsNullOrWhiteSpace(cleanTarget))
+                {
+                    atisAutoRefreshEnabled = false;
+                    atisAutoRefreshTarget = string.Empty;
+                    atisAutoRefreshDisplayTarget = string.Empty;
+                    atisAutoRefreshLastLetter = string.Empty;
+                    nextAtisAutoRefreshUtc = DateTime.MinValue;
+                }
+                else
+                {
+                    atisAutoRefreshEnabled = true;
+                    atisAutoRefreshTarget = cleanTarget;
+                    atisAutoRefreshDisplayTarget = FormatAtisTargetForList(cleanTarget);
+                    atisAutoRefreshLastLetter = string.Empty;
+                    nextAtisAutoRefreshUtc = DateTime.UtcNow + atisAutoRefreshInitialDelay;
+                }
+            }
+
+            WriteMessage(enabled && !string.IsNullOrWhiteSpace(cleanTarget)
+                ? "ATIS AUTO REFRESH ON FOR " + FormatAtisTargetForList(cleanTarget)
+                : "ATIS AUTO REFRESH OFF", "SYSTEM", "SYSTEM");
+        }
+
+        public bool IsAtisAutoRefreshEnabled()
+        {
+            lock (atisAutoRefreshLock)
+            {
+                return atisAutoRefreshEnabled;
+            }
+        }
+
+        private bool IsAutoAtisTarget(string target)
+        {
+            string formatted = FormatAtisTargetForList(target);
+
+            lock (atisAutoRefreshLock)
+            {
+                return atisAutoRefreshEnabled &&
+                    !string.IsNullOrWhiteSpace(atisAutoRefreshDisplayTarget) &&
+                    string.Equals(formatted, atisAutoRefreshDisplayTarget, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        private string BuildAtisStatusForOverview(string target, string atisLetter)
+        {
+            string cleanLetter = (atisLetter ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(cleanLetter))
+            {
+                return "? RECEIVED";
+            }
+
+            lock (atisAutoRefreshLock)
+            {
+                if (atisAutoRefreshEnabled &&
+                    IsAutoAtisTarget(target) &&
+                    !string.IsNullOrWhiteSpace(atisAutoRefreshLastLetter) &&
+                    !string.Equals(atisAutoRefreshLastLetter, cleanLetter, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "UPDATED " + atisAutoRefreshLastLetter + "->" + cleanLetter;
+                }
+            }
+
+            return cleanLetter + " RECEIVED";
+        }
+
+        private void TrackAutoAtisLetterFromMessage(CPDLCMessage message)
+        {
+            if (message == null || string.IsNullOrWhiteSpace(message.Text))
+            {
+                return;
+            }
+
+            Match match = Regex.Match((message.Text ?? string.Empty).ToUpperInvariant(), @"\b([A-Z0-9]{4})\s+ATIS\s+(?:UPDATED\s+[A-Z?]->)?([A-Z?])\b");
+            if (!match.Success)
+            {
+                return;
+            }
+
+            string target = match.Groups[1].Value;
+            string letter = match.Groups[2].Value;
+
+            lock (atisAutoRefreshLock)
+            {
+                if (atisAutoRefreshEnabled &&
+                    string.Equals(target, atisAutoRefreshDisplayTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    atisAutoRefreshLastLetter = letter;
+                }
+            }
+        }
+
+        private bool ShouldSuppressUnchangedAutoAtisResponse(string contents, string type, string recipient, bool outbound)
+        {
+            if (outbound)
+            {
+                return false;
+            }
+
+            string normalizedType = (type ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (!ShouldUseAtisListText(contents, normalizedType, recipient))
+            {
+                return false;
+            }
+
+            string target = GetAtisListTarget(contents, recipient, false);
+
+            if (!IsAutoAtisTarget(target))
+            {
+                return false;
+            }
+
+            string letter = GetAtisOverviewLetter(contents, target);
+
+            if (string.IsNullOrWhiteSpace(letter))
+            {
+                return false;
+            }
+
+            lock (atisAutoRefreshLock)
+            {
+                if (string.IsNullOrWhiteSpace(atisAutoRefreshLastLetter) ||
+                    !string.Equals(atisAutoRefreshLastLetter, letter, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            RemovePendingAtisRequestTarget(target);
+            CacheWeatherMessage("ATIS", target, contents, letter + " RECEIVED" + BuildWeatherOverviewSuffix(contents, 26, false));
+            return true;
+        }
+
+        private void MaybeShowPdcAvailabilityHint(string station, bool hasDatalink)
+        {
+            if (!Connected || !hasDatalink || string.IsNullOrWhiteSpace(station))
+            {
+                return;
+            }
+
+            string cleanStation = station.Trim().ToUpperInvariant();
+            string clr = (clearanceStatusText ?? string.Empty).ToUpperInvariant();
+
+            if (clr.Contains("REQ") || clr.Contains("RX") || clr.Contains("ACC") || clr.Contains("REJ"))
+            {
+                return;
+            }
+
+            if (string.Equals(lastPdcAvailabilityHintStation, cleanStation, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            lastPdcAvailabilityHintStation = cleanStation;
+            WriteMessage("PDC AVAILABLE FOR " + cleanStation, "SYSTEM", "SYSTEM");
+        }
+
         private void ConfigureVatsimOnlineRefresh()
         {
             // Kept intentionally as a no-op.
@@ -1558,7 +1862,8 @@ namespace EasyCPDLC
             if (string.IsNullOrWhiteSpace(station))
             {
                 datalinkStatusText = "PDC --";
-                atisStatusText = "ATIS --";
+                atisStatusText = BuildDotBadgeText("ATIS");
+                atisAvailabilityState = "UNKNOWN";
                 UpdateClearanceStatusLabel();
                 return;
             }
@@ -1569,18 +1874,24 @@ namespace EasyCPDLC
             bool atisGeneric = IsAtisOnline(station);
             bool atisArrival = IsAtisOnline(station + "_A");
             bool atisDeparture = IsAtisOnline(station + "_D");
+            bool hasAnyAtis = atisGeneric || atisArrival || atisDeparture;
 
-            List<string> atisParts = new();
-            if (atisGeneric) atisParts.Add("N");
-            if (atisArrival) atisParts.Add("A");
-            if (atisDeparture) atisParts.Add("D");
-
-            string atisText = atisParts.Count == 0 ? "-" : string.Join("/", atisParts);
             string datalinkText = hoppieOnlineStationsLoaded ? (hasDatalink ? "AVAIL" : "NONE") : "?";
 
             datalinkStatusText = "PDC " + datalinkText;
-            atisStatusText = "ATIS " + atisText;
+            atisStatusText = BuildDotBadgeText("ATIS");
+            atisAvailabilityState = vatsimData?.atis == null
+                ? "UNKNOWN"
+                : hasAnyAtis ? "ONLINE" : "OFFLINE";
+
             UpdateClearanceStatusLabel();
+
+            if (atisAvailabilityPopupPanel != null && atisAvailabilityPopupPanel.Visible)
+            {
+                UpdateAtisAvailabilityPopupText();
+            }
+
+            MaybeShowPdcAvailabilityHint(station, hasDatalink);
         }
 
         private string GetPrimaryOnlineStatusStation()
@@ -1639,6 +1950,481 @@ namespace EasyCPDLC
             return vatsimData.atis.Any(atis =>
                 !string.IsNullOrWhiteSpace(atis.callsign) &&
                 string.Equals(atis.callsign.ToUpperInvariant(), withAtis, StringComparison.Ordinal));
+        }
+
+        private IEnumerable<Atis> GetAvailableAtisForStation(string station)
+        {
+            if (vatsimData?.atis == null || string.IsNullOrWhiteSpace(station))
+            {
+                return Enumerable.Empty<Atis>();
+            }
+
+            string cleanStation = station.Trim().ToUpperInvariant();
+
+            return vatsimData.atis
+                .Where(atis => !string.IsNullOrWhiteSpace(atis.callsign))
+                .Where(atis =>
+                {
+                    string callsign = atis.callsign.Trim().ToUpperInvariant();
+                    return callsign == cleanStation + "_ATIS" ||
+                           callsign == cleanStation + "_A_ATIS" ||
+                           callsign == cleanStation + "_D_ATIS";
+                })
+                .OrderBy(atis =>
+                {
+                    string callsign = atis.callsign.Trim().ToUpperInvariant();
+                    if (callsign == cleanStation + "_ATIS") return 0;
+                    if (callsign == cleanStation + "_A_ATIS") return 1;
+                    if (callsign == cleanStation + "_D_ATIS") return 2;
+                    return 3;
+                });
+        }
+
+        private string BuildAtisAvailabilityPopupText()
+        {
+            string target = GetPreferredAtisHoverTarget();
+
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return "ATIS\nNO STATION";
+            }
+
+            target = target.Trim().ToUpperInvariant();
+
+            EnsureSilentAtisHoverRequest(target);
+
+            AtisHoverCacheItem cached = GetAtisHoverCache(target);
+            if (cached != null)
+            {
+                return FormatAtisHoverPopupText(cached.Header, cached.Content);
+            }
+
+            string vatsimText = GetVatsimAtisTextForTarget(target);
+            if (!string.IsNullOrWhiteSpace(vatsimText))
+            {
+                string header = BuildAtisHoverHeader(target, vatsimText);
+                StoreAtisHoverContent(target, vatsimText, header);
+                return FormatAtisHoverPopupText(header, vatsimText);
+            }
+
+            return FormatAtisCallsignForHover(target) + "\nREQUESTING ATIS...";
+        }
+
+        private string GetPreferredAtisHoverTarget()
+        {
+            string station = GetPrimaryOnlineStatusStation();
+
+            if (string.IsNullOrWhiteSpace(station))
+            {
+                return string.Empty;
+            }
+
+            station = station.Trim().ToUpperInvariant();
+
+            if (IsAtisOnline(station))
+            {
+                return station;
+            }
+
+            if (IsAtisOnline(station + "_A"))
+            {
+                return station + "_A";
+            }
+
+            if (IsAtisOnline(station + "_D"))
+            {
+                return station + "_D";
+            }
+
+            return station;
+        }
+
+        private string FormatAtisCallsignForHover(string target)
+        {
+            string clean = (target ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return "ATIS";
+            }
+
+            if (clean.EndsWith("_ATIS", StringComparison.OrdinalIgnoreCase))
+            {
+                return clean;
+            }
+
+            return clean + "_ATIS";
+        }
+
+        private AtisHoverCacheItem GetAtisHoverCache(string target)
+        {
+            string key = FormatAtisCallsignForHover(target);
+
+            lock (atisHoverLock)
+            {
+                if (!atisHoverCache.TryGetValue(key, out AtisHoverCacheItem item))
+                {
+                    return null;
+                }
+
+                if (DateTime.UtcNow - item.TimestampUtc > atisHoverCacheLifetime)
+                {
+                    atisHoverCache.Remove(key);
+                    return null;
+                }
+
+                return item;
+            }
+        }
+
+        private void StoreAtisHoverContent(string target, string contents, string header = null)
+        {
+            string key = FormatAtisCallsignForHover(target);
+            string cleanContents = NormalizeAtisHoverContent(contents);
+            string cleanHeader = string.IsNullOrWhiteSpace(header)
+                ? BuildAtisHoverHeader(target, cleanContents)
+                : header.Trim().ToUpperInvariant();
+
+            lock (atisHoverLock)
+            {
+                atisHoverCache[key] = new AtisHoverCacheItem
+                {
+                    Target = key,
+                    Header = cleanHeader,
+                    Content = cleanContents,
+                    TimestampUtc = DateTime.UtcNow
+                };
+            }
+        }
+
+        private string GetVatsimAtisTextForTarget(string target)
+        {
+            if (vatsimData?.atis == null)
+            {
+                return string.Empty;
+            }
+
+            string callsign = FormatAtisCallsignForHover(target);
+
+            Atis atis = vatsimData.atis
+                .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.callsign) &&
+                    string.Equals(item.callsign.Trim(), callsign, StringComparison.OrdinalIgnoreCase));
+
+            if (atis == null || atis.text_atis == null || atis.text_atis.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(" ", atis.text_atis);
+        }
+
+        private string BuildAtisHoverHeader(string target, string contents)
+        {
+            string callsign = FormatAtisCallsignForHover(target);
+            string letter = ExtractAtisInformationLetter(contents);
+
+            if (string.IsNullOrWhiteSpace(letter))
+            {
+                letter = ExtractAtisLetterFromVatsimData(target);
+            }
+
+            return string.IsNullOrWhiteSpace(letter)
+                ? callsign
+                : callsign + "  INFO " + letter.Trim().ToUpperInvariant()[0];
+        }
+
+        private static string NormalizeAtisHoverContent(string contents)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return string.Empty;
+            }
+
+            string normalized = contents
+                .Replace("\r\n", " ")
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Replace("@@", " N/A ")
+                .Replace("@", " ")
+                .Replace("_", " ")
+                .ToUpperInvariant();
+
+            normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
+
+            normalized = Regex.Replace(normalized, @"^\s*VATATIS\s+[A-Z0-9_]+\s*", string.Empty);
+            normalized = Regex.Replace(normalized, @"^\s*[A-Z0-9_]+_ATIS\s*", string.Empty);
+
+            return normalized.Trim();
+        }
+
+        private string FormatAtisHoverPopupText(string header, string contents)
+        {
+            string cleanHeader = string.IsNullOrWhiteSpace(header) ? "ATIS" : header.Trim().ToUpperInvariant();
+            string cleanContents = NormalizeAtisHoverContent(contents);
+
+            List<string> lines = new()
+            {
+                cleanHeader
+            };
+
+            if (string.IsNullOrWhiteSpace(cleanContents))
+            {
+                lines.Add("NO ATIS TEXT");
+                return string.Join("\n", lines);
+            }
+
+            foreach (string line in WrapAtisHoverText(cleanContents, 36))
+            {
+                if (lines.Count >= 6)
+                {
+                    break;
+                }
+
+                lines.Add(line);
+            }
+
+            return string.Join("\n", lines);
+        }
+
+        private static IEnumerable<string> WrapAtisHoverText(string text, int maxChars)
+        {
+            string remaining = Regex.Replace(text ?? string.Empty, @"\s+", " ").Trim();
+
+            while (remaining.Length > 0)
+            {
+                if (remaining.Length <= maxChars)
+                {
+                    yield return remaining;
+                    yield break;
+                }
+
+                int split = remaining.LastIndexOf(' ', Math.Min(maxChars, remaining.Length - 1));
+                if (split < 12)
+                {
+                    split = Math.Min(maxChars, remaining.Length);
+                }
+
+                yield return remaining.Substring(0, split).Trim();
+                remaining = remaining.Substring(split).Trim();
+            }
+        }
+
+        private void EnsureSilentAtisHoverRequest(string target)
+        {
+            if (!Connected || string.IsNullOrWhiteSpace(target))
+            {
+                return;
+            }
+
+            string cleanTarget = target.Trim().ToUpperInvariant();
+            string key = FormatAtisCallsignForHover(cleanTarget);
+            DateTime now = DateTime.UtcNow;
+
+            lock (atisHoverLock)
+            {
+                if (atisHoverCache.TryGetValue(key, out AtisHoverCacheItem item) &&
+                    now - item.TimestampUtc <= atisHoverCacheLifetime)
+                {
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(pendingSilentAtisHoverTarget) &&
+                    now - pendingSilentAtisHoverRequestUtc <= atisHoverPendingLifetime)
+                {
+                    return;
+                }
+
+                if (now - lastSilentAtisHoverRequestUtc < atisHoverRequestCooldown)
+                {
+                    return;
+                }
+
+                pendingSilentAtisHoverTarget = FormatAtisTargetForList(cleanTarget);
+                pendingSilentAtisHoverRequestUtc = now;
+                lastSilentAtisHoverRequestUtc = now;
+            }
+
+            RememberAtisRequestTarget(cleanTarget);
+            ArtificialDelay("VATATIS " + cleanTarget, "INFOREQ", "REQUEST", 1, 3);
+        }
+
+        private bool TryCaptureSilentAtisHoverResponse(string contents, string type, string recipient, bool outbound)
+        {
+            if (outbound || string.IsNullOrWhiteSpace(contents))
+            {
+                return false;
+            }
+
+            string pendingTarget;
+
+            lock (atisHoverLock)
+            {
+                if (string.IsNullOrWhiteSpace(pendingSilentAtisHoverTarget) ||
+                    DateTime.UtcNow - pendingSilentAtisHoverRequestUtc > atisHoverPendingLifetime)
+                {
+                    pendingSilentAtisHoverTarget = string.Empty;
+                    return false;
+                }
+
+                pendingTarget = pendingSilentAtisHoverTarget;
+            }
+
+            string normalizedType = (type ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (!ShouldUseAtisListText(contents, normalizedType, recipient))
+            {
+                return false;
+            }
+
+            string target = GetAtisListTarget(contents, recipient, true);
+            string formattedTarget = FormatAtisTargetForList(target);
+
+            if (!string.Equals(formattedTarget, pendingTarget, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            StoreAtisHoverContent(formattedTarget, contents);
+
+            lock (atisHoverLock)
+            {
+                pendingSilentAtisHoverTarget = string.Empty;
+            }
+
+            SafeUi(() =>
+            {
+                if (atisAvailabilityPopupPanel != null && atisAvailabilityPopupPanel.Visible)
+                {
+                    UpdateAtisAvailabilityPopupText();
+                }
+            });
+
+            return true;
+        }
+
+        private void ConfigureAtisAvailabilityPopup()
+        {
+            if (screenPanel == null)
+            {
+                return;
+            }
+
+            if (atisAvailabilityPopupPanel == null)
+            {
+                atisAvailabilityPopupPanel = new Panel
+                {
+                    BackColor = Color.Transparent,
+                    Visible = false
+                };
+                atisAvailabilityPopupPanel.Paint += AtisAvailabilityPopup_Paint;
+                atisAvailabilityPopupPanel.MouseLeave += (_, __) =>
+                {
+                    if (!atisAvailabilityPopupPinned)
+                    {
+                        HideAtisAvailabilityPopup();
+                    }
+                };
+                atisAvailabilityPopupPanel.Click += (_, __) => ToggleAtisAvailabilityPopup();
+                screenPanel.Controls.Add(atisAvailabilityPopupPanel);
+            }
+
+            if (atisAvailabilityPopupLabel == null)
+            {
+                atisAvailabilityPopupLabel = new System.Windows.Forms.Label
+                {
+                    AutoSize = false,
+                    BackColor = Color.Transparent,
+                    Font = new Font(textFontBold.FontFamily, Math.Max(6.8f, textFontBold.Size - 2.15f), FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(7, 2, 6, 2),
+                    Cursor = Cursors.Hand
+                };
+                atisAvailabilityPopupLabel.Click += (_, __) => ToggleAtisAvailabilityPopup();
+                atisAvailabilityPopupPanel.Controls.Add(atisAvailabilityPopupLabel);
+            }
+        }
+
+        private void AtisAvailabilityPopup_Paint(object sender, PaintEventArgs e)
+        {
+            if (sender is not Panel panel)
+            {
+                return;
+            }
+
+            Rectangle bounds = new Rectangle(0, 0, Math.Max(1, panel.Width - 1), Math.Max(1, panel.Height - 1));
+            Color accent = atisAvailabilityPopupLabel?.ForeColor ?? MainAccentColor();
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            using GraphicsPath path = RoundedButtonRect(bounds, 6);
+            using LinearGradientBrush fill = new LinearGradientBrush(
+                bounds,
+                Color.FromArgb(42, accent),
+                Color.FromArgb(13, accent),
+                LinearGradientMode.Vertical);
+            using Pen border = new Pen(Color.FromArgb(atisAvailabilityPopupPinned ? 190 : 118, accent), atisAvailabilityPopupPinned ? 1.35f : 1.0f);
+            using Pen topLine = new Pen(Color.FromArgb(55, Color.White), 1.0f);
+
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+            e.Graphics.DrawLine(topLine, bounds.Left + 6, bounds.Top + 1, bounds.Right - 6, bounds.Top + 1);
+        }
+
+        private void UpdateAtisAvailabilityPopupText()
+        {
+            ConfigureAtisAvailabilityPopup();
+
+            if (atisAvailabilityPopupLabel == null || atisAvailabilityPopupPanel == null)
+            {
+                return;
+            }
+
+            string text = BuildAtisAvailabilityPopupText();
+            bool waiting = text.Contains("REQUESTING") || text.Contains("NO STATION") || text.Contains("NO ATIS TEXT");
+
+            atisAvailabilityPopupLabel.Text = text;
+            atisAvailabilityPopupLabel.ForeColor = waiting ? DcduTheme.Amber : MainPrimaryTextColor();
+            atisAvailabilityPopupPanel.Invalidate();
+        }
+
+        private void ShowAtisAvailabilityPopup(bool pin)
+        {
+            HideClearanceTimelinePopup();
+            ConfigureAtisAvailabilityPopup();
+
+            if (atisAvailabilityPopupPanel == null || atisAvailabilityPopupLabel == null)
+            {
+                return;
+            }
+
+            atisAvailabilityPopupPinned = pin || atisAvailabilityPopupPinned;
+            UpdateAtisAvailabilityPopupText();
+            atisAvailabilityPopupPanel.Visible = true;
+            atisAvailabilityPopupPanel.BringToFront();
+        }
+
+        private void HideAtisAvailabilityPopup()
+        {
+            atisAvailabilityPopupPinned = false;
+
+            if (atisAvailabilityPopupPanel != null)
+            {
+                atisAvailabilityPopupPanel.Visible = false;
+            }
+        }
+
+        private void ToggleAtisAvailabilityPopup()
+        {
+            if (atisAvailabilityPopupPanel != null && atisAvailabilityPopupPanel.Visible && atisAvailabilityPopupPinned)
+            {
+                HideAtisAvailabilityPopup();
+                return;
+            }
+
+            atisAvailabilityPopupPinned = true;
+            ShowAtisAvailabilityPopup(true);
         }
 
         private void ApplyMainWindowBounds(bool isBoeing)
@@ -2824,9 +3610,7 @@ namespace EasyCPDLC
                 }
 
                 string atisLetter = GetAtisOverviewLetter(contents, target);
-                string atisStatus = string.IsNullOrWhiteSpace(atisLetter)
-                    ? "? RECEIVED"
-                    : atisLetter + " RECEIVED";
+                string atisStatus = BuildAtisStatusForOverview(target, atisLetter);
                 string atisSummary = atisStatus + BuildWeatherOverviewSuffix(contents, 26, false);
 
                 CacheWeatherMessage("ATIS", target, contents, atisSummary);
@@ -4014,6 +4798,292 @@ namespace EasyCPDLC
             return string.Join("\n", wrappedLines);
         }
 
+        private static string NormalizeClearanceHoverText(string contents)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return string.Empty;
+            }
+
+            string normalized = contents
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Replace("@@", " N/A ")
+                .Replace("@", "\n")
+                .Replace("_", " ")
+                .ToUpperInvariant();
+
+            List<string> sourceLines = normalized
+                .Split('\n')
+                .Select(line => Regex.Replace(line, @"\s+", " ").Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            if (sourceLines.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            List<string> outputLines = new()
+            {
+                "CLR RECEIVED"
+            };
+
+            foreach (string sourceLine in sourceLines)
+            {
+                string line = sourceLine;
+
+                while (line.Length > 34 && outputLines.Count < 4)
+                {
+                    int split = line.LastIndexOf(' ', Math.Min(34, line.Length - 1));
+                    if (split < 12)
+                    {
+                        split = Math.Min(34, line.Length);
+                    }
+
+                    outputLines.Add(line.Substring(0, split).Trim());
+                    line = line.Substring(split).Trim();
+                }
+
+                if (!string.IsNullOrWhiteSpace(line) && outputLines.Count < 4)
+                {
+                    outputLines.Add(line);
+                }
+
+                if (outputLines.Count >= 4)
+                {
+                    break;
+                }
+            }
+
+            return string.Join("\n", outputLines);
+        }
+
+        private string BuildClearanceHoverPopupText()
+        {
+            if (!string.IsNullOrWhiteSpace(lastClearanceHoverText))
+            {
+                return lastClearanceHoverText;
+            }
+
+            return BuildClearanceTimeline(previewMessage).Replace("CLR TIMELINE  ", string.Empty);
+        }
+
+        private Color ClearanceHoverPopupColor()
+        {
+            if (!string.IsNullOrWhiteSpace(lastClearanceHoverText))
+            {
+                string status = (clearanceStatusText ?? string.Empty).ToUpperInvariant();
+
+                if (status.Contains("REJ"))
+                {
+                    return Color.FromArgb(255, 86, 74);
+                }
+
+                if (status.Contains("ACC"))
+                {
+                    return DcduTheme.Green;
+                }
+
+                return MainPrimaryTextColor();
+            }
+
+            return ClearanceTimelineColor(BuildClearanceTimeline(previewMessage));
+        }
+
+        private void UpdateClearanceHoverPopupText()
+        {
+            if (clearanceTimelinePopupPanel == null || clearanceTimelinePopupLabel == null)
+            {
+                return;
+            }
+
+            clearanceTimelinePopupLabel.Text = BuildClearanceHoverPopupText();
+            clearanceTimelinePopupLabel.ForeColor = ClearanceHoverPopupColor();
+            clearanceTimelinePopupPanel.Invalidate();
+        }
+
+        private void ConfigureClearanceTimelinePopup()
+        {
+            if (screenPanel == null)
+            {
+                return;
+            }
+
+            if (clearanceTimelinePopupPanel == null)
+            {
+                clearanceTimelinePopupPanel = new Panel
+                {
+                    BackColor = Color.Transparent,
+                    Visible = false
+                };
+                clearanceTimelinePopupPanel.Paint += ClearanceTimelinePopup_Paint;
+                clearanceTimelinePopupPanel.MouseLeave += (_, __) =>
+                {
+                    if (!clearanceTimelinePopupPinned)
+                    {
+                        HideClearanceTimelinePopup();
+                    }
+                };
+                clearanceTimelinePopupPanel.Click += (_, __) => ToggleClearanceTimelinePopup();
+                screenPanel.Controls.Add(clearanceTimelinePopupPanel);
+            }
+
+            if (clearanceTimelinePopupLabel == null)
+            {
+                clearanceTimelinePopupLabel = new System.Windows.Forms.Label
+                {
+                    AutoSize = false,
+                    BackColor = Color.Transparent,
+                    Font = new Font(textFontBold.FontFamily, Math.Max(7.2f, textFontBold.Size - 1.9f), FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(7, 2, 6, 2),
+                    Cursor = Cursors.Hand
+                };
+                clearanceTimelinePopupLabel.Click += (_, __) => ToggleClearanceTimelinePopup();
+                clearanceTimelinePopupPanel.Controls.Add(clearanceTimelinePopupLabel);
+            }
+        }
+
+        private void ClearanceTimelinePopup_Paint(object sender, PaintEventArgs e)
+        {
+            if (sender is not Panel panel)
+            {
+                return;
+            }
+
+            Rectangle bounds = new Rectangle(0, 0, Math.Max(1, panel.Width - 1), Math.Max(1, panel.Height - 1));
+            Color accent = clearanceTimelinePopupLabel?.ForeColor ?? MainAccentColor();
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            using GraphicsPath path = RoundedButtonRect(bounds, 6);
+            using LinearGradientBrush fill = new LinearGradientBrush(
+                bounds,
+                Color.FromArgb(42, accent),
+                Color.FromArgb(13, accent),
+                LinearGradientMode.Vertical);
+            using Pen border = new Pen(Color.FromArgb(clearanceTimelinePopupPinned ? 190 : 118, accent), clearanceTimelinePopupPinned ? 1.35f : 1.0f);
+            using Pen topLine = new Pen(Color.FromArgb(55, Color.White), 1.0f);
+
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+            e.Graphics.DrawLine(topLine, bounds.Left + 6, bounds.Top + 1, bounds.Right - 6, bounds.Top + 1);
+        }
+
+        private void ShowClearanceTimelinePopup(bool pin)
+        {
+            HideAtisAvailabilityPopup();
+            ConfigureClearanceTimelinePopup();
+
+            if (clearanceTimelinePopupPanel == null || clearanceTimelinePopupLabel == null)
+            {
+                return;
+            }
+
+            clearanceTimelinePopupPinned = pin || clearanceTimelinePopupPinned;
+            UpdateClearanceHoverPopupText();
+            clearanceTimelinePopupPanel.Visible = true;
+            clearanceTimelinePopupPanel.BringToFront();
+            clearanceTimelinePopupPanel.Invalidate();
+        }
+
+        private void HideClearanceTimelinePopup()
+        {
+            clearanceTimelinePopupPinned = false;
+
+            if (clearanceTimelinePopupPanel != null)
+            {
+                clearanceTimelinePopupPanel.Visible = false;
+            }
+        }
+
+        private void ToggleClearanceTimelinePopup()
+        {
+            if (clearanceTimelinePopupPanel != null && clearanceTimelinePopupPanel.Visible && clearanceTimelinePopupPinned)
+            {
+                HideClearanceTimelinePopup();
+                return;
+            }
+
+            clearanceTimelinePopupPinned = true;
+            ShowClearanceTimelinePopup(true);
+        }
+
+        private System.Windows.Forms.Label CreateClearanceTimelineLabel(CPDLCMessage message)
+        {
+            string timeline = BuildClearanceTimeline(message);
+
+            AccessibleLabel label = new(MainPrimaryTextColor())
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = ClearanceTimelineColor(timeline),
+                Font = new Font(textFontBold.FontFamily, Math.Max(8.0f, textFontBold.Size - 1.2f), FontStyle.Bold),
+                Text = timeline,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Width = Math.Max(240, (messageFormatPanel?.ClientSize.Width ?? 430) - 54),
+                Height = 20,
+                Margin = new Padding(5, 2, 0, 4),
+                TabStop = true,
+                TabIndex = 0
+            };
+
+            return label;
+        }
+
+        private string BuildClearanceTimeline(CPDLCMessage message)
+        {
+            string status = (clearanceStatusText ?? string.Empty).ToUpperInvariant();
+
+            if (status.Contains("ACC"))
+            {
+                return "CLR TIMELINE  REQ -> RX -> WILCO ✓";
+            }
+
+            if (status.Contains("REJ"))
+            {
+                return "CLR TIMELINE  REQ -> REJECTED ✕";
+            }
+
+            if (status.Contains("RX") || status.Contains("RECEIVED") ||
+                (message != null && !message.outbound && IsClearanceStatusText(message.message)))
+            {
+                return "CLR TIMELINE  REQ -> RX -> WILCO";
+            }
+
+            if (status.Contains("REQ"))
+            {
+                return "CLR TIMELINE  REQ -> WAITING";
+            }
+
+            return "CLR TIMELINE  STANDBY";
+        }
+
+        private Color ClearanceTimelineColor(string timeline)
+        {
+            string upper = (timeline ?? string.Empty).ToUpperInvariant();
+
+            if (upper.Contains("✓"))
+            {
+                return DcduTheme.Green;
+            }
+
+            if (upper.Contains("REJECT"))
+            {
+                return Color.FromArgb(255, 86, 74);
+            }
+
+            if (upper.Contains("WAITING") || upper.Contains("REQ"))
+            {
+                return DcduTheme.Amber;
+            }
+
+            return MainPrimaryTextColor();
+        }
+
         private void MessageClicked(object sender, EventArgs e)
         {
             if (sender is not System.Windows.Forms.Label clickedLabel || outputTable == null)
@@ -4119,12 +5189,22 @@ namespace EasyCPDLC
                     responses.Add(freeTextLabel);
                 }
 
+                HideClearanceTimelinePopup();
+                HideAtisAvailabilityPopup();
                 SetSmartWidgetsVisible(false);
                 messageFormatPanel.Size = outputTable.Size;
                 messageFormatPanel.Visible = true;
                 outputTable.Visible = false;
                 messageFormatPanel.Controls.Add(returnLabel);
                 messageFormatPanel.SetFlowBreak(returnLabel, true);
+
+                if (IsClearanceStatusText(_sender.message))
+                {
+                    System.Windows.Forms.Label timelineLabel = CreateClearanceTimelineLabel(_sender);
+                    messageFormatPanel.Controls.Add(timelineLabel);
+                    messageFormatPanel.SetFlowBreak(timelineLabel, true);
+                }
+
                 foreach (string line in GetPreviewMessageText(_sender).Split('\n'))
                 {
                     messageFormatPanel.Controls.Add(CreateLabel(line, false));
@@ -4228,6 +5308,11 @@ namespace EasyCPDLC
                 : GetAtisListTarget(normalized, "VATATIS", true);
 
             string displayMessage = target + "\nTHIS ATIS IS NOT AVAILABLE";
+
+            if (TryCaptureSilentAtisHoverResponse(displayMessage, "ATIS", "VATATIS", false))
+            {
+                return true;
+            }
 
             WriteMessage(displayMessage, "ATIS", "VATATIS");
             FlashWindow.Flash(this);
@@ -4439,6 +5524,16 @@ namespace EasyCPDLC
                 RememberMetarRequestTarget(_recipient);
             }
 
+            if (TryCaptureSilentAtisHoverResponse(_response, _type, _recipient, _outbound))
+            {
+                return null;
+            }
+
+            if (ShouldSuppressUnchangedAutoAtisResponse(_response, _type, _recipient, _outbound))
+            {
+                return null;
+            }
+
             TrackClearanceStatus(_response, _type, _outbound);
 
             CPDLCMessage message;
@@ -4454,6 +5549,8 @@ namespace EasyCPDLC
                     PlayInboundMessageSound();
                 }
             }
+
+            TrackAutoAtisLetterFromMessage(message);
 
             Logger.Debug("Writing message: " + _response);
 
@@ -4639,8 +5736,17 @@ namespace EasyCPDLC
                 pendingLogon = null;
                 CurrentATCUnit = null;
                 UpdateCallsignDisplay();
+                SetAtisAutoRefresh(string.Empty, false);
+                lock (atisHoverLock)
+                {
+                    pendingSilentAtisHoverTarget = string.Empty;
+                    atisHoverCache.Clear();
+                }
+                lastPdcAvailabilityHintStation = string.Empty;
                 datalinkStatusText = "PDC --";
-                atisStatusText = "ATIS --";
+                atisStatusText = BuildDotBadgeText("ATIS");
+                atisAvailabilityState = "UNKNOWN";
+                lastClearanceHoverText = string.Empty;
                 SetClearanceStatus("CLR --");
                 response = "DISCONNECTED CLIENT";
                 vatsimData = new VATSIMRootobject();
