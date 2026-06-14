@@ -104,10 +104,6 @@ This is a community-maintained modernization fork. The main goals are:
 
 ---
 
-## Roadmap ideas
-
-- Probably integration of Sayintention AI in later Updates
----
 
 ## Credits
 

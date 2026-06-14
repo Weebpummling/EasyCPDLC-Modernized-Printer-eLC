@@ -1,4 +1,4 @@
-/*  EASYCPDLC: CPDLC Client for the VATSIM Network
+﻿/*  EASYCPDLC: CPDLC Client for the VATSIM Network
     Copyright (C) 2021 Joshua Seagrave joshseagrave@googlemail.com
 
     This program is free software: you can redistribute it and/or modify
@@ -18,7 +18,9 @@
 
 
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -65,6 +67,7 @@ namespace EasyCPDLC
             isReply = _recipient is not null;
 
             this.TopMost = parent.TopMost;
+            sendButton.Enabled = false;
         }
 
 
@@ -313,54 +316,517 @@ namespace EasyCPDLC
             p.ScrollControlIntoView(c);
             c.Parent = null;
         }
-
-        private void SendButton_Click(object sender, EventArgs e)
+        private AccessibleLabel CreateHeader(string text)
         {
-            RadioButton radioBtn = radioContainer.Controls.OfType<RadioButton>()
-                                       .Where(x => x.Checked).FirstOrDefault();
+            AccessibleLabel label = CreateTemplate(text);
+            label.Font = textFontBold;
+            label.ForeColor = Color.FromArgb(120, 220, 255);
+            label.Padding = new Padding(0, 2, 0, 0);
+            label.Margin = new Padding(0, 0, 0, 8);
+            label.AutoSize = true;
+            return label;
+        }
 
-            if (radioBtn != null || messageFormatPanel.Controls[1].Text.Length < 4)
+        private string GetSuggestedStation()
+        {
+            try
             {
-
-                string _recipient = messageFormatPanel.Controls[1].Text;
-
-                switch (radioBtn.Name)
+                if (parent.fsuipc.groundspeed < 100)
                 {
-                    case "freeTextRadioButton":
-                        string _formatMessage = messageFormatPanel.Controls[3].Text;
-                        _ = Task.Run(() => this.parent.SendCPDLCMessage(_recipient, "TELEX", _formatMessage.Trim()));
-                        break;
-
-                    case "metarRadioButton":
-                        this.parent.WriteMessage("METAR REQUEST", "METAR", _recipient, true);
-                        this.parent.ArtificialDelay("METAR " + _recipient, "INFOREQ", "REQUEST");
-
-                        break;
-
-                    case "atisRadioButton":
-
-                        this.parent.WriteMessage("ATIS REQUEST", "ATIS", _recipient, true);
-                        this.parent.ArtificialDelay("VATATIS " + _recipient, "INFOREQ", "REQUEST");
-
-                        break;
-
-                    default:
-                        break;
+                    return parent.userVATSIMData.flight_plan.departure?.Trim().ToUpperInvariant() ?? string.Empty;
                 }
-                if(isReply)
+
+                return parent.userVATSIMData.flight_plan.arrival?.Trim().ToUpperInvariant() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static IEnumerable<TextBox> GetTextBoxesRecursive(Control root)
+        {
+            foreach (Control control in root.Controls)
+            {
+                if (control is TextBox tb)
                 {
-                    parent.ClearPreview();
+                    yield return tb;
                 }
-                this.Close();
+
+                foreach (TextBox nested in GetTextBoxesRecursive(control))
+                {
+                    yield return nested;
+                }
+            }
+        }
 
 
+        private static IEnumerable<ComboBox> GetComboBoxesRecursive(Control root)
+        {
+            foreach (Control control in root.Controls)
+            {
+                if (control is ComboBox combo)
+                {
+                    yield return combo;
+                }
+
+                foreach (ComboBox nested in GetComboBoxesRecursive(control))
+                {
+                    yield return nested;
+                }
+            }
+        }
+
+        private string GetSelectedAtisRequestIdentifier(string station)
+        {
+            string normalizedStation = (station ?? string.Empty).Trim().ToUpperInvariant();
+
+            ComboBox combo = GetComboBoxesRecursive(messageFormatPanel)
+                .FirstOrDefault(x => x.Name == "atisTypeComboBox");
+
+            string selectedType = combo?.SelectedItem?.ToString()?.Trim().ToUpperInvariant() ?? "NONE";
+
+            return selectedType switch
+            {
+                "ARRIVAL" => normalizedStation + "_A",
+                "DEPARTURE" => normalizedStation + "_D",
+                _ => normalizedStation
+            };
+        }
+
+
+        private Color AccentColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(86, 255, 103)
+                : Color.FromArgb(45, 231, 245);
+        }
+
+        private Color AccentTitleColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(178, 255, 188)
+                : Color.FromArgb(118, 220, 255);
+        }
+
+        private Color AccentMutedColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(90, 116, 92)
+                : Color.FromArgb(78, 102, 120);
+        }
+
+        private Color AccentLabelColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(220, 238, 222)
+                : Color.FromArgb(210, 222, 232);
+        }
+
+        private Control CreateHeroBanner(string title, string subtitle, bool isAtis)
+        {
+            int width = Math.Max(320, messageFormatPanel.ClientSize.Width - 24);
+            int height = DcduStyleManager.IsBoeing ? 40 : 38;
+
+            Panel panel = new()
+            {
+                Width = width,
+                Height = height,
+                Margin = new Padding(0, 0, 0, 7),
+                BackColor = Color.Transparent
+            };
+
+            panel.Paint += (_, e) => DrawHeroBanner(e.Graphics, panel.ClientRectangle, title, subtitle, isAtis);
+            return panel;
+        }
+
+        private void DrawHeroBanner(Graphics g, Rectangle bounds, string title, string subtitle, bool isAtis)
+        {
+            Color accent = AccentColor();
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            Rectangle r = new Rectangle(0, 0, bounds.Width - 1, bounds.Height - 1);
+
+            Rectangle smallIconRect = new Rectangle(6, 6, 20, 18);
+            if (isAtis)
+            {
+                DrawAtisIcon(g, smallIconRect, Color.FromArgb(165, accent), 1.35f);
             }
             else
             {
-
+                DrawWeatherIcon(g, smallIconRect, Color.FromArgb(165, accent), 1.35f);
             }
 
+            using Font titleFont = new Font(textFontBold.FontFamily, Math.Max(9.0f, textFontBold.Size - 0.8f), FontStyle.Bold);
+            using Font subtitleFont = new Font(textFont.FontFamily, Math.Max(7.8f, textFont.Size - 1.6f), FontStyle.Regular);
 
+            TextRenderer.DrawText(
+                g,
+                title,
+                titleFont,
+                new Rectangle(33, 2, r.Width - 42, 18),
+                AccentTitleColor(),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+
+            TextRenderer.DrawText(
+                g,
+                subtitle,
+                subtitleFont,
+                new Rectangle(33, 20, r.Width - 42, 14),
+                AccentMutedColor(),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+
+            using Pen separator = new Pen(Color.FromArgb(24, accent), 1.0f);
+            g.DrawLine(separator, 33, r.Height - 4, Math.Max(70, r.Width - 44), r.Height - 4);
+        }
+
+        private Control CreateStationRow(string initialValue, string hintText)
+        {
+            int width = Math.Max(320, messageFormatPanel.ClientSize.Width - 24);
+
+            Panel row = new()
+            {
+                Width = width,
+                Height = 54,
+                Margin = new Padding(0, 0, 0, 4),
+                BackColor = Color.Transparent
+            };
+
+            AccessibleLabel caption = CreateTemplate("STATION:");
+            caption.Location = new Point(0, 2);
+            caption.Margin = new Padding(0);
+            caption.Padding = new Padding(0);
+            caption.AutoSize = false;
+            caption.Width = DcduStyleManager.IsBoeing ? 90 : 82;
+            caption.Height = 18;
+            caption.ForeColor = AccentLabelColor();
+            row.Controls.Add(caption);
+
+            Panel fieldPanel = new()
+            {
+                Location = new Point(caption.Right + 8, 0),
+                Size = new Size(
+                    DcduStyleManager.IsBoeing ? 126 : 118,
+                    DcduStyleManager.IsBoeing ? 31 : 30),
+                BackColor = Color.FromArgb(4, 10, 18),
+                Margin = new Padding(0)
+            };
+            fieldPanel.Paint += (_, e) => DrawStationFieldChrome(e.Graphics, fieldPanel.ClientRectangle);
+            row.Controls.Add(fieldPanel);
+
+            UITextBox stationBox = CreateTextBox(initialValue, 4);
+            stationBox.Parent = fieldPanel;
+            stationBox.Location = new Point(10, 6);
+            stationBox.Size = new Size(84, 18);
+            stationBox.Margin = new Padding(0);
+            stationBox.Padding = new Padding(0);
+            stationBox.BackColor = fieldPanel.BackColor;
+            stationBox.BorderStyle = BorderStyle.None;
+            stationBox.PlaceholderText = "ICAO";
+            stationBox.TextAlign = HorizontalAlignment.Left;
+            stationBox.BringToFront();
+
+            Label hint = new()
+            {
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                ForeColor = AccentMutedColor(),
+                Font = new Font(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.2f), FontStyle.Regular),
+                Text = hintText,
+                Location = new Point(0, 33),
+                Margin = new Padding(0)
+            };
+            row.Controls.Add(hint);
+
+            return row;
+        }
+
+
+        private Control CreateAtisStationRow(string initialValue)
+        {
+            int width = Math.Max(320, messageFormatPanel.ClientSize.Width - 24);
+
+            Panel row = new()
+            {
+                Width = width,
+                Height = 56,
+                Margin = new Padding(0, 0, 0, 4),
+                BackColor = Color.Transparent
+            };
+
+            AccessibleLabel stationCaption = CreateTemplate("STATION:");
+            stationCaption.Location = new Point(0, 2);
+            stationCaption.Margin = new Padding(0);
+            stationCaption.Padding = new Padding(0);
+            stationCaption.AutoSize = false;
+            stationCaption.Width = DcduStyleManager.IsBoeing ? 90 : 82;
+            stationCaption.Height = 18;
+            stationCaption.ForeColor = AccentLabelColor();
+            row.Controls.Add(stationCaption);
+
+            Panel fieldPanel = new()
+            {
+                Location = new Point(stationCaption.Right + 8, 0),
+                Size = new Size(
+                    DcduStyleManager.IsBoeing ? 126 : 118,
+                    DcduStyleManager.IsBoeing ? 31 : 30),
+                BackColor = Color.FromArgb(4, 10, 18),
+                Margin = new Padding(0)
+            };
+            fieldPanel.Paint += (_, e) => DrawStationFieldChrome(e.Graphics, fieldPanel.ClientRectangle);
+            row.Controls.Add(fieldPanel);
+
+            UITextBox stationBox = CreateTextBox(initialValue, 4);
+            stationBox.Parent = fieldPanel;
+            stationBox.Location = new Point(10, 6);
+            stationBox.Size = new Size(84, 18);
+            stationBox.Margin = new Padding(0);
+            stationBox.Padding = new Padding(0);
+            stationBox.BackColor = fieldPanel.BackColor;
+            stationBox.BorderStyle = BorderStyle.None;
+            stationBox.PlaceholderText = "ICAO";
+            stationBox.TextAlign = HorizontalAlignment.Left;
+            stationBox.BringToFront();
+
+            int typeLabelX = fieldPanel.Right + (DcduStyleManager.IsBoeing ? 22 : 16);
+
+            Label typeLabel = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = AccentLabelColor(),
+                Font = textFont,
+                Text = "TYPE:",
+                Location = new Point(typeLabelX, 2),
+                Size = new Size(48, 22),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            row.Controls.Add(typeLabel);
+
+            ComboBox atisTypeCombo = new()
+            {
+                Name = "atisTypeComboBox",
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Popup,
+                BackColor = Color.FromArgb(4, 10, 18),
+                ForeColor = AccentTitleColor(),
+                Font = new Font(textFontBold.FontFamily, Math.Max(8.2f, textFontBold.Size - 1.4f), FontStyle.Bold),
+                Location = new Point(typeLabel.Right + 6, 0),
+                Size = new Size(DcduStyleManager.IsBoeing ? 132 : 126, DcduStyleManager.IsBoeing ? 30 : 28)
+            };
+            atisTypeCombo.Items.Add("NONE");
+            atisTypeCombo.Items.Add("ARRIVAL");
+            atisTypeCombo.Items.Add("DEPARTURE");
+            atisTypeCombo.SelectedItem = "NONE";
+            row.Controls.Add(atisTypeCombo);
+
+            Label hint = new()
+            {
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                ForeColor = AccentMutedColor(),
+                Font = new Font(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.2f), FontStyle.Regular),
+                Text = "NONE = ICAO   ARR = ICAO_A   DEP = ICAO_D",
+                Location = new Point(0, 34),
+                Margin = new Padding(0)
+            };
+            row.Controls.Add(hint);
+
+            return row;
+        }
+
+        private void DrawStationFieldChrome(Graphics g, Rectangle bounds)
+        {
+            Color accent = AccentColor();
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle r = new Rectangle(0, 0, bounds.Width - 1, bounds.Height - 1);
+
+            using GraphicsPath path = DcduPanel.RoundedRect(r, 6);
+            using LinearGradientBrush fill = new(r,
+                Color.FromArgb(4, 10, 18),
+                Color.FromArgb(2, 6, 12),
+                LinearGradientMode.Vertical);
+            using Pen border = new(Color.FromArgb(DcduStyleManager.IsBoeing ? 74 : 62, accent), 1.0f);
+
+            g.FillPath(fill, path);
+            g.DrawPath(border, path);
+        }
+
+        private static void DrawWeatherIcon(Graphics g, Rectangle rect, Color color, float strokeWidth)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using Pen pen = new(color, strokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            int x = rect.X;
+            int y = rect.Y;
+            int w = rect.Width;
+            int h = rect.Height;
+
+            g.DrawArc(pen, x + (int)(0.10f * w), y + (int)(0.34f * h), (int)(0.28f * w), (int)(0.30f * h), 180, 180);
+            g.DrawArc(pen, x + (int)(0.28f * w), y + (int)(0.16f * h), (int)(0.28f * w), (int)(0.34f * h), 180, 180);
+            g.DrawArc(pen, x + (int)(0.46f * w), y + (int)(0.28f * h), (int)(0.24f * w), (int)(0.24f * h), 180, 180);
+            g.DrawLine(pen, x + (int)(0.18f * w), y + (int)(0.64f * h), x + (int)(0.62f * w), y + (int)(0.64f * h));
+
+            g.DrawLine(pen, x + (int)(0.24f * w), y + (int)(0.72f * h), x + (int)(0.20f * w), y + (int)(0.92f * h));
+            g.DrawLine(pen, x + (int)(0.40f * w), y + (int)(0.72f * h), x + (int)(0.36f * w), y + (int)(0.92f * h));
+            g.DrawLine(pen, x + (int)(0.56f * w), y + (int)(0.72f * h), x + (int)(0.52f * w), y + (int)(0.92f * h));
+
+            g.DrawArc(pen, x + (int)(0.64f * w), y + (int)(0.18f * h), (int)(0.26f * w), (int)(0.26f * h), 290, 115);
+        }
+
+        private static void DrawAtisIcon(Graphics g, Rectangle rect, Color color, float strokeWidth)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using Pen pen = new(color, strokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+            using SolidBrush brush = new(color);
+
+            int x = rect.X;
+            int y = rect.Y;
+            int w = rect.Width;
+            int h = rect.Height;
+
+            Point[] tower =
+            {
+                new Point(x + (int)(0.42f * w), y + (int)(0.20f * h)),
+                new Point(x + (int)(0.58f * w), y + (int)(0.20f * h)),
+                new Point(x + (int)(0.66f * w), y + (int)(0.76f * h)),
+                new Point(x + (int)(0.34f * w), y + (int)(0.76f * h))
+            };
+
+            g.DrawPolygon(pen, tower);
+            g.FillEllipse(brush, x + (int)(0.47f * w), y + (int)(0.10f * h), Math.Max(3, (int)(0.06f * w)), Math.Max(3, (int)(0.06f * h)));
+            g.DrawLine(pen, x + (int)(0.50f * w), y + (int)(0.16f * h), x + (int)(0.50f * w), y + (int)(0.08f * h));
+            g.DrawLine(pen, x + (int)(0.34f * w), y + (int)(0.76f * h), x + (int)(0.66f * w), y + (int)(0.76f * h));
+
+            g.DrawArc(pen, x + (int)(0.58f * w), y + (int)(0.08f * h), (int)(0.22f * w), (int)(0.22f * h), 300, 120);
+            g.DrawArc(pen, x + (int)(0.66f * w), y + (int)(0.00f * h), (int)(0.28f * w), (int)(0.28f * h), 300, 120);
+        }
+        private string GetFirstTextBoxText()
+        {
+            TextBox box = GetTextBoxesRecursive(messageFormatPanel).FirstOrDefault();
+            return box == null ? string.Empty : box.Text.Trim().ToUpperInvariant();
+        }
+
+        private void MessageInputChanged(object sender, EventArgs e)
+        {
+            UpdateSendButtonState();
+        }
+        private void FinalizeMessagePanel()
+        {
+            foreach (TextBox box in GetTextBoxesRecursive(messageFormatPanel))
+            {
+                box.TextChanged -= MessageInputChanged;
+                box.TextChanged += MessageInputChanged;
+            }
+
+            UpdateSendButtonState();
+        }
+
+        private void UpdateSendButtonState()
+        {
+            sendButton.Enabled = IsTelexSendReady();
+        }
+        private bool IsTelexSendReady()
+        {
+            RadioButton radioBtn = radioContainer.Controls.OfType<RadioButton>()
+                                       .FirstOrDefault(x => x.Checked);
+
+            if (radioBtn == null)
+            {
+                return false;
+            }
+
+            TextBox[] boxes = GetTextBoxesRecursive(messageFormatPanel).ToArray();
+
+            if (boxes.Length == 0)
+            {
+                return false;
+            }
+
+            string stationOrRecipient = boxes[0].Text.Trim();
+
+            if (stationOrRecipient.Length < 4)
+            {
+                return false;
+            }
+
+            if (radioBtn.Name == "freeTextRadioButton")
+            {
+                TextBox messageBox = boxes.FirstOrDefault(tb => tb.Multiline);
+                return messageBox != null && !string.IsNullOrWhiteSpace(messageBox.Text);
+            }
+
+            return true;
+        }
+
+        private void SendButton_Click(object sender, EventArgs e)
+        {
+            if (!IsTelexSendReady())
+            {
+                return;
+            }
+
+            RadioButton radioBtn = radioContainer.Controls.OfType<RadioButton>()
+                                       .Where(x => x.Checked).FirstOrDefault();
+
+            if (radioBtn == null)
+            {
+                return;
+            }
+
+            string recipientText = GetFirstTextBoxText();
+
+            switch (radioBtn.Name)
+            {
+                case "freeTextRadioButton":
+                    string formatMessage = GetTextBoxesRecursive(messageFormatPanel)
+                        .Where(tb => tb.Multiline)
+                        .Select(tb => tb.Text.Trim())
+                        .FirstOrDefault();
+
+                    if (string.IsNullOrWhiteSpace(formatMessage))
+                    {
+                        return;
+                    }
+
+                    _ = Task.Run(() => this.parent.SendCPDLCMessage(recipientText, "TELEX", formatMessage.Trim()));
+                    break;
+
+                case "metarRadioButton":
+                    this.parent.WriteMessage("METAR REQUEST", "METAR", recipientText, true);
+                    this.parent.ArtificialDelay("METAR " + recipientText, "INFOREQ", "REQUEST");
+                    break;
+
+                case "atisRadioButton":
+                    string atisRequestIdentifier = GetSelectedAtisRequestIdentifier(recipientText);
+                    this.parent.WriteMessage("ATIS REQUEST", "ATIS", atisRequestIdentifier, true);
+                    this.parent.ArtificialDelay("VATATIS " + atisRequestIdentifier, "INFOREQ", "REQUEST");
+                    break;
+
+                default:
+                    return;
+            }
+
+            if (isReply)
+            {
+                parent.ClearPreview();
+            }
+
+            this.Close();
         }
 
         protected override void WndProc(ref Message m)
@@ -383,65 +849,250 @@ namespace EasyCPDLC
             base.WndProc(ref m);
         }
 
+
+        private Control CreateFreeTextComposer(string initialRecipient)
+        {
+            int width = Math.Max(320, messageFormatPanel.ClientSize.Width - 24);
+            int height = Math.Max(
+                DcduStyleManager.IsBoeing ? 164 : 128,
+                messageFormatPanel.ClientSize.Height - (DcduStyleManager.IsBoeing ? 6 : 4));
+
+            Panel panel = new()
+            {
+                Width = width,
+                Height = height,
+                Margin = new Padding(0, 0, 0, 0),
+                BackColor = Color.Transparent
+            };
+
+            panel.Paint += (_, e) => DrawFreeTextComposerChrome(e.Graphics, panel.ClientRectangle);
+
+            Rectangle iconRect = new Rectangle(5, 5, 20, 18);
+            panel.Paint += (_, e) => DrawFreeTextIcon(e.Graphics, iconRect, Color.FromArgb(165, AccentColor()), 1.5f);
+
+            Label title = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = AccentTitleColor(),
+                Font = new Font(textFontBold.FontFamily, textFontBold.Size, FontStyle.Bold),
+                Text = "TELEX  FREE TEXT",
+                Location = new Point(32, 3),
+                Size = new Size(width - 42, 21),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            panel.Controls.Add(title);
+
+            Label subtitle = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = AccentMutedColor(),
+                Font = new Font(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.4f), FontStyle.Regular),
+                Text = "Send a custom message via Hoppie",
+                Location = new Point(32, 21),
+                Size = new Size(width - 42, 16),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            panel.Controls.Add(subtitle);
+
+            Label recipientLabel = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = AccentLabelColor(),
+                Font = textFont,
+                Text = "TO:",
+                Location = new Point(0, 43),
+                Size = new Size(38, 22),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            panel.Controls.Add(recipientLabel);
+
+            Panel recipientField = new()
+            {
+                Location = new Point(42, 40),
+                Size = new Size(DcduStyleManager.IsBoeing ? 150 : 138, 28),
+                BackColor = Color.FromArgb(4, 10, 18)
+            };
+            recipientField.Paint += (_, e) => DrawStationFieldChrome(e.Graphics, recipientField.ClientRectangle);
+            panel.Controls.Add(recipientField);
+
+            UITextBox recipientBox = CreateTextBox(initialRecipient ?? string.Empty, 7);
+            recipientBox.Parent = recipientField;
+            recipientBox.Location = new Point(10, 5);
+            recipientBox.Size = new Size(recipientField.Width - 18, 18);
+            recipientBox.Margin = new Padding(0);
+            recipientBox.Padding = new Padding(0);
+            recipientBox.BackColor = recipientField.BackColor;
+            recipientBox.BorderStyle = BorderStyle.None;
+            recipientBox.PlaceholderText = "ATC/CALL";
+            recipientBox.TextAlign = HorizontalAlignment.Left;
+            recipientBox.BringToFront();
+
+            Label messageLabel = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = AccentLabelColor(),
+                Font = textFont,
+                Text = "MSG:",
+                Location = new Point(0, 72),
+                Size = new Size(52, 18),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            panel.Controls.Add(messageLabel);
+
+            Label hint = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = AccentMutedColor(),
+                Font = new Font(textFont.FontFamily, Math.Max(7.5f, textFont.Size - 1.8f), FontStyle.Regular),
+                Text = "MAX 255 CHARS",
+                Location = new Point(width - 130, 72),
+                Size = new Size(122, 18),
+                TextAlign = ContentAlignment.MiddleRight
+            };
+            panel.Controls.Add(hint);
+
+            Panel messageField = new()
+            {
+                Location = new Point(0, 88),
+                Size = new Size(width - 8, Math.Max(34, height - 88)),
+                BackColor = Color.FromArgb(3, 8, 15)
+            };
+            messageField.Paint += (_, e) => DrawMessageFieldChrome(e.Graphics, messageField.ClientRectangle);
+            panel.Controls.Add(messageField);
+
+            UITextBox messageBox = new(controlFrontColor)
+            {
+                Parent = messageField,
+                Location = new Point(10, 7),
+                Size = new Size(messageField.Width - 22, Math.Max(20, messageField.Height - 14)),
+                BackColor = messageField.BackColor,
+                ForeColor = controlFrontColor,
+                Font = textFontBold,
+                BorderStyle = BorderStyle.None,
+                Multiline = true,
+                WordWrap = true,
+                ScrollBars = ScrollBars.Vertical,
+                PlaceholderText = "Your message here...",
+                MaxLength = 255,
+                CharacterCasing = CharacterCasing.Upper,
+                TextAlign = HorizontalAlignment.Left,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            messageBox.BringToFront();
+
+            return panel;
+        }
+
+        private void DrawFreeTextComposerChrome(Graphics g, Rectangle bounds)
+        {
+            Color accent = AccentColor();
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            Rectangle r = new Rectangle(0, 0, bounds.Width - 1, bounds.Height - 1);
+
+            using Pen topLine = new(Color.FromArgb(24, accent), 1.0f);
+            using Pen divider = new(Color.FromArgb(18, accent), 1.0f);
+
+            g.DrawLine(topLine, 32, 36, Math.Min(r.Width - 12, 330), 36);
+            g.DrawLine(divider, 0, 68, Math.Min(r.Width - 12, 245), 68);
+        }
+
+        private void DrawMessageFieldChrome(Graphics g, Rectangle bounds)
+        {
+            Color accent = AccentColor();
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle r = new Rectangle(0, 0, bounds.Width - 1, bounds.Height - 1);
+
+            using GraphicsPath path = DcduPanel.RoundedRect(r, 6);
+            using LinearGradientBrush fill = new(r,
+                Color.FromArgb(3, 8, 15),
+                Color.FromArgb(1, 5, 10),
+                LinearGradientMode.Vertical);
+            using Pen border = new(Color.FromArgb(DcduStyleManager.IsBoeing ? 50 : 42, accent), 1.0f);
+
+            g.FillPath(fill, path);
+            g.DrawPath(border, path);
+        }
+
+        private static void DrawFreeTextIcon(Graphics g, Rectangle rect, Color color, float strokeWidth)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using Pen pen = new(color, strokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            Rectangle envelope = new Rectangle(rect.X, rect.Y + 3, rect.Width, rect.Height - 5);
+            g.DrawRectangle(pen, envelope);
+            g.DrawLine(pen, envelope.Left, envelope.Top, envelope.Left + envelope.Width / 2, envelope.Top + envelope.Height / 2);
+            g.DrawLine(pen, envelope.Right, envelope.Top, envelope.Left + envelope.Width / 2, envelope.Top + envelope.Height / 2);
+            g.DrawLine(pen, envelope.Left, envelope.Bottom, envelope.Left + envelope.Width / 2, envelope.Top + envelope.Height / 2);
+            g.DrawLine(pen, envelope.Right, envelope.Bottom, envelope.Left + envelope.Width / 2, envelope.Top + envelope.Height / 2);
+        }
+
+
         private void FreeTextButton_Click(object sender, EventArgs e)
         {
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"));
-            messageFormatPanel.Controls.Add(CreateTextBox(recipient is null ? "" : recipient, 7));
-            messageFormatPanel.SetFlowBreak(messageFormatPanel.Controls[messageFormatPanel.Controls.Count - 1], true);
-            messageFormatPanel.Controls.Add(CreateTemplate("MSG:"));
-            messageFormatPanel.SetFlowBreak(messageFormatPanel.Controls[messageFormatPanel.Controls.Count - 1], true);
-            messageFormatPanel.Controls.Add(CreateMultiLineBox(""));
+
+            Control composer = CreateFreeTextComposer(recipient is null ? string.Empty : recipient);
+            messageFormatPanel.Controls.Add(composer);
+            messageFormatPanel.SetFlowBreak(composer, true);
 
             freeTextRadioButton.Checked = true;
+            FinalizeMessagePanel();
         }
-
         private void MetarButton_Click(object sender, EventArgs e)
         {
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("STATION:"));
-            try
-            {
-                if (parent.fsuipc.groundspeed < 100)
-                {
-                    messageFormatPanel.Controls.Add(CreateTextBox(parent.userVATSIMData.flight_plan.departure, 4));
-                }
-                else
-                {
-                    messageFormatPanel.Controls.Add(CreateTextBox(parent.userVATSIMData.flight_plan.arrival, 4));
-                }
-            }
-            catch
-            {
-                messageFormatPanel.Controls.Add(CreateTextBox("", 4));
-            }
 
+            Control hero = CreateHeroBanner(
+                "WX  METAR",
+                "Latest airport weather report",
+                false);
+
+            messageFormatPanel.Controls.Add(hero);
+            messageFormatPanel.SetFlowBreak(hero, true);
+
+            Control stationRow = CreateStationRow(
+                GetSuggestedStation(),
+                "ENTER ICAO OF DEP / ARR AERODROME");
+
+            messageFormatPanel.Controls.Add(stationRow);
+            messageFormatPanel.SetFlowBreak(stationRow, true);
 
             metarRadioButton.Checked = true;
+            FinalizeMessagePanel();
         }
-
         private void AtisButton_Click(object sender, EventArgs e)
         {
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("STATION:"));
-            try
-            {
-                if (parent.fsuipc.groundspeed < 100)
-                {
-                    messageFormatPanel.Controls.Add(CreateTextBox(parent.userVATSIMData.flight_plan.departure, 4));
-                }
-                else
-                {
-                    messageFormatPanel.Controls.Add(CreateTextBox(parent.userVATSIMData.flight_plan.arrival, 4));
-                }
-            }
-            catch
-            {
-                messageFormatPanel.Controls.Add(CreateTextBox("", 4));
-            }
-            
+
+            Control hero = CreateHeroBanner(
+                "WX  ATIS",
+                "Airport information broadcast",
+                true);
+
+            messageFormatPanel.Controls.Add(hero);
+            messageFormatPanel.SetFlowBreak(hero, true);
+
+            Control stationRow = CreateAtisStationRow(GetSuggestedStation());
+
+            messageFormatPanel.Controls.Add(stationRow);
+            messageFormatPanel.SetFlowBreak(stationRow, true);
 
             atisRadioButton.Checked = true;
+            FinalizeMessagePanel();
         }
 
         private void TelexForm_FormClosing(object sender, FormClosingEventArgs e)

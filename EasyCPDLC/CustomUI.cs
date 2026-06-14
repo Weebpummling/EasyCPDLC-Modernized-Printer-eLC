@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
@@ -1001,7 +1001,21 @@ namespace EasyCPDLC
             get
             {
                 if (Target == null || Target.IsDisposed) return 0;
-                return Math.Max(0, Target.DisplayRectangle.Height - Target.ClientSize.Height);
+
+                int currentScroll = Math.Max(0, -Target.AutoScrollPosition.Y);
+                int contentHeight = Math.Max(Target.DisplayRectangle.Height, Target.ClientSize.Height);
+
+                foreach (Control child in Target.Controls)
+                {
+                    if (!child.Visible)
+                    {
+                        continue;
+                    }
+
+                    contentHeight = Math.Max(contentHeight, child.Bottom + currentScroll + Target.Padding.Bottom);
+                }
+
+                return Math.Max(0, contentHeight - Target.ClientSize.Height);
             }
         }
 

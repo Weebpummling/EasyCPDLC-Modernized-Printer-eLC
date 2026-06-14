@@ -214,6 +214,7 @@ namespace EasyCPDLC
                     if (atcUnitDisplay != null)
                     {
                         atcUnitDisplay.Text = "----";
+                        atcUnitDisplay.ForeColor = MainPrimaryTextColor();
                     }
 
                     if (rForm != null)
@@ -226,6 +227,7 @@ namespace EasyCPDLC
                     if (atcUnitDisplay != null)
                     {
                         atcUnitDisplay.Text = _currentATCUnit;
+                        atcUnitDisplay.ForeColor = MainPrimaryTextColor();
                     }
 
                     if (rForm != null)
@@ -272,6 +274,13 @@ namespace EasyCPDLC
         private readonly SoundPlayer startupPlayer = new();
         private readonly SoundPlayer messagePlayer = new();
 
+        private readonly System.Windows.Forms.Timer unreadReminderTimer = new();
+        private readonly List<CPDLCMessage> unreadMessages = new();
+        private readonly Queue<string> pendingAtisRequestTargets = new();
+        private readonly object pendingAtisRequestLock = new();
+        private readonly Queue<string> pendingMetarRequestTargets = new();
+        private readonly object pendingMetarRequestLock = new();
+
         private static readonly Regex hoppieParse = new(@"{(.*?)}");
         private static readonly Regex cpdlcHeaderParse = new(@"(\/\s*)\w*");
         private static readonly Regex cpdlcUnitParse = new(@"_@([\w]*)@_");
@@ -298,6 +307,7 @@ namespace EasyCPDLC
             AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
 
             ConfigureSoundPlayers();
+            ConfigureUnreadMessageReminder();
             if (!string.IsNullOrWhiteSpace(startupPlayer.SoundLocation) || startupPlayer.Stream != null)
             {
                 startupPlayer.Play();
@@ -314,6 +324,116 @@ namespace EasyCPDLC
         }
 
 
+
+        private Color MainAccentColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(86, 255, 103)
+                : DcduTheme.Cyan;
+        }
+
+        private Color MainPrimaryTextColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(178, 255, 188)
+                : DcduTheme.CyanWhite;
+        }
+
+        private void ApplyMainThemeColors()
+        {
+            controlFrontColor = MainPrimaryTextColor();
+
+            if (titleLabel != null)
+            {
+                titleLabel.ForeColor = MainAccentColor();
+            }
+
+            if (messageHeaderLabel != null)
+            {
+                messageHeaderLabel.ForeColor = MainAccentColor();
+            }
+
+            if (clockLabel != null)
+            {
+                clockLabel.ForeColor = MainPrimaryTextColor();
+            }
+
+            if (statusCaptionLabel != null)
+            {
+                statusCaptionLabel.ForeColor = MainPrimaryTextColor();
+            }
+
+            if (atcUnitLabel != null)
+            {
+                atcUnitLabel.ForeColor = MainPrimaryTextColor();
+            }
+
+            if (atcUnitDisplay != null && CurrentATCUnit != null)
+            {
+                atcUnitDisplay.ForeColor = MainPrimaryTextColor();
+            }
+
+            if (popupMenu != null)
+            {
+                popupMenu.BackColor = controlBackColor;
+                popupMenu.ForeColor = controlFrontColor;
+                foreach (ToolStripItem item in popupMenu.Items)
+                {
+                    item.ForeColor = controlFrontColor;
+                    item.BackColor = controlBackColor;
+                }
+            }
+
+            RefreshVisibleMessageColors();
+        }
+
+        private void RefreshVisibleMessageColors()
+        {
+            if (outputTable == null || outputTable.IsDisposed)
+            {
+                return;
+            }
+
+            foreach (Control control in outputTable.Controls)
+            {
+                if (control is CPDLCMessage message)
+                {
+                    bool isUnread = unreadMessages.Contains(message);
+
+                    if (isUnread)
+                    {
+                        message.Font = textFontBold;
+                        message.ForeColor = DcduTheme.Amber;
+                    }
+                    else if (message.acknowledged)
+                    {
+                        message.Font = textFont;
+                        message.ForeColor = SystemColors.ControlDark;
+                    }
+                    else
+                    {
+                        message.Font = textFont;
+                        message.ForeColor = MainPrimaryTextColor();
+                    }
+                }
+                else if (control is TimerLabel timerLabel)
+                {
+                    if (timerLabel.Text == "NEW")
+                    {
+                        timerLabel.ForeColor = DcduTheme.Amber;
+                    }
+                    else
+                    {
+                        timerLabel.ForeColor = MainPrimaryTextColor();
+                    }
+                }
+                else if (control is AccessibleLabel label)
+                {
+                    label.ForeColor = MainPrimaryTextColor();
+                }
+            }
+        }
+
         public void ApplyDisplayStyle()
         {
             bool isBoeing = DcduStyleManager.IsBoeing;
@@ -329,6 +449,7 @@ namespace EasyCPDLC
             ApplyMainScreenLayout(isBoeing);
             ApplyMainButtonLayout(isBoeing);
             ConfigureInboundMessageSound();
+            ApplyMainThemeColors();
             Invalidate(true);
         }
 
@@ -527,6 +648,122 @@ namespace EasyCPDLC
                    normalizedType == "INFOREQ" ||
                    normalizedType == "METAR" ||
                    normalizedType == "ATIS";
+        }
+
+
+        private void ConfigureUnreadMessageReminder()
+        {
+            unreadReminderTimer.Interval = 30000;
+            unreadReminderTimer.Tick += UnreadReminderTimer_Tick;
+        }
+
+        private void UnreadReminderTimer_Tick(object sender, EventArgs e)
+        {
+            unreadMessages.RemoveAll(message => message == null || message.IsDisposed || message.outbound);
+
+            if (unreadMessages.Count == 0 || !PlaySound)
+            {
+                unreadReminderTimer.Stop();
+                return;
+            }
+
+            PlayInboundMessageSound();
+        }
+
+        private bool ShouldTrackUnreadMessage(CPDLCMessage message)
+        {
+            return message != null &&
+                   !message.outbound &&
+                   ShouldPlayInboundMessageSound(message.type, message.recipient);
+        }
+
+        private bool ShouldFlashForReply(CPDLCMessage message)
+        {
+            return message != null &&
+                   string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase) &&
+                   !message.outbound &&
+                   !message.acknowledged &&
+                   message.header != null &&
+                   message.header.Responses != "NE";
+        }
+
+        private void MarkMessageUnread(CPDLCMessage message, TimerLabel menuLabel)
+        {
+            if (!ShouldTrackUnreadMessage(message))
+            {
+                return;
+            }
+
+            if (!unreadMessages.Contains(message))
+            {
+                unreadMessages.Add(message);
+            }
+
+            message.Font = textFontBold;
+            message.ForeColor = DcduTheme.Amber;
+
+            if (menuLabel != null)
+            {
+                menuLabel.Text = "NEW";
+                menuLabel.CanFlash = true;
+                menuLabel.ForeColor = DcduTheme.Amber;
+            }
+
+            if (PlaySound && !unreadReminderTimer.Enabled)
+            {
+                unreadReminderTimer.Start();
+            }
+        }
+
+        private void MarkMessageRead(CPDLCMessage message)
+        {
+            if (message == null)
+            {
+                return;
+            }
+
+            bool wasUnread = unreadMessages.Remove(message);
+
+            if (!wasUnread)
+            {
+                return;
+            }
+
+            message.Font = textFont;
+            message.ForeColor = message.acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
+
+            try
+            {
+                if (outputTable != null && !outputTable.IsDisposed)
+                {
+                    int index = outputTable.Controls.GetChildIndex(message);
+                    if (index >= 0 && index + 1 < outputTable.Controls.Count &&
+                        outputTable.Controls[index + 1] is TimerLabel menuLabel)
+                    {
+                        menuLabel.Text = ">>";
+                        menuLabel.CanFlash = ShouldFlashForReply(message);
+                        if (!menuLabel.CanFlash)
+                        {
+                            menuLabel.ForeColor = MainPrimaryTextColor();
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Visual read marker only. Never block opening a message.
+            }
+
+            if (unreadMessages.Count == 0)
+            {
+                unreadReminderTimer.Stop();
+            }
+        }
+
+        private void ClearUnreadMessages()
+        {
+            unreadMessages.Clear();
+            unreadReminderTimer.Stop();
         }
 
         private static void ConfigureSoundPlayer(SoundPlayer soundPlayer, string fileName)
@@ -735,7 +972,9 @@ namespace EasyCPDLC
             outputTable.AutoScroll = true;
             outputTable.Scroll += (scrollSender, scrollArgs) => HideNativeOutputScrollbars();
             outputTable.ControlAdded += (controlSender, controlArgs) => HideNativeOutputScrollbars();
+            outputTable.ControlRemoved += (controlSender, controlArgs) => HideNativeOutputScrollbars();
             outputTable.SizeChanged += (sizeSender, sizeArgs) => HideNativeOutputScrollbars();
+            outputTable.Layout += (layoutSender, layoutArgs) => HideNativeOutputScrollbars();
             HideNativeOutputScrollbars();
 
             CheckNewVersion();
@@ -778,7 +1017,10 @@ namespace EasyCPDLC
 
             if (outputScrollBar != null && !outputScrollBar.IsDisposed)
             {
-                outputScrollBar.Visible = true;
+                bool hasScrollableContent = outputTable.DisplayRectangle.Height > outputTable.ClientSize.Height ||
+                    outputTable.Controls.Cast<Control>().Any(control => control.Visible && control.Bottom > outputTable.ClientSize.Height);
+
+                outputScrollBar.Visible = hasScrollableContent;
                 outputScrollBar.BringToFront();
                 outputScrollBar.Invalidate();
             }
@@ -1242,15 +1484,406 @@ namespace EasyCPDLC
             return;
 
         }
+        private string CreateMessageListText(string contents, string type, string recipient, bool outbound)
+        {
+            string normalizedType = (type ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (normalizedType == "SYSTEM")
+            {
+                return "SYSTEM MESSAGE";
+            }
+
+            if (ShouldUseAtisListText(contents, normalizedType, recipient))
+            {
+                string target = GetAtisListTarget(contents, recipient, !outbound);
+                string upperContents = (contents ?? string.Empty).ToUpperInvariant();
+
+                if (outbound)
+                {
+                    return "REQUESTING ATIS FOR " + target;
+                }
+
+                if (upperContents.Contains("NOT AVAILABLE"))
+                {
+                    return BuildAtisListSummary(target, "NOT AVAILABLE");
+                }
+
+                string atisLetter = ExtractAtisInformationLetter(contents);
+                return string.IsNullOrWhiteSpace(atisLetter)
+                    ? BuildAtisListSummary(target, "RECEIVED")
+                    : BuildAtisListSummary(target, "INFO " + atisLetter + " RECEIVED");
+            }
+
+            if (ShouldUseMetarListText(contents, normalizedType, recipient))
+            {
+                string target = GetMetarListTarget(contents, recipient, !outbound);
+                string upperContents = (contents ?? string.Empty).ToUpperInvariant();
+
+                if (outbound)
+                {
+                    return "REQUESTING METAR FOR " + target;
+                }
+
+                if (upperContents.Contains("NOT AVAILABLE") ||
+                    upperContents.Contains("NO METAR") ||
+                    upperContents.Contains("METAR NOT"))
+                {
+                    return BuildMetarListSummary(target, "NOT AVAILABLE");
+                }
+
+                return BuildMetarListSummary(target, "RECEIVED");
+            }
+
+            return outbound
+                ? string.Format("{1} MESSAGE TO {0}", recipient, normalizedType)
+                : string.Format("{1} MESSAGE FROM {0}", recipient, normalizedType);
+        }
+
+        private bool ShouldUseAtisListText(string contents, string normalizedType, string recipient)
+        {
+            if (normalizedType == "ATIS")
+            {
+                return true;
+            }
+
+            string upperContents = (contents ?? string.Empty).ToUpperInvariant();
+            string upperRecipient = (recipient ?? string.Empty).ToUpperInvariant();
+
+            if (upperRecipient == "VATATIS")
+            {
+                return true;
+            }
+
+            if (upperContents.Contains(" ATIS ") || upperContents.Contains("_ATIS"))
+            {
+                return true;
+            }
+
+            // VATSIM/VATATIS sometimes returns a valid ATIS as generic INFO FROM ACARS:
+            // "THIS IS GENEVA INFORMATION DELTA AT 0820 ..."
+            return upperContents.Contains("THIS IS ") &&
+                   upperContents.Contains(" INFORMATION ");
+        }
+
+        private bool ShouldUseMetarListText(string contents, string normalizedType, string recipient)
+        {
+            if (normalizedType == "METAR")
+            {
+                return true;
+            }
+
+            string upperContents = (contents ?? string.Empty).ToUpperInvariant();
+            string upperRecipient = (recipient ?? string.Empty).ToUpperInvariant();
+
+            if (upperContents.Contains("METAR ") ||
+                upperContents.StartsWith("METAR") ||
+                upperContents.StartsWith("SPECI") ||
+                Regex.IsMatch(upperContents, @"\b[A-Z][A-Z0-9]{3}\s+\d{6}Z\b"))
+            {
+                return true;
+            }
+
+            // METAR replies may also arrive as generic "INFO FROM ACARS".
+            // If a METAR request is pending, map the next ACARS info reply to it.
+            return upperRecipient == "ACARS" && HasPendingMetarRequest();
+        }
+
+        private void RememberMetarRequestTarget(string target)
+        {
+            string formatted = FormatAtisTargetForList(target);
+            if (formatted == "ATIS")
+            {
+                return;
+            }
+
+            lock (pendingMetarRequestLock)
+            {
+                pendingMetarRequestTargets.Enqueue(formatted);
+
+                while (pendingMetarRequestTargets.Count > 8)
+                {
+                    pendingMetarRequestTargets.Dequeue();
+                }
+            }
+        }
+
+        private bool HasPendingMetarRequest()
+        {
+            lock (pendingMetarRequestLock)
+            {
+                return pendingMetarRequestTargets.Count > 0;
+            }
+        }
+
+        private string GetPendingMetarRequestTarget(bool consume)
+        {
+            lock (pendingMetarRequestLock)
+            {
+                if (pendingMetarRequestTargets.Count == 0)
+                {
+                    return "METAR";
+                }
+
+                return consume
+                    ? pendingMetarRequestTargets.Dequeue()
+                    : pendingMetarRequestTargets.Peek();
+            }
+        }
+
+        private string GetMetarListTarget(string contents, string recipient, bool consumePending)
+        {
+            string combined = ((contents ?? string.Empty) + "\n" + (recipient ?? string.Empty)).ToUpperInvariant();
+
+            Match explicitMetar = Regex.Match(combined, @"\b(?:METAR|SPECI)\s+([A-Z][A-Z0-9]{3})\b");
+            if (explicitMetar.Success && IsAirportCodeToken(explicitMetar.Groups[1].Value))
+            {
+                return explicitMetar.Groups[1].Value.ToUpperInvariant();
+            }
+
+            Match timedMetar = Regex.Match(combined, @"\b([A-Z][A-Z0-9]{3})\s+\d{6}Z\b");
+            if (timedMetar.Success && IsAirportCodeToken(timedMetar.Groups[1].Value))
+            {
+                return timedMetar.Groups[1].Value.ToUpperInvariant();
+            }
+
+            MatchCollection matches = Regex.Matches(combined, @"\b[A-Z][A-Z0-9]{3}\b");
+            foreach (Match match in matches)
+            {
+                string candidate = match.Value.Trim().ToUpperInvariant();
+
+                if (IsAirportCodeToken(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return GetPendingMetarRequestTarget(consumePending);
+        }
+
+        private static bool IsAirportCodeToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return false;
+            }
+
+            string upper = token.Trim().ToUpperInvariant();
+
+            string[] reserved =
+            {
+                "METAR", "SPECI", "AUTO", "CORR", "CAVOK", "NOSIG",
+                "TEMPO", "BECMG", "PROB", "WIND", "RWYS", "RWY",
+                "QNH", "INFO", "FROM", "ACARS", "DATA", "LINK",
+                "ATIS", "THIS", "WITH", "TEXT", "NIL"
+            };
+
+            if (reserved.Contains(upper))
+            {
+                return false;
+            }
+
+            return Regex.IsMatch(upper, @"^[A-Z][A-Z0-9]{3}$");
+        }
+
+        private static string BuildMetarListSummary(string target, string status)
+        {
+            string cleanTarget = FormatAtisTargetForList(target);
+            string cleanStatus = (status ?? string.Empty).Trim().ToUpperInvariant();
+
+            return cleanTarget == "ATIS" || cleanTarget == "METAR"
+                ? "METAR " + cleanStatus
+                : cleanTarget + " METAR " + cleanStatus;
+        }
+
+        private void RememberAtisRequestTarget(string target)
+        {
+            string formatted = FormatAtisTargetForList(target);
+            if (formatted == "ATIS")
+            {
+                return;
+            }
+
+            lock (pendingAtisRequestLock)
+            {
+                // VATATIS/ACARS replies often do not include the ICAO.
+                // Keep the request order so the next generic reply can be matched
+                // to the next pending ATIS request.
+                pendingAtisRequestTargets.Enqueue(formatted);
+
+                while (pendingAtisRequestTargets.Count > 8)
+                {
+                    pendingAtisRequestTargets.Dequeue();
+                }
+            }
+        }
+
+        private string GetPendingAtisRequestTarget(bool consume)
+        {
+            lock (pendingAtisRequestLock)
+            {
+                if (pendingAtisRequestTargets.Count == 0)
+                {
+                    return "ATIS";
+                }
+
+                return consume
+                    ? pendingAtisRequestTargets.Dequeue()
+                    : pendingAtisRequestTargets.Peek();
+            }
+        }
+
+        private string GetAtisListTarget(string contents, string recipient, bool consumePending)
+        {
+            string contentsUpper = (contents ?? string.Empty).ToUpperInvariant();
+            string recipientUpper = (recipient ?? string.Empty).ToUpperInvariant();
+            string combined = (contentsUpper + "\n" + recipientUpper).ToUpperInvariant();
+
+            string target = ExtractAtisTarget(combined);
+            if (target != "ATIS")
+            {
+                return FormatAtisTargetForList(target);
+            }
+
+            // Generic VATATIS replies can look like:
+            // "THIS IS GENEVA INFORMATION ECHO ..."
+            // In that case words like ECHO/DELTA must NOT be treated as the airport.
+            // Use the last ATIS request target first.
+            if (LooksLikeGenericAtisInformation(contentsUpper))
+            {
+                string pendingTarget = GetPendingAtisRequestTarget(consumePending);
+                if (pendingTarget != "ATIS")
+                {
+                    return pendingTarget;
+                }
+            }
+
+            MatchCollection matches = Regex.Matches(combined, @"\b[A-Z0-9]{4}(?:_[AD])?(?:_ATIS)?\b");
+            foreach (Match match in matches)
+            {
+                string candidate = match.Value.Trim('_', ' ', '\r', '\n', '\t');
+
+                if (IsAtisTargetToken(candidate))
+                {
+                    return FormatAtisTargetForList(candidate);
+                }
+            }
+
+            return GetPendingAtisRequestTarget(consumePending);
+        }
+
+        private static bool LooksLikeGenericAtisInformation(string upperContents)
+        {
+            if (string.IsNullOrWhiteSpace(upperContents))
+            {
+                return false;
+            }
+
+            return upperContents.Contains("THIS IS ") &&
+                   upperContents.Contains(" INFORMATION ");
+        }
+
+        private static bool IsAtisTargetToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return false;
+            }
+
+            string upper = token.Trim().ToUpperInvariant();
+
+            string[] reserved =
+            {
+                "ATIS", "THIS", "FROM", "INFO", "WIND", "QNH", "CAVOK", "RWYS",
+                "RWY", "DUE", "FOR", "NOT", "WITH", "TEXT", "DATA", "LINK",
+                "ILS", "VOR", "NDB", "DME", "GPS", "RNP", "RNAV",
+                "ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT",
+                "GOLF", "HOTEL", "INDIA", "JULIET", "KILO", "LIMA", "MIKE",
+                "NOVEMBER", "OSCAR", "PAPA", "QUEBEC", "ROMEO", "SIERRA",
+                "TANGO", "UNIFORM", "VICTOR", "WHISKEY", "XRAY", "X-RAY",
+                "YANKEE", "ZULU"
+            };
+
+            if (reserved.Contains(upper))
+            {
+                return false;
+            }
+
+            if (!Regex.IsMatch(upper, @"^[A-Z][A-Z0-9]{3}(?:_[AD])?(?:_ATIS)?$"))
+            {
+                return false;
+            }
+
+            return upper.Take(4).Any(char.IsLetter);
+        }
+
+        private static string FormatAtisTargetForList(string target)
+        {
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return "ATIS";
+            }
+
+            string clean = target.Trim().Trim('_').ToUpperInvariant();
+
+            if (clean.EndsWith("_ATIS", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean.Substring(0, clean.Length - "_ATIS".Length);
+            }
+
+            // For the message overview, show only the airport ICAO.
+            // Requests may internally use XXXX_A / XXXX_D for split ATIS,
+            // but the list should stay clean: LOWW ATIS..., not LOWW_A ATIS...
+            if (clean.EndsWith("_A", StringComparison.OrdinalIgnoreCase) ||
+                clean.EndsWith("_D", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean.Substring(0, clean.Length - 2);
+            }
+
+            return string.IsNullOrWhiteSpace(clean) ? "ATIS" : clean;
+        }
+
+        private static string BuildAtisListSummary(string target, string status)
+        {
+            string cleanTarget = FormatAtisTargetForList(target);
+            string cleanStatus = (status ?? string.Empty).Trim().ToUpperInvariant();
+
+            return cleanTarget == "ATIS"
+                ? "ATIS " + cleanStatus
+                : cleanTarget + " ATIS " + cleanStatus;
+        }
+
+        private static string ExtractAtisInformationLetter(string contents)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return string.Empty;
+            }
+
+            string upper = contents.ToUpperInvariant();
+
+            Match match = Regex.Match(
+                upper,
+                @"\bINFORMATION\s+(ALPHA|BRAVO|CHARLIE|DELTA|ECHO|FOXTROT|GOLF|HOTEL|INDIA|JULIET|KILO|LIMA|MIKE|NOVEMBER|OSCAR|PAPA|QUEBEC|ROMEO|SIERRA|TANGO|UNIFORM|VICTOR|WHISKEY|XRAY|X-RAY|YANKEE|ZULU|[A-Z])\b");
+
+            if (!match.Success)
+            {
+                return string.Empty;
+            }
+
+            string value = match.Groups[1].Value.Replace("-", string.Empty);
+
+            return value.Length == 1 ? value : value[0].ToString();
+        }
+
         private CPDLCMessage CreateCPDLCMessage(string _contents, string _type, string _recipient, bool _outbound = false, CPDLCResponse _header = null)
         {
             CPDLCMessage _message = new(_type, _recipient, _contents, _outbound, _header)
             {
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                ForeColor = DcduTheme.CyanWhite,
+                ForeColor = MainPrimaryTextColor(),
                 Font = textFont,
-                Text = _type == "SYSTEM" ? "SYSTEM MESSAGE" : _outbound ? String.Format("{1} MESSAGE TO {0}", _recipient, _type.ToUpper()) : String.Format("{1} MESSAGE FROM {0}", _recipient, _type.ToUpper()),
+                Text = CreateMessageListText(_contents, _type, _recipient, _outbound),
                 BorderStyle = BorderStyle.None,
                 TabStop = true,
                 TabIndex = 0,
@@ -1266,12 +1899,13 @@ namespace EasyCPDLC
             {
                 Width = 65
             };
-            AccessibleLabel _message = new(DcduTheme.CyanWhite)
+
+            AccessibleLabel _message = new(MainPrimaryTextColor())
             {
                 Width = 65,
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                ForeColor = DcduTheme.CyanWhite,
+                ForeColor = MainPrimaryTextColor(),
                 Font = textFont,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
@@ -1279,10 +1913,18 @@ namespace EasyCPDLC
                 TabStop = true,
                 TabIndex = 0
             };
+
             if (_useMaxSize)
             {
                 _message.MaximumSize = maxSize;
             }
+            else
+            {
+                int previewWidth = Math.Max(280, (messageFormatPanel?.ClientSize.Width ?? 430) - 28);
+                _message.Width = previewWidth;
+                _message.MaximumSize = new Size(previewWidth, 0);
+            }
+
             SetStyle(ControlStyles.Selectable, true);
             return _message;
         }
@@ -1293,12 +1935,12 @@ namespace EasyCPDLC
             {
                 Width = 65
             };
-            AccessibleLabel _message = new(DcduTheme.Cyan)
+            AccessibleLabel _message = new(MainAccentColor())
             {
                 Width = 65,
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                ForeColor = DcduTheme.Cyan,
+                ForeColor = MainAccentColor(),
                 Font = textFont,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
@@ -1324,7 +1966,7 @@ namespace EasyCPDLC
                 Width = 65,
                 AutoSize = true,
                 BackColor = Color.Transparent,
-                ForeColor = DcduTheme.CyanWhite,
+                ForeColor = MainPrimaryTextColor(),
                 Font = textFontBold,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
@@ -1354,6 +1996,7 @@ namespace EasyCPDLC
             }
             catch
             {
+                MarkMessageRead(control);
                 TableLayoutHelper.RemoveArbitraryRow(outputTable, outputTable.GetPositionFromControl(control).Row);
                 ClearPreview();
             }
@@ -1361,7 +2004,137 @@ namespace EasyCPDLC
 
         private void DeleteAllElement(object sender, EventArgs e)
         {
+            ClearUnreadMessages();
             outputTable.Controls.Clear();
+        }
+
+        private string GetPreviewMessageText(CPDLCMessage message)
+        {
+            if (message == null)
+            {
+                return string.Empty;
+            }
+
+            string text = message.message ?? string.Empty;
+
+            if (string.Equals(message.type, "ATIS", StringComparison.OrdinalIgnoreCase) ||
+                text.IndexOf(" ATIS ", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                Regex.IsMatch(text, @"\b[A-Z0-9]{4}_[AD](?:_ATIS)?\b", RegexOptions.IgnoreCase))
+            {
+                return FormatAtisPreviewText(text);
+            }
+
+            return WrapPreviewText(text, GetPreviewWrapLength());
+        }
+
+        private int GetPreviewWrapLength()
+        {
+            return DcduStyleManager.IsBoeing ? 48 : 46;
+        }
+
+        private string FormatAtisPreviewText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            string normalized = text
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Replace("\t", " ");
+
+            normalized = Regex.Replace(normalized, @"[ ]+", " ");
+            normalized = Regex.Replace(normalized, @" *\n *", "\n").Trim();
+
+            // Split the common ATIS header away from the body.
+            normalized = Regex.Replace(
+                normalized,
+                @"^(.+?\bATIS\b\s+[A-Z]\s+\d{4}Z)\s+",
+                "$1\n",
+                RegexOptions.IgnoreCase);
+
+            // Insert helpful avionics-style line breaks before common ATIS sections.
+            string[] sectionPatterns =
+            {
+                @"\bDEP RWYS?\b",
+                @"\bARR RWYS?\b",
+                @"\bARRIVALS?\b",
+                @"\bDEPARTURES?\b",
+                @"\bRWYS?\b",
+                @"\bWIND\b",
+                @"\bVIS\b",
+                @"\bCAVOK\b",
+                @"\bFEW\d",
+                @"\bSCT\d",
+                @"\bBKN\d",
+                @"\bOVC\d",
+                @"\bTRL\b",
+                @"\bTL\b",
+                @"\bTA\b",
+                @"\bTRANS(?:ITION)?\b",
+                @"\bT\s+[-+]?\d+",
+                @"\bQNH\b",
+                @"\bRECEIVE\b",
+                @"\bDATALINK\b",
+                @"\bENR\b",
+                @"\bEND OF\b"
+            };
+
+            foreach (string pattern in sectionPatterns)
+            {
+                normalized = Regex.Replace(
+                    normalized,
+                    @"\s+(" + pattern + @")",
+                    "\n$1",
+                    RegexOptions.IgnoreCase);
+            }
+
+            normalized = Regex.Replace(normalized, @"\n{2,}", "\n");
+
+            return WrapPreviewText(normalized, GetPreviewWrapLength());
+        }
+
+        private static string WrapPreviewText(string text, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            maxChars = Math.Max(24, maxChars);
+
+            List<string> wrappedLines = new();
+
+            foreach (string rawLine in text.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
+            {
+                string line = Regex.Replace(rawLine.Trim(), @"[ ]+", " ");
+
+                if (line.Length == 0)
+                {
+                    continue;
+                }
+
+                while (line.Length > maxChars)
+                {
+                    int breakAt = line.LastIndexOf(' ', Math.Min(maxChars, line.Length - 1));
+
+                    if (breakAt < maxChars / 2)
+                    {
+                        breakAt = Math.Min(maxChars, line.Length);
+                    }
+
+                    wrappedLines.Add(line.Substring(0, breakAt).Trim());
+                    line = line.Substring(Math.Min(breakAt + 1, line.Length)).Trim();
+                }
+
+                if (line.Length > 0)
+                {
+                    wrappedLines.Add(line);
+                }
+            }
+
+            return string.Join("\n", wrappedLines);
         }
 
         private void MessageClicked(object sender, EventArgs e)
@@ -1397,6 +2170,7 @@ namespace EasyCPDLC
                     return;
                 }
                 previewMessage = _sender;
+                MarkMessageRead(_sender);
                 System.Windows.Forms.Label _timeStamp = (System.Windows.Forms.Label)outputTable.Controls[messageIndex - 1];
                 List<System.Windows.Forms.Label> responses = new();
 
@@ -1473,7 +2247,7 @@ namespace EasyCPDLC
                 outputTable.Visible = false;
                 messageFormatPanel.Controls.Add(returnLabel);
                 messageFormatPanel.SetFlowBreak(returnLabel, true);
-                foreach (string line in _sender.message.Split('\n'))
+                foreach (string line in GetPreviewMessageText(_sender).Split('\n'))
                 {
                     messageFormatPanel.Controls.Add(CreateLabel(line, false));
                     messageFormatPanel.SetFlowBreak(messageFormatPanel.Controls[messageFormatPanel.Controls.Count - 1], true);
@@ -1524,16 +2298,124 @@ namespace EasyCPDLC
             return Task.CompletedTask;
         }
 
+
+        private string ExtractAtisTarget(string upperText)
+        {
+            if (string.IsNullOrWhiteSpace(upperText))
+            {
+                return "ATIS";
+            }
+
+            Match afterVatat = Regex.Match(upperText, @"\bVATATIS\s+([A-Z0-9]{4}(?:_[AD])?(?:_ATIS)?)\b");
+            if (afterVatat.Success)
+            {
+                return afterVatat.Groups[1].Value;
+            }
+
+            Match atisTarget = Regex.Match(upperText, @"\b[A-Z0-9]{4}(?:_[AD])?_ATIS\b|\b[A-Z0-9]{4}_[AD]\b");
+            return atisTarget.Success ? atisTarget.Value : "ATIS";
+        }
+
+        private bool TryWriteAtisUnavailableResponse(string response)
+        {
+            if (string.IsNullOrWhiteSpace(response))
+            {
+                return false;
+            }
+
+            string normalized = response
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Trim();
+
+            string upper = normalized.ToUpperInvariant();
+
+            if (!upper.Contains("THIS ATIS IS NOT") && !upper.Contains("ATIS IS NOT AVAILABLE"))
+            {
+                return false;
+            }
+
+            string explicitTarget = ExtractAtisTarget(upper);
+            string target = explicitTarget != "ATIS"
+                ? FormatAtisTargetForList(explicitTarget)
+                : GetAtisListTarget(normalized, "VATATIS", true);
+
+            string displayMessage = target + "\nTHIS ATIS IS NOT AVAILABLE";
+
+            WriteMessage(displayMessage, "ATIS", "VATATIS");
+            FlashWindow.Flash(this);
+            Logger.Debug("Displayed Hoppie ATIS unavailable response: " + displayMessage.Replace("\n", " "));
+            return true;
+        }
+
+        private bool TryWriteFlatInfoResponse(string sender, string type, string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return false;
+            }
+
+            string normalizedPayload = payload
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Trim();
+
+            if (TryWriteAtisUnavailableResponse(normalizedPayload))
+            {
+                return true;
+            }
+
+            string upperPayload = normalizedPayload.ToUpperInvariant();
+
+            if (!upperPayload.Contains("_ATIS") && !upperPayload.Contains("VATATIS") &&
+                !Regex.IsMatch(upperPayload, @"\b[A-Z0-9]{4}_[AD]\b"))
+            {
+                return false;
+            }
+
+            string target = ExtractAtisTarget(upperPayload);
+            if (target == "ATIS")
+            {
+                return false;
+            }
+
+            int targetIndex = upperPayload.IndexOf(target, StringComparison.Ordinal);
+            string displayMessage = targetIndex >= 0
+                ? normalizedPayload.Substring(targetIndex).Trim()
+                : normalizedPayload.Trim();
+            if (string.IsNullOrWhiteSpace(displayMessage))
+            {
+                displayMessage = target;
+            }
+
+            WriteMessage(displayMessage, "ATIS", string.IsNullOrWhiteSpace(sender) ? "VATATIS" : sender);
+            FlashWindow.Flash(this);
+            Logger.Debug("Displayed flat Hoppie ATIS/info response: " + displayMessage.Replace("\n", " "));
+            return true;
+        }
+
         private async Task TelexParser(string response)
         {
             var responses = hoppieParse.Matches(response);
+
+            if (responses.Count == 0)
+            {
+                TryWriteFlatInfoResponse("VATATIS", "ATIS", response);
+                return;
+            }
 
             foreach (Match _response in responses)
             {
                 string format_response = "";
                 string[] _modify = _response.Groups[1].Value.Replace("}", "").Split('{');
-                string sender = _modify[0].Split(' ')[0];
-                string type = _modify[0].Split(' ')[1];
+
+                string[] headerParts = _modify[0]
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+                string sender = headerParts.Length > 0 ? headerParts[0] : "UNKNOWN";
+                string type = headerParts.Length > 1 ? headerParts[1] : "INFO";
+
+                bool handled = false;
 
                 for (int i = 0; i < _modify.Length; i++)
                 {
@@ -1543,6 +2425,7 @@ namespace EasyCPDLC
                         {
                             Logger.Debug("CPDLC Message identified, attempting to parse");
                             await CPDLCParser(_modify[1], sender);
+                            handled = true;
                             break;
                         }
 
@@ -1552,6 +2435,7 @@ namespace EasyCPDLC
                             {
                                 Logger.Debug("ADS-C Message identified, attempting to parse");
                                 await ADSCParser(_modify[1], sender);
+                                handled = true;
                                 break;
                             }
                             else
@@ -1563,7 +2447,14 @@ namespace EasyCPDLC
                         format_response += _modify[1];
                         WriteMessage(format_response, type, sender);
                         FlashWindow.Flash(this);
+                        handled = true;
                     }
+                }
+
+                if (!handled)
+                {
+                    string flatPayload = _modify.Length > 0 ? _modify[0] : _response.Groups[1].Value;
+                    TryWriteFlatInfoResponse(sender, type, flatPayload);
                 }
             }
             return;
@@ -1641,6 +2532,16 @@ namespace EasyCPDLC
 
         public CPDLCMessage WriteMessage(string _response, string _type, string _recipient, bool _outbound = false, CPDLCResponse _header = null)
         {
+            if (_outbound && string.Equals(_type, "ATIS", StringComparison.OrdinalIgnoreCase))
+            {
+                RememberAtisRequestTarget(_recipient);
+            }
+
+            if (_outbound && string.Equals(_type, "METAR", StringComparison.OrdinalIgnoreCase))
+            {
+                RememberMetarRequestTarget(_recipient);
+            }
+
             CPDLCMessage message;
             if (_outbound)
             {
@@ -1658,7 +2559,7 @@ namespace EasyCPDLC
             Logger.Debug("Writing message: " + _response);
 
             TimerLabel menuLabel = CreateTimerLabel(">>", true);
-            if (_type == "CPDLC" && !_outbound && _header != null && _header.Responses != "NE")
+            if (ShouldFlashForReply(message))
             {
                 menuLabel.CanFlash = true;
             }
@@ -1677,6 +2578,7 @@ namespace EasyCPDLC
                 outputTable.Controls.Add(menuLabel, 2, outputTable.RowCount - 1);
                 outputTable.RowCount += 1;
                 outputTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                MarkMessageUnread(message, menuLabel);
                 outputTable.ScrollControlIntoView(message);
                 HideNativeOutputScrollbars();
             });
@@ -1694,6 +2596,7 @@ namespace EasyCPDLC
         {
             try
             {
+                unreadReminderTimer?.Stop();
                 requestCancellationTokenSource?.Cancel();
             }
             catch (NullReferenceException) { }

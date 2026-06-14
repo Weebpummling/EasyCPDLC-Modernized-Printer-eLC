@@ -1,4 +1,4 @@
-/*  EASYCPDLC: CPDLC Client for the VATSIM Network
+﻿/*  EASYCPDLC: CPDLC Client for the VATSIM Network
     Copyright (C) 2021 Joshua Seagrave joshseagrave@googlemail.com
 
     This program is free software: you can redistribute it and/or modify
@@ -19,15 +19,20 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Net.Http;
 using System.Windows.Forms;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 
 namespace EasyCPDLC
 {
     public partial class RequestForm : Form
     {
-        public const int WM_NCLBUTTONDOWN = 0xA1;
+        
+        private static readonly HttpClient HoppieOnlineClient = new HttpClient() { Timeout = TimeSpan.FromSeconds(5) };
+public const int WM_NCLBUTTONDOWN = 0xA1;
         public const int HT_CAPTION = 0x2;
         private const int cGrip = 16;
         private const int cCaption = 32;
@@ -61,6 +66,9 @@ namespace EasyCPDLC
         private readonly Font controlFontBold;
         private readonly Font textFont;
         private readonly Font textFontBold;
+
+        private string currentRequestTitle = string.Empty;
+        private string currentRequestSubtitle = string.Empty;
 
         private bool _needsLogon;
 
@@ -139,7 +147,7 @@ namespace EasyCPDLC
         private void ApplyWindowLayout()
         {
             bool isBoeing = DcduStyleManager.IsBoeing;
-            Size targetSize = isBoeing ? new Size(800, 252) : new Size(750, 250);
+            Size targetSize = isBoeing ? new Size(960, 303) : new Size(850, 283);
             ClientSize = targetSize;
             Size = targetSize;
             MinimumSize = targetSize;
@@ -160,32 +168,36 @@ namespace EasyCPDLC
                 clearButton.Bounds = ScaleRect(new Rectangle(960, 189, 98, 48), baseSize, targetSize);
                 sendButton.Bounds = ScaleRect(new Rectangle(960, 249, 98, 48), baseSize, targetSize);
 
-                requestScreen.Bounds = ScaleRect(new Rectangle(236, 38, 660, 283), baseSize, targetSize);
-                messageFormatPanel.Bounds = ScaleRect(new Rectangle(10, 18, 638, 252), new Size(660, 283), requestScreen.Size);
-                messageFormatPanel.Padding = new Padding(8, 0, 0, 30);
-                radioContainer.Location = new Point(44, 228);
+                requestScreen.Bounds = ScaleRect(new Rectangle(220, 32, 706, 294), baseSize, targetSize);
+                titleLabel.Bounds = new Rectangle(18, 6, requestScreen.Width - 36, 34);
+                messageFormatPanel.Bounds = new Rectangle(14, 45, requestScreen.Width - 28, requestScreen.Height - 57);
+                messageFormatPanel.Padding = new Padding(6, 0, 6, 6);
+                radioContainer.Location = new Point(54, targetSize.Height - 28);
                 radioContainer.Size = new Size(110, 20);
-                requestContainer.Location = new Point(684, 228);
+                requestContainer.Location = new Point(targetSize.Width - 164, targetSize.Height - 28);
                 requestContainer.Size = new Size(110, 20);
             }
             else
             {
-                pdcButton.Bounds = new Rectangle(17, 50, 84, 32);
-                logonButton.Bounds = new Rectangle(17, 88, 84, 32);
-                requestButton.Bounds = new Rectangle(17, 125, 84, 32);
-                reportButton.Bounds = new Rectangle(17, 162, 84, 32);
-                exitButton.Bounds = new Rectangle(646, 48, 81, 31);
-                clearButton.Bounds = new Rectangle(647, 127, 80, 32);
-                sendButton.Bounds = new Rectangle(646, 164, 81, 31);
-                requestScreen.Bounds = new Rectangle(112, 29, 532, 177);
-                messageFormatPanel.Bounds = new Rectangle(10, 10, 512, 155);
-                messageFormatPanel.Padding = new Padding(6, 0, 0, 18);
-                radioContainer.Location = new Point(18, 224);
+                pdcButton.Bounds = new Rectangle(19, 56, 95, 36);
+                logonButton.Bounds = new Rectangle(19, 100, 95, 36);
+                requestButton.Bounds = new Rectangle(19, 143, 95, 36);
+                reportButton.Bounds = new Rectangle(19, 186, 95, 36);
+                exitButton.Bounds = new Rectangle(733, 54, 92, 35);
+                clearButton.Bounds = new Rectangle(734, 145, 91, 36);
+                sendButton.Bounds = new Rectangle(733, 188, 92, 35);
+                requestScreen.Bounds = new Rectangle(126, 32, 604, 214);
+                titleLabel.Bounds = new Rectangle(16, 6, requestScreen.Width - 32, 34);
+                messageFormatPanel.Bounds = new Rectangle(12, 44, requestScreen.Width - 24, requestScreen.Height - 52);
+                messageFormatPanel.Padding = new Padding(4, 0, 4, 6);
+                radioContainer.Location = new Point(22, 255);
                 radioContainer.Size = new Size(105, 18);
-                requestContainer.Location = new Point(628, 224);
+                requestContainer.Location = new Point(715, 255);
                 requestContainer.Size = new Size(105, 18);
             }
 
+            ApplyPanelMetrics();
+            sendButton.Enabled = false;
             requestFrame.Invalidate();
         }
 
@@ -252,9 +264,185 @@ namespace EasyCPDLC
         private void ApplyTransparentScreenOverlays()
         {
             // Same visual behavior as the main DCDU: do not paint a separate dark block over the bitmap screen.
+            requestScreen.BackColor = Color.Transparent;
             messageFormatPanel.BackColor = Color.Transparent;
             radioContainer.BackColor = Color.Transparent;
             requestContainer.BackColor = Color.Transparent;
+        }
+
+        private Color AccentColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(86, 255, 103)
+                : Color.FromArgb(45, 231, 245);
+        }
+
+        private Color PrimaryTextColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(178, 255, 188)
+                : controlFrontColor;
+        }
+
+        private Color MutedTextColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(96, 128, 100)
+                : Color.FromArgb(78, 102, 120);
+        }
+
+        private Color FieldBackColor()
+        {
+            return Color.FromArgb(3, 8, 15);
+        }
+
+        private void SetRequestTitle(string title, string subtitle = "")
+        {
+            if (titleLabel == null)
+            {
+                return;
+            }
+
+            currentRequestTitle = title ?? string.Empty;
+            currentRequestSubtitle = subtitle ?? string.Empty;
+
+            titleLabel.Visible = true;
+            titleLabel.AutoSize = false;
+            titleLabel.Text = string.Empty;
+            titleLabel.BackColor = Color.Transparent;
+            titleLabel.Padding = new Padding(0);
+            titleLabel.Paint -= TitleLabel_Paint;
+            titleLabel.Paint += TitleLabel_Paint;
+            titleLabel.Invalidate();
+            titleLabel.BringToFront();
+        }
+
+        private void TitleLabel_Paint(object sender, PaintEventArgs e)
+        {
+            if (sender is not Label label)
+            {
+                return;
+            }
+
+            Color accent = AccentColor();
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            Rectangle iconRect = new Rectangle(4, 7, 18, 14);
+            using Pen iconPen = new Pen(Color.FromArgb(175, accent), 1.4f);
+            e.Graphics.DrawRectangle(iconPen, iconRect);
+            e.Graphics.DrawLine(iconPen, iconRect.Left + 2, iconRect.Top + 2, iconRect.Left + iconRect.Width / 2, iconRect.Bottom - 3);
+            e.Graphics.DrawLine(iconPen, iconRect.Right - 2, iconRect.Top + 2, iconRect.Left + iconRect.Width / 2, iconRect.Bottom - 3);
+
+            using Font titleFont = new Font(textFontBold.FontFamily, Math.Max(9.2f, textFontBold.Size - 0.6f), FontStyle.Bold);
+            using Font subtitleFont = new Font(textFont.FontFamily, Math.Max(7.8f, textFont.Size - 1.5f), FontStyle.Regular);
+
+            TextRenderer.DrawText(
+                e.Graphics,
+                currentRequestTitle,
+                titleFont,
+                new Rectangle(30, 2, label.Width - 38, 17),
+                AccentColor(),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+
+            if (!string.IsNullOrWhiteSpace(currentRequestSubtitle))
+            {
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    currentRequestSubtitle,
+                    subtitleFont,
+                    new Rectangle(30, 18, label.Width - 38, 13),
+                    MutedTextColor(),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+            }
+
+            using Pen separator = new Pen(Color.FromArgb(28, accent), 1.0f);
+            e.Graphics.DrawLine(separator, 30, label.Height - 3, Math.Max(70, label.Width - 10), label.Height - 3);
+        }
+
+        private void ApplyPanelMetrics()
+        {
+            if (messageFormatPanel == null)
+            {
+                return;
+            }
+
+            messageFormatPanel.SuspendLayout();
+
+            messageFormatPanel.CellBorderStyle = TableLayoutPanelCellBorderStyle.None;
+            messageFormatPanel.GrowStyle = TableLayoutPanelGrowStyle.FixedSize;
+            messageFormatPanel.AutoScroll = false;
+            messageFormatPanel.ColumnCount = 6;
+            messageFormatPanel.RowCount = 7;
+
+            messageFormatPanel.ColumnStyles.Clear();
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 26F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10F));
+
+            float rowHeight = DcduStyleManager.IsBoeing ? 26F : 24F;
+            messageFormatPanel.RowStyles.Clear();
+            for (int i = 0; i < 7; i++)
+            {
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, rowHeight));
+            }
+
+            messageFormatPanel.ResumeLayout(true);
+        }
+
+        private void MessageFormatPanel_CellPaint(object sender, TableLayoutCellPaintEventArgs e)
+        {
+            // Field chrome is drawn in messageFormatPanel_Paint so spanning controls,
+            // especially REMARKS, get one clean border instead of per-cell fragments.
+        }
+
+        private void DrawFieldChrome(Graphics g, Rectangle bounds, bool focused, bool multiline)
+        {
+            if (bounds.Width <= 4 || bounds.Height <= 4)
+            {
+                return;
+            }
+
+            Color accent = AccentColor();
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            using GraphicsPath path = DcduPanel.RoundedRect(bounds, multiline ? 4 : 3);
+            using LinearGradientBrush brush = new LinearGradientBrush(
+                bounds,
+                Color.FromArgb(246, 2, 7, 12),
+                Color.FromArgb(246, 8, 17, 24),
+                LinearGradientMode.Vertical);
+
+            int borderAlpha = focused ? 205 : (DcduStyleManager.IsBoeing ? 118 : 132);
+            int glowAlpha = focused ? 58 : 25;
+
+            using Pen glow = new Pen(Color.FromArgb(glowAlpha, accent), focused ? 2.0f : 1.0f);
+            using Pen border = new Pen(Color.FromArgb(borderAlpha, accent), focused ? 1.35f : 1.0f);
+
+            g.FillPath(brush, path);
+
+            Rectangle glowRect = Rectangle.Inflate(bounds, 1, 1);
+            using GraphicsPath glowPath = DcduPanel.RoundedRect(glowRect, multiline ? 5 : 4);
+            g.DrawPath(glow, glowPath);
+            g.DrawPath(border, path);
+
+            using Pen innerLine = new Pen(Color.FromArgb(focused ? 80 : 38, Color.White), 1.0f);
+            int y = bounds.Top + 1;
+            g.DrawLine(innerLine, bounds.Left + 5, y, bounds.Right - 5, y);
+        }
+
+        private void InvalidateFieldChrome(object sender, EventArgs e)
+        {
+            if (messageFormatPanel != null && !messageFormatPanel.IsDisposed)
+            {
+                messageFormatPanel.Invalidate();
+            }
         }
 
         private ToolStripMenuItem CreateMenuItem(string name)
@@ -330,22 +518,24 @@ namespace EasyCPDLC
 
         private void AddRemarksField(TableLayoutPanel _control)
         {
-            _control.Controls.Add(CreateTemplate("REMARKS: "), 1, 4);
+            _control.Controls.Add(CreateTemplate("REMARKS:"), 1, 4);
+
             UITextBox remarksBox = CreateMultiLineBox("");
+            remarksBox.Name = "remarksTextBox";
+            remarksBox.TextChanged += ExpandMultiLineBox;
             _control.Controls.Add(remarksBox, 1, 5);
             _control.SetColumnSpan(remarksBox, 4);
-            _control.SetRowSpan(remarksBox, 2);
-            _control.Controls.Add(CreateBoxTemplate("[", AnchorStyles.Left), 0, 5);
-            _control.Controls.Add(CreateBoxTemplate("[", AnchorStyles.Left), 0, 6);
-            _control.Controls.Add(CreateBoxTemplate("]", AnchorStyles.Right), 5, 5);
-            _control.Controls.Add(CreateBoxTemplate("]", AnchorStyles.Right), 5, 6);
+
+            ResizeRemarksBox(remarksBox);
         }
 
         private void DepClxClick(object sender, EventArgs e)
         {
             depClxRadioButton.Checked = true;
+            SetRequestTitle("PRE-DEPARTURE CLEARANCE", "Datalink clearance request");
 
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("CALLSIGN: "), 1, 1);
@@ -362,12 +552,15 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateTextBox("", 1), 4, 3);
 
             AddRemarksField(messageFormatPanel);
+            FinalizeMessagePanel();
         }
         private void OcnClxClick(object sender, EventArgs e)
         {
             ocnClxRadioButton.Checked = true;
+            SetRequestTitle("OCEANIC CLEARANCE", "Oceanic clearance request");
 
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("CALLSIGN: "), 1, 1);
@@ -382,13 +575,16 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateTextBox("", 3), 2, 3);
 
             AddRemarksField(messageFormatPanel);
+            FinalizeMessagePanel();
         }
 
         private void DirectRequestClick(object sender, EventArgs e)
         {
             directRadioButton.Checked = true;
+            SetRequestTitle("REQUEST DIRECT", "Route change");
 
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("REQUEST DIRECT TO "), 1, 1);
@@ -397,14 +593,17 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, 2);
 
             AddRemarksField(messageFormatPanel);
+            FinalizeMessagePanel();
 
         }
 
         private void LevelRequestClick(object sender, EventArgs e)
         {
             levelRadioButton.Checked = true;
+            SetRequestTitle("REQUEST LEVEL", "Altitude change");
 
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("REQUESTED FL: "), 1, 1);
@@ -413,13 +612,16 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, 2);
 
             AddRemarksField(messageFormatPanel);
+            FinalizeMessagePanel();
         }
 
         private void SpeedRequestClick(object sender, EventArgs e)
         {
             speedRadioButton.Checked = true;
+            SetRequestTitle("REQUEST SPEED", "Speed change");
 
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("REQUEST"), 1, 1);
@@ -431,13 +633,16 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 4, 3);
 
             AddRemarksField(messageFormatPanel);
+            FinalizeMessagePanel();
         }
 
         private void WhenCanWeRequestClick(object sender, EventArgs e)
         {
             wcwRadioButton.Checked = true;
+            SetRequestTitle("WHEN CAN WE EXPECT", "ATC query");
 
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("WHEN CAN WE EXPECT:"), 1, 1);
@@ -452,6 +657,7 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateTextBox("", 2, false, true), 4, 3);
             messageFormatPanel.Controls.Add(CreateCheckBox("SPEED: ", "wcwParam"), 3, 4);
             messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 4, 4);
+            FinalizeMessagePanel();
         }
 
         private void PdcButton_Click(object sender, EventArgs e)
@@ -473,7 +679,9 @@ namespace EasyCPDLC
             fix1.Text = MainForm.nextFix ?? "";
 
             reportRadioButton.Checked = true;
+            SetRequestTitle("POSITION REPORT", "Enroute report");
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("FIX: "), 1, 1);
@@ -488,6 +696,7 @@ namespace EasyCPDLC
             messageFormatPanel.Controls.Add(CreateTextBox("", 4), 4, 3);
             messageFormatPanel.Controls.Add(CreateTemplate("THEN: "), 1, 4);
             messageFormatPanel.Controls.Add(fix3, 2, 4);
+            FinalizeMessagePanel();
         }
         private void PreFill(object sender, EventArgs e)
         {
@@ -521,17 +730,21 @@ namespace EasyCPDLC
 
         private void LogonButton_Click(object sender, EventArgs e)
         {
+            SetRequestTitle(NeedsLogon ? "CPDLC LOGON" : "CPDLC LOGOFF", "ATC unit");
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
             messageFormatPanel.Controls.Add(CreateTemplate("ATC UNIT:"), 1, 0);
             messageFormatPanel.Controls.Add(CreateTextBox(NeedsLogon ? "" : MainForm.CurrentATCUnit, 4), 2, 0);
 
             logonRadioButton.Checked = true;
+            FinalizeMessagePanel();
         }
 
 
         private void RequestButton_Click(object sender, EventArgs e)
         {
             requestRadioButton.Checked = true;
+            sendButton.Enabled = false;
 
             popupMenu.Items.Clear();
             popupMenu.Items.Add(directRequestMenu);
@@ -559,10 +772,10 @@ namespace EasyCPDLC
 
         private AccessibleLabel CreateTemplate(string _text)
         {
-            AccessibleLabel _temp = new(controlFrontColor)
+            AccessibleLabel _temp = new(PrimaryTextColor())
             {
                 BackColor = Color.Transparent,
-                ForeColor = controlFrontColor,
+                ForeColor = PrimaryTextColor(),
                 Font = textFont,
                 AutoSize = true,
                 Text = _text,
@@ -570,7 +783,7 @@ namespace EasyCPDLC
                 Height = 20,
 
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(0, 10, 0, 0),
+                Padding = new Padding(0, 6, 0, 0),
                 Margin = new Padding(0, 0, 0, 0),
                 TabStop = true,
                 TabIndex = 0
@@ -581,10 +794,10 @@ namespace EasyCPDLC
 
         private AccessibleLabel CreateBoxTemplate(string _text, AnchorStyles _leftOrRight)
         {
-            AccessibleLabel _temp = new(controlFrontColor)
+            AccessibleLabel _temp = new(PrimaryTextColor())
             {
                 BackColor = Color.Transparent,
-                ForeColor = controlFrontColor,
+                ForeColor = PrimaryTextColor(),
                 Font = textFont,
                 AutoSize = true,
                 Text = _text,
@@ -592,7 +805,7 @@ namespace EasyCPDLC
                 Height = 20,
 
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(0, 10, 0, 0),
+                Padding = new Padding(0, 6, 0, 0),
                 Margin = new Padding(0, 0, 0, 0),
                 TabStop = false,
                 Anchor = _leftOrRight
@@ -603,10 +816,10 @@ namespace EasyCPDLC
 
         private UITextBox CreateTextBox(string _text, int _maxLength, bool _readOnly = false, bool _numsOnly = false)
         {
-            UITextBox _temp = new(controlFrontColor)
+            UITextBox _temp = new(PrimaryTextColor())
             {
-                BackColor = controlBackColor,
-                ForeColor = controlFrontColor,
+                BackColor = FieldBackColor(),
+                ForeColor = PrimaryTextColor(),
                 Font = textFontBold,
                 MaxLength = _maxLength,
                 BorderStyle = BorderStyle.None,
@@ -614,12 +827,17 @@ namespace EasyCPDLC
                 CharacterCasing = CharacterCasing.Upper,
                 Top = 10,
                 PlaceholderText = new string('▯', _maxLength),
-                Height = 30,
+                Height = DcduStyleManager.IsBoeing ? 22 : 21,
                 ReadOnly = _readOnly,
                 TextAlign = HorizontalAlignment.Left,
                 TabIndex = 0,
-                Anchor = AnchorStyles.Left
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(7, 3, 10, 2)
             };
+
+            _temp.Enter += InvalidateFieldChrome;
+            _temp.Leave += InvalidateFieldChrome;
+            _temp.TextChanged += InvalidateFieldChrome;
 
             if (_numsOnly)
             {
@@ -648,10 +866,10 @@ namespace EasyCPDLC
             UICheckBox _temp = new(_group)
             {
                 BackColor = Color.Transparent,
-                ForeColor = controlFrontColor,
+                ForeColor = PrimaryTextColor(),
                 Font = textFont,
                 Text = _text,
-                Padding = new Padding(3, 10, 10, -30),
+                Padding = new Padding(2, 3, 6, 0),
                 AutoSize = true,
                 TabIndex = 0
             };
@@ -675,28 +893,31 @@ namespace EasyCPDLC
 
         private UITextBox CreateMultiLineBox(string _text)
         {
-            UITextBox _temp = new(controlFrontColor)
+            UITextBox _temp = new(PrimaryTextColor())
             {
-                BackColor = controlBackColor,
-                ForeColor = controlFrontColor,
+                BackColor = FieldBackColor(),
+                ForeColor = PrimaryTextColor(),
                 Font = textFontBold,
                 BorderStyle = BorderStyle.None,
-                Width = Math.Max(520, messageFormatPanel.Width - 44),
+                Width = Math.Max(420, messageFormatPanel.Width - 88),
                 Multiline = true,
                 WordWrap = true,
-                ScrollBars = ScrollBars.Vertical,
+                ScrollBars = ScrollBars.None,
                 AcceptsReturn = true,
                 AcceptsTab = false,
                 Text = _text,
                 MaxLength = 255,
-                Height = 64,
+                Height = MinimumRemarksHeight(),
                 TabIndex = 0
             };
 
             _temp.CharacterCasing = CharacterCasing.Upper;
-            _temp.Padding = new Padding(3, 0, 3, -10);
-            _temp.Margin = new Padding(3, 5, 3, -10);
+            _temp.Padding = new Padding(3, 0, 3, 0);
+            _temp.Margin = new Padding(7, 3, 8, 2);
             _temp.TextAlign = HorizontalAlignment.Left;
+            _temp.Enter += InvalidateFieldChrome;
+            _temp.Leave += InvalidateFieldChrome;
+            _temp.TextChanged += InvalidateFieldChrome;
 
             return _temp;
         }
@@ -709,141 +930,248 @@ namespace EasyCPDLC
         private void ClearButton_Click(object sender, EventArgs e)
         {
             messageFormatPanel.Controls.Clear();
+            ApplyPanelMetrics();
+            sendButton.Enabled = false;
         }
 
-        private void SendButton_Click(object sender, EventArgs e)
+
+        private string GetRecipientFromPanel()
         {
+            TextBox box = messageFormatPanel.Controls.OfType<TextBox>().FirstOrDefault();
+            return box == null ? string.Empty : box.Text.Trim().ToUpperInvariant();
+        }
+
+        private void MessageInputChanged(object sender, EventArgs e)
+        {
+            UpdateSendButtonState();
+        }
+
+        private void FinalizeMessagePanel()
+        {
+            foreach (TextBox box in messageFormatPanel.Controls.OfType<TextBox>())
+            {
+                box.TextChanged -= MessageInputChanged;
+                box.TextChanged += MessageInputChanged;
+            }
+
+            foreach (CheckBox box in messageFormatPanel.Controls.OfType<CheckBox>())
+            {
+                box.CheckedChanged -= MessageInputChanged;
+                box.CheckedChanged += MessageInputChanged;
+            }
+
+            UpdateSendButtonState();
+        }
+
+        private void UpdateSendButtonState()
+        {
+            sendButton.Enabled = IsRequestSendReady();
+        }
+
+        private bool IsRequestSendReady()
+        {
+            RadioButton radioBtn = radioContainer.Controls.OfType<RadioButton>()
+                                       .Where(x => x.Checked).FirstOrDefault();
+
+            if (radioBtn == null)
+            {
+                return false;
+            }
+
+            TextBox[] boxes = messageFormatPanel.Controls.OfType<TextBox>().ToArray();
+
+            if (boxes.Length == 0)
+            {
+                return false;
+            }
+
+            if (radioBtn.Name == "logonRadioButton")
+            {
+                return boxes.All(box => !string.IsNullOrWhiteSpace(box.Text));
+            }
+
+            if (radioBtn.Name == "depClxRadioButton" || radioBtn.Name == "ocnClxRadioButton")
+            {
+                return boxes.Where(box => !box.Multiline).All(box => !string.IsNullOrWhiteSpace(box.Text));
+            }
+
+            if (radioBtn.Name == "reportRadioButton")
+            {
+                return boxes.All(box => !string.IsNullOrWhiteSpace(box.Text));
+            }
+
+            if (radioBtn.Name == "requestRadioButton")
+            {
+                string recipientText = GetRecipientFromPanel();
+                if (recipientText.Length < 1)
+                {
+                    return false;
+                }
+
+                bool hasTextInput = boxes.Any(box => !box.ReadOnly && !string.IsNullOrWhiteSpace(box.Text));
+                bool hasCheckedOption = messageFormatPanel.Controls.OfType<CheckBox>().Any(box => box.Checked);
+                return hasTextInput || hasCheckedOption;
+            }
+
+            return false;
+        }
+
+        private static async Task<bool?> IsHoppieStationOnlineAsync(string station)
+        {
+            if (string.IsNullOrWhiteSpace(station))
+            {
+                return false;
+            }
+
+            string cleanStation = station.Trim().ToUpperInvariant();
+
+            try
+            {
+                string html = await HoppieOnlineClient.GetStringAsync("https://www.hoppie.nl/acars/system/online.html");
+                string pattern = "\\b" + Regex.Escape(cleanStation) + "\\b";
+                return Regex.IsMatch(html, pattern, RegexOptions.IgnoreCase);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async void SendButton_Click(object sender, EventArgs e)
+        {
+            if (!IsRequestSendReady())
+            {
+                return;
+            }
 
             RadioButton radioBtn = radioContainer.Controls.OfType<RadioButton>()
                                        .Where(x => x.Checked).FirstOrDefault();
 
-            if (radioBtn != null)
+            if (radioBtn == null)
             {
-                string _recipient = messageFormatPanel.Controls[1].Text;
-                string _formatMessage = "";
-                string _messageType = "";
-
-                switch (radioBtn.Name)
-                {
-
-                    case "ocnClxRadioButton":
-
-                        foreach (UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline == false))
-                        {
-                            if (_tb.Text.Length < 1)
-                            {
-                                return;
-                            }
-                        }
-
-                        _formatMessage = string.Format("OCEANIC CLEARANCE REQUEST CALLSIGN: {0} ENTRY POINT: {1} AT: {2} REQ: M.{3} FL{4} RMKS: {5}",
-                            messageFormatPanel.Controls[3].Text,
-                            messageFormatPanel.Controls[5].Text,
-                            messageFormatPanel.Controls[7].Text,
-                            messageFormatPanel.Controls[9].Text,
-                            messageFormatPanel.Controls[11].Text,
-                            messageFormatPanel.Controls[13].Text
-                            );
-                        _messageType = "CPDLC";
-                        break;
-
-                    case "depClxRadioButton":
-
-                        foreach (UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline == false))
-                        {
-                            if (_tb.Text.Length < 1)
-                            {
-                                return;
-                            }
-                        }
-
-                        _formatMessage = string.Format("REQUEST PREDEP CLEARANCE {0} {1} TO {2} AT {3} STAND {4} ATIS {5}",
-                             messageFormatPanel.Controls[3].Text,
-                             messageFormatPanel.Controls[5].Text,
-                             messageFormatPanel.Controls[9].Text,
-                             messageFormatPanel.Controls[7].Text,
-                             messageFormatPanel.Controls[11].Text,
-                             messageFormatPanel.Controls[13].Text
-                             );
-                        _messageType = "TELEX";
-                        break;
-
-                    case "logonRadioButton":
-
-                        foreach (Control _control in messageFormatPanel.Controls)
-                        {
-                            if (_control.Text.Length < 1)
-                            {
-                                return;
-                            }
-                        }
-
-                        if (NeedsLogon)
-                        {
-                            _formatMessage = String.Format("/data2/{0}//Y/REQUEST LOGON", MainForm.messageOutCounter);
-                            MainForm.pendingLogon = _recipient;
-                        }
-                        else
-                        {
-                            _formatMessage = String.Format("/data2/{0}//N/LOGOFF", MainForm.messageOutCounter);
-                            MainForm.CurrentATCUnit = null;
-
-                        }
-
-                        _messageType = "CPDLC";
-
-                        break;
-
-                    case "requestRadioButton":
-
-                        _formatMessage = String.Format("/data2/{0}//Y/", MainForm.messageOutCounter);
-                        string parsedMessage = ParseRequest();
-
-                        if (parsedMessage == "")
-                        {
-                            MainForm.WriteMessage("ERROR PARSING CPDLC MESSAGE. NO MESSAGE SENT", "SYSTEM", "SYSTEM");
-                            break;
-                        }
-
-                        _formatMessage += parsedMessage;
-
-                        _messageType = "CPDLC";
-
-                        break;
-
-                    case "reportRadioButton":
-
-                        _formatMessage = String.Format("/data2/{0}//N/", MainForm.messageOutCounter);
-                        string _messageContent = String.Format("POSITION REPORT PPOS {0} AT {1}Z FL{2} TO {3} AT {4}Z NEXT {5}",
-                            fix1.Text,
-                            messageFormatPanel.Controls[6].Text,
-                            messageFormatPanel.Controls[9].Text,
-                            fix2.Text,
-                            messageFormatPanel.Controls[13].Text,
-                            fix3.Text);
-                        _formatMessage += _messageContent;
-                        _messageType = "CPDLC";
-                        MainForm.nextFix = fix2.Text;
-                        break;
-
-
-
-                    default:
-                        break;
-
-
-
-                }
-
-                if (_messageType == "CPDLC") { MainForm.messageOutCounter += 1; }
-                _ = Task.Run(() => MainForm.SendCPDLCMessage(_recipient, _messageType, _formatMessage.Trim()));
-
-                this.Close();
+                return;
             }
-            else
+
+            string _recipient = GetRecipientFromPanel();
+            string _formatMessage = "";
+            string _messageType = "";
+
+            switch (radioBtn.Name)
             {
+                case "ocnClxRadioButton":
+                    foreach (UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline == false))
+                    {
+                        if (_tb.Text.Length < 1)
+                        {
+                            return;
+                        }
+                    }
 
+                    _formatMessage = string.Format("OCEANIC CLEARANCE REQUEST CALLSIGN: {0} ENTRY POINT: {1} AT: {2} REQ: M.{3} FL{4} RMKS: {5}",
+                        messageFormatPanel.Controls[3].Text,
+                        messageFormatPanel.Controls[5].Text,
+                        messageFormatPanel.Controls[7].Text,
+                        messageFormatPanel.Controls[9].Text,
+                        messageFormatPanel.Controls[11].Text,
+                        messageFormatPanel.Controls[13].Text
+                        );
+                    _messageType = "CPDLC";
+                    break;
+
+                case "depClxRadioButton":
+                    foreach (UITextBox _tb in messageFormatPanel.Controls.OfType<UITextBox>().Where(x => x.Multiline == false))
+                    {
+                        if (_tb.Text.Length < 1)
+                        {
+                            return;
+                        }
+                    }
+
+                    _formatMessage = string.Format("REQUEST PREDEP CLEARANCE {0} {1} TO {2} AT {3} STAND {4} ATIS {5}",
+                         messageFormatPanel.Controls[3].Text,
+                         messageFormatPanel.Controls[5].Text,
+                         messageFormatPanel.Controls[9].Text,
+                         messageFormatPanel.Controls[7].Text,
+                         messageFormatPanel.Controls[11].Text,
+                         messageFormatPanel.Controls[13].Text
+                         );
+                    _messageType = "TELEX";
+                    break;
+
+                case "logonRadioButton":
+                    foreach (TextBox box in messageFormatPanel.Controls.OfType<TextBox>())
+                    {
+                        if (string.IsNullOrWhiteSpace(box.Text))
+                        {
+                            return;
+                        }
+                    }
+
+                    if (NeedsLogon)
+                    {
+                        bool? stationOnline = await IsHoppieStationOnlineAsync(_recipient);
+                        if (stationOnline == false)
+                        {
+                            MainForm.WriteMessage("STATION NOT ONLINE", "SYSTEM", "SYSTEM");
+                            return;
+                        }
+
+                        _formatMessage = string.Format("/data2/{0}//Y/REQUEST LOGON", MainForm.messageOutCounter);
+                        MainForm.pendingLogon = _recipient;
+                    }
+                    else
+                    {
+                        _formatMessage = string.Format("/data2/{0}//N/LOGOFF", MainForm.messageOutCounter);
+                        MainForm.CurrentATCUnit = null;
+                    }
+
+                    _messageType = "CPDLC";
+                    break;
+
+                case "requestRadioButton":
+                    _formatMessage = string.Format("/data2/{0}//Y/", MainForm.messageOutCounter);
+                    string parsedMessage = ParseRequest();
+
+                    if (parsedMessage == "")
+                    {
+                        MainForm.WriteMessage("ERROR PARSING CPDLC MESSAGE. NO MESSAGE SENT", "SYSTEM", "SYSTEM");
+                        return;
+                    }
+
+                    _formatMessage += parsedMessage;
+                    _messageType = "CPDLC";
+                    break;
+
+                case "reportRadioButton":
+                    _formatMessage = string.Format("/data2/{0}//N/", MainForm.messageOutCounter);
+                    string _messageContent = string.Format("POSITION REPORT PPOS {0} AT {1}Z FL{2} TO {3} AT {4}Z NEXT {5}",
+                        fix1.Text,
+                        messageFormatPanel.Controls[6].Text,
+                        messageFormatPanel.Controls[9].Text,
+                        fix2.Text,
+                        messageFormatPanel.Controls[13].Text,
+                        fix3.Text);
+                    _formatMessage += _messageContent;
+                    _messageType = "CPDLC";
+                    MainForm.nextFix = fix2.Text;
+                    break;
+
+                default:
+                    return;
             }
+
+            if (string.IsNullOrWhiteSpace(_messageType) || string.IsNullOrWhiteSpace(_formatMessage))
+            {
+                return;
+            }
+
+            if (_messageType == "CPDLC")
+            {
+                MainForm.messageOutCounter += 1;
+            }
+
+            _ = Task.Run(() => MainForm.SendCPDLCMessage(_recipient, _messageType, _formatMessage.Trim()));
+            this.Close();
         }
 
         private string ParseRequest()
@@ -995,17 +1323,88 @@ namespace EasyCPDLC
             }
         }
 
+        private int MinimumRemarksHeight()
+        {
+            return DcduStyleManager.IsBoeing ? 34 : 32;
+        }
+
+        private int MaximumRemarksHeight()
+        {
+            if (messageFormatPanel == null)
+            {
+                return DcduStyleManager.IsBoeing ? 76 : 68;
+            }
+
+            int usedHeight = messageFormatPanel.Padding.Top + messageFormatPanel.Padding.Bottom + 6;
+            int rowsToReserve = Math.Min(5, messageFormatPanel.RowStyles.Count);
+            for (int i = 0; i < rowsToReserve; i++)
+            {
+                usedHeight += (int)messageFormatPanel.RowStyles[i].Height;
+            }
+
+            return Math.Max(MinimumRemarksHeight(), messageFormatPanel.ClientSize.Height - usedHeight);
+        }
+
         private void ExpandMultiLineBox(object sender, EventArgs e)
         {
-            // Fixed-height remarks boxes use their own vertical scrollbar.
             if (sender is TextBox textBox)
             {
-                textBox.ScrollBars = ScrollBars.Vertical;
-                if (textBox.Height != 64)
-                {
-                    textBox.Height = 64;
-                }
+                ResizeRemarksBox(textBox);
             }
+        }
+
+        private void ResizeRemarksBox(TextBox textBox)
+        {
+            if (textBox == null || messageFormatPanel == null || messageFormatPanel.IsDisposed)
+            {
+                return;
+            }
+
+            int minHeight = MinimumRemarksHeight();
+            int maxHeight = MaximumRemarksHeight();
+            int targetWidth = Math.Max(240, messageFormatPanel.ClientSize.Width - 88);
+
+            if (textBox.Width != targetWidth)
+            {
+                textBox.Width = targetWidth;
+            }
+
+            string measureText = string.IsNullOrEmpty(textBox.Text) ? " " : textBox.Text + " ";
+            Size measured = TextRenderer.MeasureText(
+                measureText,
+                textBox.Font,
+                new Size(Math.Max(40, textBox.ClientSize.Width - 8), int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+
+            int wantedHeight = measured.Height + 12;
+            int newHeight = Math.Max(minHeight, Math.Min(maxHeight, wantedHeight));
+            bool needsScrollbar = wantedHeight > maxHeight;
+            ScrollBars targetScrollBars = needsScrollbar ? ScrollBars.Vertical : ScrollBars.None;
+
+            if (textBox.ScrollBars != targetScrollBars)
+            {
+                textBox.ScrollBars = targetScrollBars;
+            }
+
+            if (textBox.Height != newHeight)
+            {
+                textBox.Height = newHeight;
+            }
+
+            if (messageFormatPanel.RowStyles.Count > 5)
+            {
+                messageFormatPanel.RowStyles[5].SizeType = SizeType.Absolute;
+                messageFormatPanel.RowStyles[5].Height = newHeight + 4;
+            }
+
+            if (messageFormatPanel.RowStyles.Count > 6)
+            {
+                messageFormatPanel.RowStyles[6].SizeType = SizeType.Absolute;
+                messageFormatPanel.RowStyles[6].Height = 0;
+            }
+
+            messageFormatPanel.PerformLayout();
+            messageFormatPanel.Invalidate();
         }
 
         protected override void WndProc(ref Message m)
@@ -1048,7 +1447,25 @@ namespace EasyCPDLC
 
         private void messageFormatPanel_Paint(object sender, PaintEventArgs e)
         {
+            if (messageFormatPanel == null || messageFormatPanel.IsDisposed)
+            {
+                return;
+            }
 
+            foreach (Control control in messageFormatPanel.Controls)
+            {
+                if (control is TextBox textBox && textBox.Visible)
+                {
+                    Rectangle bounds = Rectangle.Inflate(textBox.Bounds, 4, 3);
+
+                    bounds.X = Math.Max(0, bounds.X);
+                    bounds.Y = Math.Max(0, bounds.Y);
+                    bounds.Width = Math.Min(bounds.Width, messageFormatPanel.ClientSize.Width - bounds.X - 2);
+                    bounds.Height = Math.Min(bounds.Height, messageFormatPanel.ClientSize.Height - bounds.Y - 2);
+
+                    DrawFieldChrome(e.Graphics, bounds, textBox.Focused, textBox.Multiline);
+                }
+            }
         }
     }
 }
