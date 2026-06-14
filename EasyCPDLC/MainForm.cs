@@ -94,9 +94,10 @@ namespace EasyCPDLC
 
                 string badgeText = Text ?? string.Empty;
 
-                if (badgeText.Contains("●"))
+                if (badgeText.Contains("●") || badgeText.Contains("✓"))
                 {
-                    string title = badgeText.Replace("●", string.Empty).Trim();
+                    bool showCheck = badgeText.Contains("✓");
+                    string title = badgeText.Replace("●", string.Empty).Replace("✓", string.Empty).Trim();
                     Rectangle textRect = new Rectangle(bounds.Left + 5, bounds.Top, Math.Max(1, bounds.Width - 23), bounds.Height);
 
                     TextRenderer.DrawText(
@@ -107,33 +108,64 @@ namespace EasyCPDLC
                         hovered ? Color.White : accent,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
 
-                    int ledSize = Math.Min(10, Math.Max(7, bounds.Height - 8));
-                    Rectangle ledRect = new Rectangle(
-                        bounds.Right - ledSize - 7,
-                        bounds.Top + (bounds.Height - ledSize) / 2,
-                        ledSize,
-                        ledSize);
+                    int indicatorSize = Math.Min(10, Math.Max(7, bounds.Height - 8));
+                    Rectangle indicatorRect = new Rectangle(
+                        bounds.Right - indicatorSize - 7,
+                        bounds.Top + (bounds.Height - indicatorSize) / 2,
+                        indicatorSize,
+                        indicatorSize);
 
-                    using SolidBrush glowBrush = new SolidBrush(Color.FromArgb((focused || hovered) ? 72 : 42, accent));
-                    Rectangle glowRect = Rectangle.Inflate(ledRect, 3, 3);
+                    using SolidBrush glowBrush = new SolidBrush(Color.FromArgb((focused || hovered) ? 80 : 46, accent));
+                    Rectangle glowRect = Rectangle.Inflate(indicatorRect, 3, 3);
                     e.Graphics.FillEllipse(glowBrush, glowRect);
 
+                    if (showCheck)
+                    {
+                        PointF p1 = new PointF(indicatorRect.Left + 1.5f, indicatorRect.Top + indicatorRect.Height * 0.56f);
+                        PointF p2 = new PointF(indicatorRect.Left + indicatorRect.Width * 0.40f, indicatorRect.Bottom - 2.0f);
+                        PointF p3 = new PointF(indicatorRect.Right - 1.0f, indicatorRect.Top + 1.5f);
+
+                        using Pen checkShadow = new Pen(Color.FromArgb(150, Color.Black), 3.8f)
+                        {
+                            StartCap = LineCap.Round,
+                            EndCap = LineCap.Round,
+                            LineJoin = LineJoin.Round
+                        };
+                        using Pen checkPen = new Pen(accent, 2.6f)
+                        {
+                            StartCap = LineCap.Round,
+                            EndCap = LineCap.Round,
+                            LineJoin = LineJoin.Round
+                        };
+                        using Pen checkHighlight = new Pen(Color.FromArgb(120, Color.White), 1.0f)
+                        {
+                            StartCap = LineCap.Round,
+                            EndCap = LineCap.Round,
+                            LineJoin = LineJoin.Round
+                        };
+
+                        e.Graphics.DrawLines(checkShadow, new[] { p1, p2, p3 });
+                        e.Graphics.DrawLines(checkPen, new[] { p1, p2, p3 });
+                        e.Graphics.DrawLine(checkHighlight, p2.X - 0.5f, p2.Y - 1.2f, p3.X - 1.2f, p3.Y + 0.3f);
+                        return;
+                    }
+
                     using LinearGradientBrush ledFill = new LinearGradientBrush(
-                        ledRect,
+                        indicatorRect,
                         Color.FromArgb(245, Color.White),
                         accent,
                         LinearGradientMode.ForwardDiagonal);
                     using Pen ledBorder = new Pen(Color.FromArgb(220, accent), 1.0f);
                     using Pen ledShadow = new Pen(Color.FromArgb(120, Color.Black), 1.0f);
 
-                    e.Graphics.FillEllipse(ledFill, ledRect);
-                    e.Graphics.DrawEllipse(ledBorder, ledRect);
+                    e.Graphics.FillEllipse(ledFill, indicatorRect);
+                    e.Graphics.DrawEllipse(ledBorder, indicatorRect);
 
-                    Rectangle highlight = new Rectangle(ledRect.Left + 2, ledRect.Top + 2, Math.Max(2, ledSize / 3), Math.Max(2, ledSize / 3));
+                    Rectangle highlight = new Rectangle(indicatorRect.Left + 2, indicatorRect.Top + 2, Math.Max(2, indicatorSize / 3), Math.Max(2, indicatorSize / 3));
                     using SolidBrush highlightBrush = new SolidBrush(Color.FromArgb(180, Color.White));
                     e.Graphics.FillEllipse(highlightBrush, highlight);
 
-                    Rectangle shadow = new Rectangle(ledRect.Left + 1, ledRect.Top + 1, ledRect.Width - 1, ledRect.Height - 1);
+                    Rectangle shadow = new Rectangle(indicatorRect.Left + 1, indicatorRect.Top + 1, indicatorRect.Width - 1, indicatorRect.Height - 1);
                     e.Graphics.DrawArc(ledShadow, shadow, 35, 110);
                     return;
                 }
@@ -145,6 +177,91 @@ namespace EasyCPDLC
                     Rectangle.Inflate(bounds, -4, -1),
                     hovered ? Color.White : accent,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+            }
+        }
+
+        private sealed class PendingAtisRequest
+        {
+            public PendingAtisRequest(string target, DateTime createdUtc)
+            {
+                Target = target;
+                CreatedUtc = createdUtc;
+            }
+
+            public string Target { get; }
+            public DateTime CreatedUtc { get; }
+        }
+
+        private sealed class AtisOverviewMessage : CPDLCMessage
+        {
+            private static readonly Regex AtisLetterPattern = new(@"\bATIS\s+([A-Z?])\s+RECEIVED\b", RegexOptions.Compiled);
+
+            public AtisOverviewMessage(string type, string recipient, string message, bool outbound = false, CPDLCResponse header = null)
+                : base(type, recipient, message, outbound, header)
+            {
+                SetStyle(
+                    ControlStyles.UserPaint |
+                    ControlStyles.AllPaintingInWmPaint |
+                    ControlStyles.OptimizedDoubleBuffer |
+                    ControlStyles.ResizeRedraw |
+                    ControlStyles.Selectable,
+                    true);
+            }
+
+            public bool BoldAtisLetter { get; set; } = true;
+
+            public Font AtisLetterBoldFont { get; set; }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                string text = Text ?? string.Empty;
+                Font regularFont = Font ?? SystemFonts.DefaultFont;
+                Font boldFont = AtisLetterBoldFont ?? new Font(regularFont, FontStyle.Bold);
+                Color color = ForeColor;
+
+                Match match = BoldAtisLetter ? AtisLetterPattern.Match(text) : Match.Empty;
+
+                if (!match.Success)
+                {
+                    TextRenderer.DrawText(
+                        e.Graphics,
+                        text,
+                        regularFont,
+                        ClientRectangle,
+                        color,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+                    return;
+                }
+
+                int letterIndex = match.Groups[1].Index;
+                int letterLength = match.Groups[1].Length;
+
+                string before = text.Substring(0, letterIndex);
+                string letter = text.Substring(letterIndex, letterLength);
+                string after = text.Substring(letterIndex + letterLength);
+
+                TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoClipping;
+
+                int x = 0;
+                Rectangle drawRect = new Rectangle(x, 0, Math.Max(1, ClientSize.Width - x), ClientSize.Height);
+
+                TextRenderer.DrawText(e.Graphics, before, regularFont, drawRect, color, flags);
+
+                x += TextRenderer.MeasureText(e.Graphics, before, regularFont, Size.Empty, flags).Width;
+                drawRect = new Rectangle(x, 0, Math.Max(1, ClientSize.Width - x), ClientSize.Height);
+
+                TextRenderer.DrawText(e.Graphics, letter, boldFont, drawRect, color, flags);
+
+                x += TextRenderer.MeasureText(e.Graphics, letter, boldFont, Size.Empty, flags).Width;
+                drawRect = new Rectangle(x, 0, Math.Max(1, ClientSize.Width - x), ClientSize.Height);
+
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    after,
+                    regularFont,
+                    drawRect,
+                    color,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
             }
         }
 
@@ -285,6 +402,9 @@ namespace EasyCPDLC
                 {
                     telexButton.Enabled = _connected;
                 }
+
+                UpdateCurrentAtcUnitDisplay();
+                UpdateCallsignDisplay();
             }
         }
 
@@ -301,39 +421,131 @@ namespace EasyCPDLC
             }
             set
             {
-                _currentATCUnit = value;
+                _currentATCUnit = string.IsNullOrWhiteSpace(value)
+                    ? null
+                    : value.Trim().ToUpperInvariant();
 
-                if (_currentATCUnit is null)
+                UpdateCurrentAtcUnitDisplay();
+                UpdateOnlineStatusLabel();
+
+                if (rForm != null)
                 {
-                    if (atcUnitDisplay != null)
-                    {
-                        atcUnitDisplay.Text = "----";
-                        atcUnitDisplay.ForeColor = MainPrimaryTextColor();
-                    }
-
-                    UpdateOnlineStatusLabel();
-
-                    if (rForm != null)
-                    {
-                        rForm.NeedsLogon = true;
-                    }
-                }
-                else
-                {
-                    if (atcUnitDisplay != null)
-                    {
-                        atcUnitDisplay.Text = _currentATCUnit;
-                        atcUnitDisplay.ForeColor = MainPrimaryTextColor();
-                    }
-
-                    UpdateOnlineStatusLabel();
-
-                    if (rForm != null)
-                    {
-                        rForm.NeedsLogon = false;
-                    }
+                    rForm.NeedsLogon = _currentATCUnit is null;
                 }
             }
+        }
+
+        private void UpdateCurrentAtcUnitDisplay()
+        {
+            if (atcUnitLabel != null)
+            {
+                atcUnitLabel.Text = "CURRENT ATS UNIT:";
+                atcUnitLabel.ForeColor = MainPrimaryTextColor();
+            }
+
+            if (atcUnitDisplay == null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_currentATCUnit))
+            {
+                atcUnitDisplay.Text = "----";
+                atcUnitDisplay.ForeColor = MainPrimaryTextColor();
+            }
+            else
+            {
+                atcUnitDisplay.Text = _currentATCUnit;
+                atcUnitDisplay.ForeColor = DcduTheme.Green;
+            }
+        }
+
+        private string GetConnectedPilotCallsign()
+        {
+            if (!string.IsNullOrWhiteSpace(callsign))
+            {
+                return callsign.Trim().ToUpperInvariant();
+            }
+
+            if (!string.IsNullOrWhiteSpace(userVATSIMData?.callsign))
+            {
+                return userVATSIMData.callsign.Trim().ToUpperInvariant();
+            }
+
+            return string.Empty;
+        }
+
+        private void UpdateCallsignDisplay()
+        {
+            if (callsignCaptionLabel != null)
+            {
+                callsignCaptionLabel.Text = "CALLSIGN:";
+                callsignCaptionLabel.ForeColor = MainPrimaryTextColor();
+            }
+
+            if (callsignDisplayLabel == null)
+            {
+                return;
+            }
+
+            string displayCallsign = GetConnectedPilotCallsign();
+
+            if (string.IsNullOrWhiteSpace(displayCallsign))
+            {
+                callsignDisplayLabel.Text = "----";
+                callsignDisplayLabel.ForeColor = MainPrimaryTextColor();
+            }
+            else
+            {
+                callsignDisplayLabel.Text = displayCallsign;
+                callsignDisplayLabel.ForeColor = Connected ? DcduTheme.Green : MainPrimaryTextColor();
+            }
+        }
+
+        private static string NormalizeAtcUnitCallsign(string unit)
+        {
+            if (string.IsNullOrWhiteSpace(unit))
+            {
+                return string.Empty;
+            }
+
+            string upper = unit.Trim().Trim('@', ':', ';', ',', '.', ' ').ToUpperInvariant();
+            Match match = Regex.Match(upper, @"\b[A-Z0-9]{3,10}(?:_[A-Z0-9]{1,10})?\b");
+
+            if (!match.Success)
+            {
+                return string.Empty;
+            }
+
+            string candidate = match.Value;
+
+            string[] reserved =
+            {
+                "CURRENT", "ATC", "ATS", "UNIT", "LOGON", "ACCEPTED",
+                "HANDOVER", "CPDLC", "REQUEST", "CONNECTED", "TO"
+            };
+
+            return reserved.Contains(candidate) ? string.Empty : candidate;
+        }
+
+        private static string ExtractCurrentAtcUnitFromMessage(string message, string fallbackSender)
+        {
+            string upper = (message ?? string.Empty).ToUpperInvariant();
+
+            Match explicitUnit = Regex.Match(
+                upper,
+                @"\bCURRENT\s+AT[SC]\s+UNIT\s*:?\s*([A-Z0-9_]{3,16})\b");
+
+            if (explicitUnit.Success)
+            {
+                string explicitCallsign = NormalizeAtcUnitCallsign(explicitUnit.Groups[1].Value);
+                if (!string.IsNullOrWhiteSpace(explicitCallsign))
+                {
+                    return explicitCallsign;
+                }
+            }
+
+            return NormalizeAtcUnitCallsign(fallbackSender);
         }
 
         [System.Runtime.InteropServices.DllImport("gdi32.dll")]
@@ -363,6 +575,8 @@ namespace EasyCPDLC
         private System.Windows.Forms.Label clearanceStatusLabel;
         private System.Windows.Forms.Label datalinkStatusLabel;
         private System.Windows.Forms.Label atisStatusLabel;
+        private System.Windows.Forms.Label callsignCaptionLabel;
+        private System.Windows.Forms.Label callsignDisplayLabel;
         private string activeMessageFilter = "ALL";
         private string clearanceStatusText = "CLR --";
         private string datalinkStatusText = "PDC --";
@@ -404,8 +618,10 @@ namespace EasyCPDLC
 
         private readonly System.Windows.Forms.Timer unreadReminderTimer = new();
         private readonly List<CPDLCMessage> unreadMessages = new();
-        private readonly Queue<string> pendingAtisRequestTargets = new();
+        private readonly Queue<PendingAtisRequest> pendingAtisRequestTargets = new();
         private readonly object pendingAtisRequestLock = new();
+        private static readonly TimeSpan pendingAtisRequestLifetime = TimeSpan.FromMinutes(3);
+        private static readonly TimeSpan pendingAtisStaleJumpThreshold = TimeSpan.FromSeconds(30);
         private readonly Queue<string> pendingMetarRequestTargets = new();
         private readonly object pendingMetarRequestLock = new();
 
@@ -496,15 +712,8 @@ namespace EasyCPDLC
                 statusCaptionLabel.ForeColor = MainPrimaryTextColor();
             }
 
-            if (atcUnitLabel != null)
-            {
-                atcUnitLabel.ForeColor = MainPrimaryTextColor();
-            }
-
-            if (atcUnitDisplay != null && CurrentATCUnit != null)
-            {
-                atcUnitDisplay.ForeColor = MainPrimaryTextColor();
-            }
+            UpdateCurrentAtcUnitDisplay();
+            UpdateCallsignDisplay();
 
             if (popupMenu != null)
             {
@@ -553,7 +762,17 @@ namespace EasyCPDLC
         {
             string upper = (clearanceStatusText ?? string.Empty).ToUpperInvariant();
 
+            // CLR logic:
+            // white = standby / nothing yet / received-neutral
+            // amber = request sent, waiting for reply
+            // green = clearance received or accepted
+            // red = rejected
             if (upper.Contains("ACCEPTED") || upper.Contains("ACC"))
+            {
+                return DcduTheme.Green;
+            }
+
+            if (upper.Contains("RECEIVED") || upper.Contains(" RX"))
             {
                 return DcduTheme.Green;
             }
@@ -563,7 +782,7 @@ namespace EasyCPDLC
                 return Color.FromArgb(255, 86, 74);
             }
 
-            if (upper.Contains("REQUESTED") || upper.Contains("REQ") || upper.Contains("STANDBY") || upper.Contains("STBY"))
+            if (upper.Contains("REQUESTED") || upper.Contains("REQ"))
             {
                 return DcduTheme.Amber;
             }
@@ -678,6 +897,13 @@ namespace EasyCPDLC
                 if (control is CPDLCMessage message)
                 {
                     bool isUnread = unreadMessages.Contains(message);
+                    bool emphasizeAtisLetter = ShouldEmphasizeAtisLetter(message);
+
+                    if (message is AtisOverviewMessage atisMessage)
+                    {
+                        atisMessage.BoldAtisLetter = emphasizeAtisLetter;
+                        atisMessage.AtisLetterBoldFont = new Font(textFontBold.FontFamily, textFontBold.Size + 0.25f, FontStyle.Bold);
+                    }
 
                     if (isUnread)
                     {
@@ -686,14 +912,16 @@ namespace EasyCPDLC
                     }
                     else if (message.acknowledged)
                     {
-                        message.Font = ShouldEmphasizeAtisLetter(message) ? textFontBold : textFont;
+                        message.Font = textFont;
                         message.ForeColor = SystemColors.ControlDark;
                     }
                     else
                     {
-                        message.Font = ShouldEmphasizeAtisLetter(message) ? textFontBold : textFont;
+                        message.Font = textFont;
                         message.ForeColor = MainPrimaryTextColor();
                     }
+
+                    message.Invalidate();
                 }
                 else if (control is TimerLabel timerLabel)
                 {
@@ -776,9 +1004,37 @@ namespace EasyCPDLC
                 screenPanel.Controls.Add(onlineStatusLabel);
             }
 
+            if (callsignCaptionLabel == null)
+            {
+                callsignCaptionLabel = new System.Windows.Forms.Label
+                {
+                    AutoSize = false,
+                    BackColor = Color.Transparent,
+                    ForeColor = MainPrimaryTextColor(),
+                    Font = textFont,
+                    Text = "CALLSIGN:",
+                    TextAlign = ContentAlignment.MiddleLeft
+                };
+                screenPanel.Controls.Add(callsignCaptionLabel);
+            }
+
+            if (callsignDisplayLabel == null)
+            {
+                callsignDisplayLabel = new System.Windows.Forms.Label
+                {
+                    AutoSize = false,
+                    BackColor = Color.Transparent,
+                    ForeColor = MainPrimaryTextColor(),
+                    Font = textFontBold,
+                    Text = "----",
+                    TextAlign = ContentAlignment.MiddleLeft
+                };
+                screenPanel.Controls.Add(callsignDisplayLabel);
+            }
+
             if (clearanceStatusLabel == null)
             {
-                clearanceStatusLabel = CreateMainStatusBadge(BuildDotBadgeText("CLR"), Cursors.Default);
+                clearanceStatusLabel = CreateMainStatusBadge(BuildClearanceBadgeText(), Cursors.Default);
                 screenPanel.Controls.Add(clearanceStatusLabel);
             }
 
@@ -797,12 +1053,15 @@ namespace EasyCPDLC
             clearanceStatusLabel.BringToFront();
             datalinkStatusLabel.BringToFront();
             atisStatusLabel.BringToFront();
+            callsignCaptionLabel.BringToFront();
+            callsignDisplayLabel.BringToFront();
             messageFilterLabel.BringToFront();
             ConfigureFilterDropdownMenu();
             UpdateSmartStatusLabelColors();
             UpdateMessageFilterLabel();
             UpdateOnlineStatusLabel();
             UpdateClearanceStatusLabel();
+            UpdateCallsignDisplay();
         }
 
         private System.Windows.Forms.Label CreateMainStatusBadge(string text, Cursor cursor)
@@ -848,6 +1107,11 @@ namespace EasyCPDLC
                 messageFilterLabel.Location = new Point(146, 69);
                 messageFilterLabel.Size = new Size(46, 19);
 
+                callsignCaptionLabel.Location = new Point(12, 50);
+                callsignCaptionLabel.Size = new Size(76, 15);
+                callsignDisplayLabel.Location = new Point(92, 50);
+                callsignDisplayLabel.Size = new Size(116, 15);
+
                 // CLR / PDC / ATIS belong under the CURRENT ATS UNIT block on the right.
                 clearanceStatusLabel.Location = new Point(246, 57);
                 clearanceStatusLabel.Size = new Size(58, 19);
@@ -861,6 +1125,11 @@ namespace EasyCPDLC
                 // Filter belongs to the MESSAGES / DATA area on the left.
                 messageFilterLabel.Location = new Point(148, 77);
                 messageFilterLabel.Size = new Size(46, 19);
+
+                callsignCaptionLabel.Location = new Point(8, 54);
+                callsignCaptionLabel.Size = new Size(76, 15);
+                callsignDisplayLabel.Location = new Point(88, 54);
+                callsignDisplayLabel.Size = new Size(116, 15);
 
                 // CLR / PDC / ATIS belong under the CURRENT ATS UNIT block on the right.
                 clearanceStatusLabel.Location = new Point(248, 65);
@@ -890,11 +1159,20 @@ namespace EasyCPDLC
                 : title.Trim().ToUpperInvariant() + " ●";
         }
 
+        private string BuildClearanceBadgeText()
+        {
+            string upper = (clearanceStatusText ?? string.Empty).ToUpperInvariant();
+
+            return upper.Contains("ACCEPTED") || upper.Contains("ACC")
+                ? "CLR ✓"
+                : BuildDotBadgeText("CLR");
+        }
+
         private void UpdateClearanceStatusLabel()
         {
             if (clearanceStatusLabel != null)
             {
-                clearanceStatusLabel.Text = BuildDotBadgeText("CLR");
+                clearanceStatusLabel.Text = BuildClearanceBadgeText();
                 clearanceStatusLabel.ForeColor = ClearanceStatusColor();
                 clearanceStatusLabel.Invalidate();
             }
@@ -1409,7 +1687,8 @@ namespace EasyCPDLC
                 clockLabel.Location = new Point(396, 6);
                 statusCaptionLabel.Location = new Point(12, 34);
                 statusValueLabel.Location = new Point(82, 34);
-                atcUnitLabel.Location = new Point(270, 34);
+                atcUnitLabel.Location = new Point(260, 34);
+                atcUnitLabel.Text = "CURRENT ATS UNIT:";
                 atcUnitDisplay.Location = new Point(412, 34);
                 messageHeaderLabel.Location = new Point(12, 70);
                 messageHeaderLabel.Text = "MESSAGES / DATA";
@@ -1452,6 +1731,7 @@ namespace EasyCPDLC
             statusCaptionLabel.Location = new Point(8, 38);
             statusValueLabel.Location = new Point(84, 38);
             atcUnitLabel.Location = new Point(238, 38);
+            atcUnitLabel.Text = "CURRENT ATS UNIT:";
             atcUnitDisplay.Location = new Point(397, 38);
             messageHeaderLabel.Location = new Point(8, 78);
             messageHeaderLabel.Text = "MESSAGES / DATA";
@@ -2894,10 +3174,12 @@ namespace EasyCPDLC
 
             lock (pendingAtisRequestLock)
             {
+                PurgeOldPendingAtisRequestsNoLock();
+
                 // VATATIS/ACARS replies often do not include the ICAO.
-                // Keep the request order so the next generic reply can be matched
-                // to the next pending ATIS request.
-                pendingAtisRequestTargets.Enqueue(formatted);
+                // Keep request order for close-together requests, but timestamp entries
+                // so an old airport cannot be reused for a later ATIS response.
+                pendingAtisRequestTargets.Enqueue(new PendingAtisRequest(formatted, DateTime.UtcNow));
 
                 while (pendingAtisRequestTargets.Count > 8)
                 {
@@ -2906,11 +3188,57 @@ namespace EasyCPDLC
             }
         }
 
+        private void PurgeOldPendingAtisRequestsNoLock()
+        {
+            DateTime cutoff = DateTime.UtcNow - pendingAtisRequestLifetime;
+
+            while (pendingAtisRequestTargets.Count > 0 &&
+                   pendingAtisRequestTargets.Peek().CreatedUtc < cutoff)
+            {
+                pendingAtisRequestTargets.Dequeue();
+            }
+        }
+
         private bool HasPendingAtisRequest()
         {
             lock (pendingAtisRequestLock)
             {
+                PurgeOldPendingAtisRequestsNoLock();
                 return pendingAtisRequestTargets.Count > 0;
+            }
+        }
+
+        private void RemovePendingAtisRequestTarget(string target)
+        {
+            string formatted = FormatAtisTargetForList(target);
+            if (formatted == "ATIS")
+            {
+                return;
+            }
+
+            lock (pendingAtisRequestLock)
+            {
+                if (pendingAtisRequestTargets.Count == 0)
+                {
+                    return;
+                }
+
+                List<PendingAtisRequest> entries = pendingAtisRequestTargets.ToList();
+                pendingAtisRequestTargets.Clear();
+
+                bool removed = false;
+
+                foreach (PendingAtisRequest entry in entries)
+                {
+                    if (!removed &&
+                        string.Equals(entry.Target, formatted, StringComparison.OrdinalIgnoreCase))
+                    {
+                        removed = true;
+                        continue;
+                    }
+
+                    pendingAtisRequestTargets.Enqueue(entry);
+                }
             }
         }
 
@@ -2918,14 +3246,32 @@ namespace EasyCPDLC
         {
             lock (pendingAtisRequestLock)
             {
+                PurgeOldPendingAtisRequestsNoLock();
+
                 if (pendingAtisRequestTargets.Count == 0)
                 {
                     return "ATIS";
                 }
 
+                // If an old request somehow stayed in the queue and a clearly newer ATIS
+                // request was made later, prefer the newer one for generic ACARS replies.
+                // This prevents "LOWW ATIS..." being shown for a later EPKK request.
+                if (consume && pendingAtisRequestTargets.Count > 1)
+                {
+                    PendingAtisRequest[] entries = pendingAtisRequestTargets.ToArray();
+                    PendingAtisRequest first = entries[0];
+                    PendingAtisRequest last = entries[entries.Length - 1];
+
+                    if (last.CreatedUtc - first.CreatedUtc > pendingAtisStaleJumpThreshold)
+                    {
+                        pendingAtisRequestTargets.Clear();
+                        return last.Target;
+                    }
+                }
+
                 return consume
-                    ? pendingAtisRequestTargets.Dequeue()
-                    : pendingAtisRequestTargets.Peek();
+                    ? pendingAtisRequestTargets.Dequeue().Target
+                    : pendingAtisRequestTargets.Peek().Target;
             }
         }
 
@@ -2938,14 +3284,21 @@ namespace EasyCPDLC
             string target = ExtractAtisTarget(combined);
             if (target != "ATIS")
             {
-                return FormatAtisTargetForList(target);
+                string formattedTarget = FormatAtisTargetForList(target);
+
+                if (consumePending)
+                {
+                    RemovePendingAtisRequestTarget(formattedTarget);
+                }
+
+                return formattedTarget;
             }
 
             // Generic VATATIS replies can look like:
             // "THIS IS GENEVA INFORMATION ECHO ..."
             // In that case words like ECHO/DELTA must NOT be treated as the airport.
-            // Use the last ATIS request target first.
-            if (LooksLikeGenericAtisInformation(contentsUpper))
+            // ACARS can also send a very generic "INFO MESSAGE FROM ACARS".
+            if (LooksLikeGenericAtisInformation(contentsUpper) || recipientUpper == "ACARS")
             {
                 string pendingTarget = GetPendingAtisRequestTarget(consumePending);
                 if (pendingTarget != "ATIS")
@@ -2961,7 +3314,14 @@ namespace EasyCPDLC
 
                 if (IsAtisTargetToken(candidate))
                 {
-                    return FormatAtisTargetForList(candidate);
+                    string formattedTarget = FormatAtisTargetForList(candidate);
+
+                    if (consumePending)
+                    {
+                        RemovePendingAtisRequestTarget(formattedTarget);
+                    }
+
+                    return formattedTarget;
                 }
             }
 
@@ -3148,29 +3508,35 @@ namespace EasyCPDLC
                 return false;
             }
 
-            return string.Equals(message.type, "ATIS", StringComparison.OrdinalIgnoreCase) &&
-                Regex.IsMatch(message.Text ?? string.Empty, @"\bATIS\s+[A-Z?]\s+RECEIVED\b");
+            return Regex.IsMatch(message.Text ?? string.Empty, @"\bATIS\s+[A-Z?]\s+RECEIVED\b");
         }
 
         private CPDLCMessage CreateCPDLCMessage(string _contents, string _type, string _recipient, bool _outbound = false, CPDLCResponse _header = null)
         {
             string previewType = (_type ?? string.Empty).Trim().ToUpperInvariant();
+            string listText = CreateMessageListText(_contents, _type, _recipient, _outbound);
             bool emphasizeAtisLetter = !_outbound &&
-                (previewType == "ATIS" || string.Equals((_recipient ?? string.Empty).Trim(), "VATATIS", StringComparison.OrdinalIgnoreCase)) &&
-                Regex.IsMatch(CreateMessageListText(_contents, _type, _recipient, _outbound), @"\bATIS\s+[A-Z?]\s+RECEIVED\b");
+                Regex.IsMatch(listText, @"\bATIS\s+[A-Z?]\s+RECEIVED\b");
 
-            CPDLCMessage _message = new(_type, _recipient, _contents, _outbound, _header)
+            CPDLCMessage _message = emphasizeAtisLetter
+                ? new AtisOverviewMessage(_type, _recipient, _contents, _outbound, _header)
+                : new CPDLCMessage(_type, _recipient, _contents, _outbound, _header);
+
+            if (_message is AtisOverviewMessage atisMessage)
             {
-                AutoSize = true,
-                BackColor = Color.Transparent,
-                ForeColor = MainPrimaryTextColor(),
-                Font = emphasizeAtisLetter ? textFontBold : textFont,
-                Text = CreateMessageListText(_contents, _type, _recipient, _outbound),
-                BorderStyle = BorderStyle.None,
-                TabStop = true,
-                TabIndex = 0,
-                Margin = new Padding(0, 3, 0, 0)
-            };
+                atisMessage.BoldAtisLetter = true;
+                atisMessage.AtisLetterBoldFont = new Font(textFontBold.FontFamily, textFontBold.Size + 0.25f, FontStyle.Bold);
+            }
+
+            _message.AutoSize = true;
+            _message.BackColor = Color.Transparent;
+            _message.ForeColor = MainPrimaryTextColor();
+            _message.Font = textFont;
+            _message.Text = listText;
+            _message.BorderStyle = BorderStyle.None;
+            _message.TabStop = true;
+            _message.TabIndex = 0;
+            _message.Margin = new Padding(0, 3, 0, 0);
 
             return _message;
         }
@@ -4021,12 +4387,22 @@ namespace EasyCPDLC
             }
             else if (messageString.StartsWith("LOGON ACCEPTED"))
             {
-                CurrentATCUnit = pendingLogon;
-                WriteMessage("CURRENT ATS UNIT: " + pendingLogon, "CPDLC", _sender, false, header);
+                string connectedUnit = !string.IsNullOrWhiteSpace(pendingLogon)
+                    ? pendingLogon
+                    : NormalizeAtcUnitCallsign(_sender);
+
+                CurrentATCUnit = connectedUnit;
+                WriteMessage("CPDLC CONNECTED TO: " + CurrentATCUnit, "CPDLC", _sender, false, header);
                 _showUser = false;
             }
             else if (messageString.StartsWith("CURRENT ATC UNIT") || messageString.StartsWith("CURRENT ATS UNIT"))
             {
+                string connectedUnit = ExtractCurrentAtcUnitFromMessage(messageString, _sender);
+                if (!string.IsNullOrWhiteSpace(connectedUnit))
+                {
+                    CurrentATCUnit = connectedUnit;
+                }
+
                 _showUser = false;
             }
 
@@ -4172,6 +4548,7 @@ namespace EasyCPDLC
                     }
 
                     callsign = userVATSIMData.callsign;
+                    UpdateCallsignDisplay();
                     _ = RefreshVatsimOnlineStatusAsync(true);
 
                     if (userVATSIMData.flight_plan is null)
@@ -4259,6 +4636,9 @@ namespace EasyCPDLC
                 }
                 requestCancellationTokenSource?.Cancel();
                 callsign = "";
+                pendingLogon = null;
+                CurrentATCUnit = null;
+                UpdateCallsignDisplay();
                 datalinkStatusText = "PDC --";
                 atisStatusText = "ATIS --";
                 SetClearanceStatus("CLR --");
