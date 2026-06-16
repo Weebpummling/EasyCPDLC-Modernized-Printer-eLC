@@ -524,22 +524,13 @@ To create a Flow Pro button that opens EasyCPDLC:
 
 ```js
 run(() => {
-    this.$api.command.open_browser("easycpdlc://show");
+    this.$api.command.open_browser("easycpdlc://toggle");
     return 250;
 });
 
-state(() => {
-    return "ECPDLC";
-});
-
 info(() => {
-    return "Open EasyCPDLC";
+    return "Toggle EasyCPDLC";
 });
-
-style(() => {
-    return "active";
-});
-```
 
 ---
 
