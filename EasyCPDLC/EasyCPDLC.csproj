@@ -16,7 +16,7 @@
 		<DebugType>none</DebugType>
 		<DebugSymbols>false</DebugSymbols>
 
-		<ApplicationIcon>EZCPDLCIcon_64.ico</ApplicationIcon>
+		<ApplicationIcon>Resources\EasyCPDLC.ico</ApplicationIcon>
 		<StartupObject>EasyCPDLC.Program</StartupObject>
 		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 		<ProduceReferenceAssembly>false</ProduceReferenceAssembly>
@@ -32,7 +32,7 @@
 		</DefineConstants>
 	</PropertyGroup>
 	<PropertyGroup>
-		<ApplicationIcon>EZCPDLCIcon_64.ico</ApplicationIcon>
+		<ApplicationIcon>Resources\EasyCPDLC.ico</ApplicationIcon>
 	</PropertyGroup>
 	<PropertyGroup>
 		<StartupObject>EasyCPDLC.Program</StartupObject>
@@ -108,10 +108,11 @@
 	<ItemGroup>
 		<Content Remove="Resources\**\*.*" />
 		<Content Remove="Sounds\**\*.*" />
-		<Content Remove="*.ico" />
+		<Content Remove="EZCPDLCIcon_64.ico" />
 		<None Remove="Resources\**\*.*" />
+		<None Include="Resources\EasyCPDLC.ico" />
 		<None Remove="Sounds\**\*.*" />
-		<None Remove="*.ico" />
+		<None Remove="EZCPDLCIcon_64.ico" />
 
 		<EmbeddedResource Include="Resources\**\*.*" Exclude="Resources\*.resx" />
 		<EmbeddedResource Include="Sounds\**\*.*" />

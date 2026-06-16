@@ -22,6 +22,9 @@ This fork updates EasyCPDLC for **.NET 10** and adds a cockpit-style DCDU interf
 - [Callsign mismatch handling](#callsign-mismatch-handling)
 - [Flight phase and next-flight detection](#flight-phase-and-next-flight-detection)
 - [Quick Actions, ATIS and METAR](#quick-actions-atis-and-metar)
+- [PDC / DCL and REQ CLR](#pdc--dcl-and-req-clr)
+- [CPDLC LOGON discovery](#cpdlc-logon-discovery)
+- [Clearance workflow and auto-confirm](#clearance-workflow-and-auto-confirm)
 - [Status indicators](#status-indicators)
 - [Smart message handling](#smart-message-handling)
 - [MSFS / Flow Pro integration](#msfs--flow-pro-integration)
@@ -74,6 +77,9 @@ This fork focuses on modernization, compatibility, cockpit-style visuals, and sm
 - Main page with aligned `STATUS`, `CALLSIGN`, `ROUTE`, and `FP PHASE`
 - Route display below the callsign, including `ROUTE: ----` when no route is loaded
 - Smart status badges for CLR, PDC, ATIS, ATIS auto refresh, and Quick Actions
+- Click-only PDC / REQ CLR action to avoid accidental hover popups
+- PDC/DCL controller-info parsing for formats such as `DCL: XXXX` and `PDC/DCL: XXXX`
+- Click-only CPDLC LOGON candidate popup using Hoppie online status, FIR geolocation, nearby FIR buffering, and DEP/ARR APP station matching
 - Flight-plan reload workflow for multi-leg flying and callsign changes
 - VATSIM prefile support for loading the next route before the new callsign is live
 - Callsign mismatch protection so Hoppie keeps the old callsign until VATSIM confirms the new one
@@ -96,6 +102,10 @@ This fork focuses on modernization, compatibility, cockpit-style visuals, and sm
 - Send and receive CPDLC messages
 - TELEX-style messaging support
 - Datalink clearance workflow support
+- PDC/DCL availability detection from controller information
+- Click-only REQ CLR quick action when PDC/DCL is confirmed available
+- Click-only CPDLC LOGON candidate popup with FIR/APP-based discovery
+- Clearance auto-confirm fallback when no final CLRC confirmation is sent
 - METAR and ATIS request support
 - Quick Actions for departure/arrival METAR and ATIS requests
 - Smart ATIS/METAR message summaries
@@ -250,6 +260,16 @@ Possible states include:
 
 While connected, EasyCPDLC refreshes the pilot data from VATSIM automatically and updates the phase without requiring user interaction.
 
+Current flight-phase logic:
+
+```text
+<= 3000 ft       DEP / LND
+> 3000 ft        AIRBORN
+>= 20000 ft      enroute marker set
+< 20000 ft after enroute  ARR
+<= 3000 ft after ARR      LND
+```
+
 The phase logic is used for:
 
 - departure/arrival weather targeting
@@ -290,6 +310,106 @@ ATIS station selection can prefer:
 
 ---
 
+
+## PDC / DCL and REQ CLR
+
+The PDC badge indicates whether a departure clearance service appears to be available for the relevant airport.
+
+EasyCPDLC checks:
+
+- direct Hoppie station availability for the airport code
+- local VATSIM controllers such as `XXXX_DEL`, `XXXX_GND`, `XXXX_TWR`, and `XXXX_APP`
+- controller ATIS/info lines for PDC or DCL logon information
+- Hoppie online status for the detected logon code
+
+Supported controller-info formats include:
+
+```text
+DCL: XXXX
+DCL LOGON XXXX
+DCL LOGON CODE XXXX
+PDC/DCL: XXXX
+XXXX DCL
+PREDEP CLEARANCE ... XXXX
+DEPARTURE CLEARANCE ... XXXX
+DATALINK CLEARANCE ... XXXX
+```
+
+When PDC/DCL is confirmed available, the PDC badge turns green.
+
+The **REQ CLR** action is click-only:
+
+1. Click the `PDC` badge.
+2. If PDC/DCL is confirmed available, `REQ CLR` appears.
+3. Click `REQ CLR` to send a pre-departure clearance request using the detected logon code.
+
+Mouseover does not open REQ CLR anymore. This prevents the action from disappearing while the user is trying to select it.
+
+REQ CLR is only offered when PDC/DCL is confirmed available. If the PDC badge is not green, clicking it does not send anything.
+
+---
+
+## CPDLC LOGON discovery
+
+The CPDLC LOGON helper is shown via the `📡` icon next to the current ATS unit.
+
+The LOGON menu is click-only:
+
+1. Click the `📡` icon.
+2. EasyCPDLC shows available `LOGON TO XXXX` candidates.
+3. Click a candidate to send the CPDLC logon request.
+
+Mouseover does not open the menu anymore.
+
+EasyCPDLC only shows LOGON candidates when the detected station is online on Hoppie. Candidate discovery can use:
+
+- current FIR geolocation from VATSIM FIR boundary data
+- a nearby FIR buffer near FIR boundaries
+- DEP/ARR-related APP stations
+- controller ATIS/info lines that mention CPDLC, Hoppie, logon, PDC, or DCL information
+
+The FIR/nearby logic is intended as a helper. If a candidate is marked as possible or nearby, pilots should still verify the correct logon with ATC.
+
+---
+
+## Clearance workflow and auto-confirm
+
+The CLR badge tracks the clearance workflow.
+
+Typical states:
+
+- neutral / standby
+- request sent
+- clearance received
+- pilot acknowledged
+- clearance accepted / confirmed
+- rejected / unable
+
+Some PDC/DCL stations do not send a final `CLRC CONFIRMED` message after the pilot sends WILCO or an equivalent acknowledgement.
+
+To avoid leaving the clearance state stuck without a green confirmation, EasyCPDLC starts a 3-minute auto-confirm timer after:
+
+- `WILCO`
+- `AFFIRMATIVE`
+- `ROGER`
+- `ACCEPT`
+
+If no final clearance confirmation and no rejection arrives within 3 minutes, EasyCPDLC sets:
+
+```text
+CLR ACC AUTO
+```
+
+This turns the CLR state green. The original clearance text remains visible, and the CLR popup adds:
+
+```text
+AUTO CONFIRMED AFTER 3 MIN WITHOUT CLRC CONFIRMED
+```
+
+If a real confirmation, rejection, unable, or denied message arrives before the timer expires, the timer is cancelled and the real network/controller result is used.
+
+---
+
 ## Status indicators
 
 The main DCDU page includes compact status indicators below the current ATC unit area.
@@ -299,19 +419,24 @@ The main DCDU page includes compact status indicators below the current ATC unit
 The CLR indicator shows the current clearance state:
 
 - white = neutral / no active clearance state
-- orange = requested / standby
-- green = received or accepted
-- red = rejected
+- orange = requested / standby / waiting
+- green = received, accepted, or auto-confirmed
+- red = rejected / unable / denied
+
+The CLR popup now uses the same footprint as the ATIS popup for a consistent layout.
 
 ### PDC
 
-The PDC indicator shows whether a matching Hoppie CPDLC/PDC station appears to be available:
+The PDC indicator shows whether a matching Hoppie PDC/DCL station appears to be available:
 
 - white = unknown / not checked yet
-- green = online / available
+- green = confirmed available and Hoppie-online
+- orange = possible fallback candidate
 - red = offline / unavailable
 
-After the aircraft has been airborne, EasyCPDLC switches status targeting from the departure airport to the arrival airport. This prevents the old departure airport from incorrectly keeping PDC green after arrival.
+PDC/DCL detection can parse controller information lines such as `DCL: XXXX`, `DCL LOGON XXXX`, or `PDC/DCL: XXXX`.
+
+REQ CLR is opened only by clicking the PDC badge and is only offered when the PDC state is confirmed green.
 
 ### ATIS
 
@@ -339,6 +464,8 @@ Examples:
 - `LOWW METAR RECEIVED QNH 1012 WIND 290/08 RWY 29`
 - `ATIS NOT AVAILABLE`
 - `VATSIM CALLSIGN MISMATCH`
+- `NEW FP DETECTED`
+- `AUTO CONFIRMED AFTER 3 MIN WITHOUT CLRC CONFIRMED`
 
 ATIS responses try to detect the current ATIS information letter and display it directly in the message list.
 
@@ -509,11 +636,19 @@ Closing the main window asks for confirmation to avoid accidental shutdown.
 ## Short release changelog
 
 - Added modern Airbus/Boeing DCDU main layout with aligned status, callsign, route, and flight phase.
+- Flight phase now switches to ARR below FL200 after enroute detection.
 - Added RLD FP workflow for VATSIM active flight plans, prefiles, new routes, and callsign changes.
 - Added callsign mismatch protection with red callsign, warning sound, automatic refresh, and manual refresh icon.
 - Added route display and orange route blink when a different route is loaded.
 - Added Quick Actions for departure/arrival METAR and ATIS requests.
-- Improved CLR/PDC/ATIS status badges, ATIS auto refresh, message filtering, and unread reminders.
+- Added click-only PDC / REQ CLR action with PDC/DCL logon parsing from controller info.
+- Added click-only CPDLC LOGON popup with Hoppie-online validation, FIR geolocation, nearby FIR buffer, and DEP/ARR APP matching.
+- Added CLR auto-confirm after 3 minutes when no final CLRC confirmation is sent.
+- Made CLR popup match ATIS popup size.
+- Improved ATIS status priority so VATSIM ATIS can override stale negative Hoppie/VATATIS responses.
+- Improved ATIS/METAR message filtering and aligned the message filter dropdown with `MESSAGES / DATA`.
+- Added NEW FP prompt cleanup after RLD FP / IGNORE and alert sound for new flight-plan detection.
+- Improved inbound flat TELEX parsing.
 - Added Flow Pro URI support, tray show/hide behavior, and safer close confirmation.
 - Reduced noisy system messages during successful reload and auto-refresh operations.
 

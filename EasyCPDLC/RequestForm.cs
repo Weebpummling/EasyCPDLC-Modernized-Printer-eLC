@@ -440,7 +440,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
             messageFormatPanel.Controls.Clear();
             messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, 0);
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.GetDetectedPdcLogonForRequest(), 4), 2, 0);
             messageFormatPanel.Controls.Add(CreateTemplate("CALLSIGN: "), 1, 1);
             messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.callsign, 7), 2, 1);
             messageFormatPanel.Controls.Add(CreateTemplate("A/C TYPE: "), 3, 1);
@@ -452,7 +452,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             messageFormatPanel.Controls.Add(CreateTemplate("STAND: "), 1, 3);
             messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, 3);
             messageFormatPanel.Controls.Add(CreateTemplate("ATIS: "), 3, 3);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 1), 4, 3);
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.GetDepartureAtisLetterForPdcRequest(), 1), 4, 3);
 
             AddRemarksField(messageFormatPanel);
             FinalizeMessagePanel();

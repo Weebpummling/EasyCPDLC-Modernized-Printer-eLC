@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
@@ -978,6 +978,7 @@ namespace EasyCPDLC
             {
                 Visible = shouldBeVisible;
                 Parent?.Invalidate(Bounds, true);
+                Target?.Parent?.Invalidate(Target.Bounds, true);
             }
         }
 
@@ -1001,27 +1002,13 @@ namespace EasyCPDLC
             get
             {
                 if (Target == null || Target.IsDisposed) return 0;
-
-                int currentScroll = Math.Max(0, -Target.AutoScrollPosition.Y);
-                int contentHeight = Math.Max(Target.DisplayRectangle.Height, Target.ClientSize.Height);
-
-                foreach (Control child in Target.Controls)
-                {
-                    if (!child.Visible)
-                    {
-                        continue;
-                    }
-
-                    contentHeight = Math.Max(contentHeight, child.Bottom + currentScroll + Target.Padding.Bottom);
-                }
-
-                return Math.Max(0, contentHeight - Target.ClientSize.Height);
+                return Math.Max(0, Target.DisplayRectangle.Height - Target.ClientSize.Height);
             }
         }
 
         private Rectangle GetRailRectangle()
         {
-            return new Rectangle(5, 2, Math.Max(6, Width - 10), Math.Max(8, Height - 4));
+            return new Rectangle(4, 2, Math.Max(8, Width - 8), Math.Max(8, Height - 4));
         }
 
         private Rectangle GetThumbRectangle()
@@ -1054,19 +1041,33 @@ namespace EasyCPDLC
             e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
             // Screen-colored strip behind the custom rail, only visible while scrolling is needed.
-            using SolidBrush screenFill = new SolidBrush(Color.FromArgb(5, 10, 14));
+            using SolidBrush screenFill = new SolidBrush(Color.FromArgb(8, 10, 14));
             e.Graphics.FillRectangle(screenFill, ClientRectangle);
 
             Rectangle rail = GetRailRectangle();
-            using GraphicsPath railPath = DcduPanel.RoundedRect(rail, 4);
+            using GraphicsPath railPath = DcduPanel.RoundedRect(rail, 5);
             using LinearGradientBrush railBrush = new LinearGradientBrush(
                 rail,
-                Color.FromArgb(225, 2, 6, 9),
-                Color.FromArgb(225, 15, 25, 31),
+                Color.FromArgb(236, 6, 10, 14),
+                Color.FromArgb(236, 18, 27, 33),
                 LinearGradientMode.Horizontal);
-            using Pen railPen = new Pen(Color.FromArgb(125, 68, 88, 96), 1f);
+            using Pen railPen = new Pen(Color.FromArgb(130, 88, 106, 114), 1f);
+            using Pen railHighlight = new Pen(Color.FromArgb(38, Color.White), 1f);
             e.Graphics.FillPath(railBrush, railPath);
             e.Graphics.DrawPath(railPen, railPath);
+            e.Graphics.DrawLine(railHighlight, rail.Left + 2, rail.Top + 1, rail.Right - 3, rail.Top + 1);
+
+            Rectangle innerRail = Rectangle.Inflate(rail, -3, -3);
+            if (innerRail.Width > 0 && innerRail.Height > 0)
+            {
+                using GraphicsPath innerRailPath = DcduPanel.RoundedRect(innerRail, 4);
+                using LinearGradientBrush innerRailBrush = new LinearGradientBrush(
+                    innerRail,
+                    Color.FromArgb(110, 2, 4, 6),
+                    Color.FromArgb(120, 11, 17, 22),
+                    LinearGradientMode.Horizontal);
+                e.Graphics.FillPath(innerRailBrush, innerRailPath);
+            }
 
             Rectangle thumb = GetThumbRectangle();
             if (thumb.IsEmpty)
@@ -1074,20 +1075,26 @@ namespace EasyCPDLC
                 return;
             }
 
-            using GraphicsPath thumbPath = DcduPanel.RoundedRect(thumb, 3);
+            using GraphicsPath thumbPath = DcduPanel.RoundedRect(thumb, 4);
             using LinearGradientBrush thumbBrush = new LinearGradientBrush(
                 thumb,
-                Color.FromArgb(245, 62, 73, 77),
-                Color.FromArgb(245, 20, 27, 31),
+                Color.FromArgb(248, 116, 126, 130),
+                Color.FromArgb(248, 58, 67, 72),
                 LinearGradientMode.Horizontal);
-            using Pen thumbOuter = new Pen(Color.FromArgb(185, 120, 142, 148), 1f);
+            using Pen thumbOuter = new Pen(Color.FromArgb(210, 190, 198, 202), 1f);
+            using Pen thumbHighlight = new Pen(Color.FromArgb(72, Color.White), 1f);
 
             e.Graphics.FillPath(thumbBrush, thumbPath);
             e.Graphics.DrawPath(thumbOuter, thumbPath);
+            e.Graphics.DrawLine(thumbHighlight, thumb.Left + 2, thumb.Top + 1, thumb.Right - 3, thumb.Top + 1);
 
             int lineX = thumb.Left + thumb.Width / 2;
-            using Pen amberLine = new Pen(Color.FromArgb(215, 255, 210, 76), 1.4f);
-            e.Graphics.DrawLine(amberLine, lineX, thumb.Top + 5, lineX, thumb.Bottom - 5);
+            using Pen centerLine = new Pen(Color.FromArgb(190, 228, 236, 238), 1.2f);
+            using Pen gripOne = new Pen(Color.FromArgb(210, 255, 210, 76), 1.0f);
+            using Pen gripTwo = new Pen(Color.FromArgb(140, 255, 210, 76), 1.0f);
+            e.Graphics.DrawLine(centerLine, lineX, thumb.Top + 4, lineX, thumb.Bottom - 4);
+            e.Graphics.DrawLine(gripOne, thumb.Left + 2, thumb.Top + Math.Max(5, thumb.Height / 3), thumb.Right - 3, thumb.Top + Math.Max(5, thumb.Height / 3));
+            e.Graphics.DrawLine(gripTwo, thumb.Left + 2, thumb.Bottom - Math.Max(6, thumb.Height / 3), thumb.Right - 3, thumb.Bottom - Math.Max(6, thumb.Height / 3));
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
@@ -1149,8 +1156,11 @@ namespace EasyCPDLC
             int max = MaxScroll;
             int clamped = Math.Max(0, Math.Min(max, value));
             Target.AutoScrollPosition = new Point(Math.Max(0, -Target.AutoScrollPosition.X), clamped);
-            Target.Invalidate();
+            Target.Invalidate(true);
+            Target.Parent?.Invalidate(Target.Bounds, true);
+            Target.Update();
             Invalidate();
+            Parent?.Invalidate(Bounds, true);
         }
     }
 
