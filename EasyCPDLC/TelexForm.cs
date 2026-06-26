@@ -278,7 +278,36 @@ namespace EasyCPDLC
 
         private void ExitButton_Click(object sender, EventArgs e)
         {
-            this.Close();
+            CloseTelexWindowOnly();
+        }
+
+        private void CloseTelexWindowOnly()
+        {
+            // Do not close the form directly inside the bitmap hotspot click handler.
+            // When the TELEX window disappears during the same mouse click, the click can fall through
+            // to the main DCDU behind it and hit the main EXIT hotspot. Queueing the close prevents that.
+            try
+            {
+                exitButton.Enabled = false;
+            }
+            catch
+            {
+                // Cosmetic only.
+            }
+
+            BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    parent?.BringEasyCpdlcWindowToFront();
+                }
+                catch
+                {
+                    // Parent may already be closing.
+                }
+
+                Close();
+            }));
         }
 
         private void WindowDrag(object sender, MouseEventArgs e)
@@ -538,28 +567,28 @@ namespace EasyCPDLC
         private Color AccentColor()
         {
             return DcduStyleManager.IsBoeing
-                ? Color.FromArgb(86, 255, 103)
+                ? Color.FromArgb(204, 210, 214)
                 : Color.FromArgb(45, 231, 245);
         }
 
         private Color AccentTitleColor()
         {
             return DcduStyleManager.IsBoeing
-                ? Color.FromArgb(178, 255, 188)
+                ? Color.FromArgb(224, 232, 238)
                 : Color.FromArgb(118, 220, 255);
         }
 
         private Color AccentMutedColor()
         {
             return DcduStyleManager.IsBoeing
-                ? Color.FromArgb(90, 116, 92)
+                ? Color.FromArgb(104, 118, 126)
                 : Color.FromArgb(78, 102, 120);
         }
 
         private Color AccentLabelColor()
         {
             return DcduStyleManager.IsBoeing
-                ? Color.FromArgb(220, 238, 222)
+                ? Color.FromArgb(204, 210, 214)
                 : Color.FromArgb(210, 222, 232);
         }
 
@@ -1024,7 +1053,7 @@ namespace EasyCPDLC
                 // Parent may be closing; ignore.
             }
 
-            this.Close();
+            CloseTelexWindowOnly();
         }
 
         protected override CreateParams CreateParams

@@ -154,7 +154,7 @@
             hoppieCodeTextBox.Font = new System.Drawing.Font("Segoe UI", 9.2F, System.Drawing.FontStyle.Regular);
             hoppieCodeTextBox.ForeColor = System.Drawing.Color.FromArgb(225, 238, 255);
             hoppieCodeTextBox.Location = new System.Drawing.Point(-1, 1);
-            hoppieCodeTextBox.MaxLength = 18;
+            hoppieCodeTextBox.MaxLength = 22;
             hoppieCodeTextBox.Name = "hoppieCodeTextBox";
             hoppieCodeTextBox.Size = new System.Drawing.Size(176, 18);
             hoppieCodeTextBox.TabIndex = 0;
@@ -192,7 +192,7 @@
             vatsimCIDTextBox.Font = new System.Drawing.Font("Segoe UI", 9.2F, System.Drawing.FontStyle.Regular);
             vatsimCIDTextBox.ForeColor = System.Drawing.Color.FromArgb(225, 238, 255);
             vatsimCIDTextBox.Location = new System.Drawing.Point(-1, 0);
-            vatsimCIDTextBox.MaxLength = 7;
+            vatsimCIDTextBox.MaxLength = 10;
             vatsimCIDTextBox.Name = "vatsimCIDTextBox";
             vatsimCIDTextBox.Size = new System.Drawing.Size(176, 18);
             vatsimCIDTextBox.TabIndex = 1;

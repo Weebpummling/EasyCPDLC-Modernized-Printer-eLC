@@ -232,7 +232,7 @@ namespace EasyCPDLC
             styleSelector = new ComboBox()
             {
                 BackColor = DcduTheme.ScreenAlt,
-                ForeColor = DcduTheme.CyanWhite,
+                ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
                 Font = new Font("Consolas", isBoeing ? 8.0f : 8.2f, FontStyle.Bold),
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 FlatStyle = FlatStyle.Popup,
@@ -257,7 +257,7 @@ namespace EasyCPDLC
             DcduCheckBox _temp = new()
             {
                 BackColor = Color.Transparent,
-                ForeColor = DcduTheme.CyanWhite,
+                ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
                 Font = new Font("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
                 Text = _text,
                 Margin = isBoeing ? new Padding(0, 0, 0, 4) : new Padding(0, 0, 0, 4),
@@ -272,7 +272,7 @@ namespace EasyCPDLC
             Label _temp = new()
             {
                 BackColor = Color.Transparent,
-                ForeColor = DcduTheme.CyanWhite,
+                ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
                 Font = new Font("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
                 AutoSize = true,
                 Text = _text,
@@ -292,7 +292,7 @@ namespace EasyCPDLC
             UITextBox _temp = new(parent.controlFrontColor)
             {
                 BackColor = DcduTheme.ScreenAlt,
-                ForeColor = DcduTheme.CyanWhite,
+                ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
                 Font = new Font("Consolas", DcduStyleManager.IsBoeing ? 8.0f : 8.2f, FontStyle.Bold),
                 MaxLength = _maxLength,
                 BorderStyle = BorderStyle.FixedSingle,

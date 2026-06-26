@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Net.Http;
 using System.Windows.Forms;
@@ -110,6 +111,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             this.ShowInTaskbar = false;
             requestFrame.AssetFileName = DcduStyleManager.AssetFile("RequestWindowFrame.png");
             ApplyTransparentScreenOverlays();
+            messageFormatPanel.Paint += BoeingMessageFormatPanel_Paint;
             ApplyWindowLayout();
             DcduWindowHelper.ApplyDeviceWindow(this, requestFrame, 22);
             KeepRequestPanelScrollClean();
@@ -164,7 +166,6 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
             if (isBoeing)
             {
-                // Scale the Boeing request/ATC hitboxes and screen layout to the correct 800x252 form size.
                 Size baseSize = new Size(1120, 353);
                 pdcButton.Bounds = ScaleRect(new Rectangle(61, 69, 104, 48), baseSize, targetSize);
                 logonButton.Bounds = ScaleRect(new Rectangle(61, 129, 104, 48), baseSize, targetSize);
@@ -175,8 +176,8 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 sendButton.Bounds = ScaleRect(new Rectangle(960, 249, 98, 48), baseSize, targetSize);
 
                 requestScreen.Bounds = new Rectangle(92, 24, 596, 186);
-                messageFormatPanel.Bounds = new Rectangle(4, 4, requestScreen.Width - 8, requestScreen.Height - 8);
-                messageFormatPanel.Padding = new Padding(2, 0, 2, 0);
+                messageFormatPanel.Bounds = new Rectangle(28, 10, requestScreen.Width - 44, requestScreen.Height - 18);
+                messageFormatPanel.Padding = new Padding(0, 0, 2, 0);
                 ConfigureRequestMessageGrid();
                 radioContainer.Location = new Point(44, 228);
                 radioContainer.Size = new Size(110, 20);
@@ -192,8 +193,10 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 exitButton.Bounds = new Rectangle(646, 48, 81, 31);
                 clearButton.Bounds = new Rectangle(647, 127, 80, 32);
                 sendButton.Bounds = new Rectangle(646, 164, 81, 31);
-                requestScreen.Bounds = new Rectangle(78, 24, 582, 188);
-                messageFormatPanel.Bounds = new Rectangle(4, 4, requestScreen.Width - 8, requestScreen.Height - 8);
+                // Airbus: keep the original screen position, but place the styled content
+                // a little lower so the header is not glued to the top edge.
+                requestScreen.Bounds = new Rectangle(112, 29, 532, 177);
+                messageFormatPanel.Bounds = new Rectangle(10, 12, 512, 157);
                 messageFormatPanel.Padding = new Padding(2, 0, 2, 0);
                 ConfigureRequestMessageGrid();
                 radioContainer.Location = new Point(18, 224);
@@ -268,7 +271,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             }
         }
 
-        private void ConfigureRequestMessageGrid()
+                private void ConfigureRequestMessageGrid()
         {
             if (messageFormatPanel == null)
             {
@@ -287,12 +290,27 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8F));
 
             messageFormatPanel.RowStyles.Clear();
-            messageFormatPanel.RowCount = 7;
-            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
-            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
-            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
-            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
-            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
+            messageFormatPanel.RowCount = 8;
+
+            if (DcduStyleManager.IsBoeing)
+            {
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 18F));
+            }
+            else
+            {
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 16F));
+            }
+
             messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
             messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
 
@@ -421,135 +439,279 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             ocnClxMenu.Click += OcnClxClick;
         }
 
-        private void AddRemarksField(TableLayoutPanel _control)
+                private int BoeingRow(int row)
         {
-            _control.Controls.Add(CreateTemplate("REMARKS: "), 1, 4);
-            UITextBox remarksBox = CreateMultiLineBox("");
-            _control.Controls.Add(remarksBox, 1, 5);
-            _control.SetColumnSpan(remarksBox, 4);
-            _control.SetRowSpan(remarksBox, 2);
-            _control.Controls.Add(CreateBoxTemplate("[", AnchorStyles.Left), 0, 5);
-            _control.Controls.Add(CreateBoxTemplate("[", AnchorStyles.Left), 0, 6);
-            _control.Controls.Add(CreateBoxTemplate("]", AnchorStyles.Right), 5, 5);
-            _control.Controls.Add(CreateBoxTemplate("]", AnchorStyles.Right), 5, 6);
+            // Both styles now reserve row 0 for the title/subtitle header.
+            return row + 1;
         }
 
-        private void DepClxClick(object sender, EventArgs e)
+                private Color BoeingHeaderColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(224, 232, 238)
+                : Color.FromArgb(220, 238, 248);
+        }
+
+                private Color BoeingSubtleColor()
+        {
+            return DcduStyleManager.IsBoeing
+                ? Color.FromArgb(128, 146, 154)
+                : Color.FromArgb(92, 132, 150);
+        }
+
+                private Control CreateBoeingHeader(string title, string subtitle)
+        {
+            bool isBoeing = DcduStyleManager.IsBoeing;
+
+            Panel panel = new()
+            {
+                BackColor = Color.Transparent,
+                Height = isBoeing ? 36 : 30,
+                Margin = new Padding(0, 0, 0, 1),
+                Padding = new Padding(0)
+            };
+
+            Label titleLabel = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = BoeingHeaderColor(),
+                Font = new Font(textFontBold.FontFamily, Math.Max(isBoeing ? 8.6f : 8.2f, textFontBold.Size - (isBoeing ? 1.55f : 2.0f)), FontStyle.Bold),
+                Text = title ?? string.Empty,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(25, 0),
+                Size = new Size(Math.Max(260, messageFormatPanel.Width - 36), isBoeing ? 17 : 15)
+            };
+
+            Label subLabel = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = BoeingSubtleColor(),
+                Font = new Font(textFont.FontFamily, Math.Max(isBoeing ? 7.0f : 6.7f, textFont.Size - (isBoeing ? 1.65f : 2.0f)), FontStyle.Regular),
+                Text = subtitle ?? string.Empty,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(25, isBoeing ? 16 : 14),
+                Size = new Size(Math.Max(260, messageFormatPanel.Width - 36), 13)
+            };
+
+            panel.Paint += (_, e) =>
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                Color accent = Color.FromArgb(isBoeing ? 150 : 130, BoeingHeaderColor());
+                Rectangle icon = new Rectangle(1, 3, 17, 12);
+
+                using Pen iconPen = new Pen(accent, 1.0f);
+                e.Graphics.DrawRectangle(iconPen, icon);
+                e.Graphics.DrawLine(iconPen, icon.Left, icon.Top, icon.Left + icon.Width / 2, icon.Top + icon.Height / 2);
+                e.Graphics.DrawLine(iconPen, icon.Right, icon.Top, icon.Left + icon.Width / 2, icon.Top + icon.Height / 2);
+
+                using Pen separator = new Pen(Color.FromArgb(isBoeing ? 34 : 30, BoeingHeaderColor()), 1f);
+                e.Graphics.DrawLine(separator, 25, panel.Height - 2, Math.Max(26, panel.Width - 8), panel.Height - 2);
+            };
+
+            panel.Controls.Add(titleLabel);
+            panel.Controls.Add(subLabel);
+            return panel;
+        }
+
+                private void AddBoeingHeader(TableLayoutPanel panel, string title, string subtitle)
+        {
+            if (panel == null)
+            {
+                return;
+            }
+
+            Control header = CreateBoeingHeader(title, subtitle);
+            panel.Controls.Add(header, 1, 0);
+            panel.SetColumnSpan(header, 4);
+        }
+
+        private GraphicsPath RoundedRect(Rectangle r, int radius)
+        {
+            GraphicsPath path = new();
+            int d = radius * 2;
+            path.AddArc(r.X, r.Y, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+
+                private void BoeingMessageFormatPanel_Paint(object sender, PaintEventArgs e)
+        {
+            if (sender is not Control panel)
+            {
+                return;
+            }
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            Color borderColor = DcduStyleManager.IsBoeing
+                ? Color.FromArgb(134, 158, 168)
+                : Color.FromArgb(74, 142, 164);
+            Color fillColor = DcduStyleManager.IsBoeing
+                ? Color.FromArgb(38, 3, 8, 12)
+                : Color.FromArgb(32, 0, 8, 16);
+
+            foreach (TextBox box in panel.Controls.OfType<TextBox>())
+            {
+                if (!box.Visible)
+                {
+                    continue;
+                }
+
+                Rectangle r = box.Bounds;
+                r.Inflate(2, 2);
+                r.Width = Math.Max(1, r.Width - 1);
+                r.Height = Math.Max(1, r.Height - 1);
+
+                using GraphicsPath path = RoundedRect(r, 4);
+                using SolidBrush fill = new SolidBrush(fillColor);
+                using Pen border = new Pen(Color.FromArgb(box.Focused ? 168 : 96, borderColor), box.Focused ? 1.15f : 1.0f);
+                using Pen topLine = new Pen(Color.FromArgb(24, Color.White), 1.0f);
+
+                e.Graphics.FillPath(fill, path);
+                e.Graphics.DrawPath(border, path);
+                e.Graphics.DrawLine(topLine, r.Left + 5, r.Top + 1, r.Right - 5, r.Top + 1);
+            }
+        }
+
+                        private void AddRemarksField(TableLayoutPanel _control)
+        {
+            int remarksLabelRow = BoeingRow(4);
+            int remarksBoxRow = BoeingRow(5);
+
+            _control.Controls.Add(CreateTemplate("REMARKS:"), 1, remarksLabelRow);
+            UITextBox remarksBox = CreateMultiLineBox("");
+            _control.Controls.Add(remarksBox, 1, remarksBoxRow);
+            _control.SetColumnSpan(remarksBox, 4);
+            _control.SetRowSpan(remarksBox, 2);
+        }
+
+                        private void DepClxClick(object sender, EventArgs e)
         {
             depClxRadioButton.Checked = true;
 
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.GetDetectedPdcLogonForRequest(), 4), 2, 0);
-            messageFormatPanel.Controls.Add(CreateTemplate("CALLSIGN: "), 1, 1);
-            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.callsign, 7), 2, 1);
-            messageFormatPanel.Controls.Add(CreateTemplate("A/C TYPE: "), 3, 1);
-            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.flight_plan.aircraft_short, 4), 4, 1);
-            messageFormatPanel.Controls.Add(CreateTemplate("DEP ARPT: "), 1, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.flight_plan.departure, 4), 2, 2);
-            messageFormatPanel.Controls.Add(CreateTemplate("ARR ARPT: "), 3, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.flight_plan.arrival, 4), 4, 2);
-            messageFormatPanel.Controls.Add(CreateTemplate("STAND: "), 1, 3);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, 3);
-            messageFormatPanel.Controls.Add(CreateTemplate("ATIS: "), 3, 3);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.GetDepartureAtisLetterForPdcRequest(), 1), 4, 3);
+            AddBoeingHeader(messageFormatPanel, "PREDEP CLEARANCE", "Request departure clearance via Hoppie");
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.GetDetectedPdcLogonForRequest(), 4), 2, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTemplate("CALLSIGN:"), 1, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.callsign, 7), 2, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTemplate("A/C TYPE:"), 3, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.flight_plan.aircraft_short, 4), 4, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTemplate("DEP ARPT:"), 1, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.flight_plan.departure, 4), 2, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTemplate("ARR ARPT:"), 3, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.flight_plan.arrival, 4), 4, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTemplate("STAND:"), 1, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTemplate("ATIS:"), 3, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.GetDepartureAtisLetterForPdcRequest(), 1), 4, BoeingRow(3));
 
             AddRemarksField(messageFormatPanel);
             FinalizeMessagePanel();
         }
-        private void OcnClxClick(object sender, EventArgs e)
+                        private void OcnClxClick(object sender, EventArgs e)
         {
             ocnClxRadioButton.Checked = true;
 
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, 0);
-            messageFormatPanel.Controls.Add(CreateTemplate("CALLSIGN: "), 1, 1);
-            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.callsign, 7), 2, 1);
-            messageFormatPanel.Controls.Add(CreateTemplate("ENTRY PT: "), 3, 1);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 7), 4, 1);
-            messageFormatPanel.Controls.Add(CreateTemplate("ETA: "), 1, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, 2);
-            messageFormatPanel.Controls.Add(CreateTemplate("MACH: M0."), 3, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 2), 4, 2);
-            messageFormatPanel.Controls.Add(CreateTemplate("FLT LVL: "), 1, 3);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 3), 2, 3);
+            AddBoeingHeader(messageFormatPanel, "OCEANIC CLEARANCE", "Request oceanic clearance via Hoppie");
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTemplate("CALLSIGN:"), 1, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTextBox(userVATSIMData.callsign, 7), 2, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTemplate("ENTRY PT:"), 3, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 7), 4, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTemplate("ETA:"), 1, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 2, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTemplate("MACH: M0."), 3, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 2), 4, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTemplate("FLT LVL:"), 1, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 3), 2, BoeingRow(3));
 
             AddRemarksField(messageFormatPanel);
             FinalizeMessagePanel();
         }
 
-        private void DirectRequestClick(object sender, EventArgs e)
+                        private void DirectRequestClick(object sender, EventArgs e)
         {
             directRadioButton.Checked = true;
 
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
-            messageFormatPanel.Controls.Add(CreateTemplate("REQUEST DIRECT TO "), 1, 1);
-            messageFormatPanel.Controls.Add(CreateAutoFillTextBox("", 7, MainForm.reportFixes), 2, 1);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, 2);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, 2);
+            AddBoeingHeader(messageFormatPanel, "DIRECT REQUEST", "Request direct routing via CPDLC");
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTemplate("DIRECT TO:"), 1, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateAutoFillTextBox("", 7, MainForm.reportFixes), 2, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, BoeingRow(2));
 
             AddRemarksField(messageFormatPanel);
             FinalizeMessagePanel();
-
         }
 
-        private void LevelRequestClick(object sender, EventArgs e)
+                        private void LevelRequestClick(object sender, EventArgs e)
         {
             levelRadioButton.Checked = true;
 
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
-            messageFormatPanel.Controls.Add(CreateTemplate("REQUESTED FL: "), 1, 1);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 2, 1);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, 2);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, 2);
+            AddBoeingHeader(messageFormatPanel, "LEVEL REQUEST", "Request climb or descent clearance");
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTemplate("REQUESTED FL:"), 1, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 2, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, BoeingRow(2));
 
             AddRemarksField(messageFormatPanel);
             FinalizeMessagePanel();
         }
 
-        private void SpeedRequestClick(object sender, EventArgs e)
+                        private void SpeedRequestClick(object sender, EventArgs e)
         {
             speedRadioButton.Checked = true;
 
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
-            messageFormatPanel.Controls.Add(CreateTemplate("REQUEST"), 1, 1);
-            messageFormatPanel.Controls.Add(CreateCheckBox("MACH: M0.", "unitParam"), 1, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 2, false, true), 2, 2);
-            messageFormatPanel.Controls.Add(CreateCheckBox("SPEED: ", "unitParam"), 3, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 4, 2);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, 3);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 4, 3);
+            AddBoeingHeader(messageFormatPanel, "SPEED REQUEST", "Request speed or Mach clearance");
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTemplate("REQUEST:"), 1, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateCheckBox("MACH: M0.", "unitParam"), 1, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 2, false, true), 2, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateCheckBox("SPEED:", "unitParam"), 3, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 4, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 4, BoeingRow(3));
 
             AddRemarksField(messageFormatPanel);
             FinalizeMessagePanel();
         }
 
-        private void WhenCanWeRequestClick(object sender, EventArgs e)
+                        private void WhenCanWeRequestClick(object sender, EventArgs e)
         {
             wcwRadioButton.Checked = true;
 
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
-            messageFormatPanel.Controls.Add(CreateTemplate("WHEN CAN WE EXPECT:"), 1, 1);
-            messageFormatPanel.Controls.Add(CreateCheckBox("HIGHER LEVEL?", "wcwParam"), 1, 2);
-            messageFormatPanel.Controls.Add(CreateCheckBox("LOWER LEVEL?", "wcwParam"), 2, 2);
-            messageFormatPanel.Controls.Add(CreateCheckBox("BACK ON ROUTE?", "wcwParam"), 3, 2);
-            messageFormatPanel.Controls.Add(CreateCheckBox("CLIMB TO FL: ", "wcwParam"), 1, 3);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 2, 3);
-            messageFormatPanel.Controls.Add(CreateCheckBox("DESCENT TO FL:", "wcwParam"), 1, 4);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 2, 4);
-            messageFormatPanel.Controls.Add(CreateCheckBox("MACH: M0.", "wcwParam"), 3, 3);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 2, false, true), 4, 3);
-            messageFormatPanel.Controls.Add(CreateCheckBox("SPEED: ", "wcwParam"), 3, 4);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 4, 4);
+            AddBoeingHeader(messageFormatPanel, "WHEN CAN WE", "Ask ATC when to expect a clearance");
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTemplate("EXPECT:"), 1, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateCheckBox("HIGHER LEVEL?", "wcwParam"), 1, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateCheckBox("LOWER LEVEL?", "wcwParam"), 2, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateCheckBox("BACK ON ROUTE?", "wcwParam"), 3, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateCheckBox("CLIMB TO FL:", "wcwParam"), 1, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 2, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DESCENT TO FL:", "wcwParam"), 1, BoeingRow(4));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 2, BoeingRow(4));
+            messageFormatPanel.Controls.Add(CreateCheckBox("MACH: M0.", "wcwParam"), 3, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 2, false, true), 4, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateCheckBox("SPEED:", "wcwParam"), 3, BoeingRow(4));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 4, BoeingRow(4));
             FinalizeMessagePanel();
         }
 
@@ -562,7 +724,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             ShowMenuAtHotspot(clxMenu, pdcButton);
         }
 
-        private void ReportButton_Click(object sender, EventArgs e)
+                        private void ReportButton_Click(object sender, EventArgs e)
         {
             fix1 = CreateAutoFillTextBox("", 7, MainForm.reportFixes);
             fix1.TextChanged += PreFill;
@@ -570,23 +732,24 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             fix3 = CreateTextBox("", 7);
 
             fix1.Text = MainForm.nextFix ?? "";
-
             reportRadioButton.Checked = true;
+
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, 0);
-            messageFormatPanel.Controls.Add(CreateTemplate("FIX: "), 1, 1);
-            messageFormatPanel.Controls.Add(fix1, 2, 1);
-            messageFormatPanel.Controls.Add(CreateTemplate("AT: "), 1, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox(DateTime.UtcNow.ToString("HHmm"), 4), 2, 2);
-            messageFormatPanel.Controls.Add(CreateTemplate("FL: "), 3, 2);
-            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.UseFSUIPC ? (Math.Round(MainForm.fsuipc.altitude.Feet / 1000) * 10).ToString() : userVATSIMData.flight_plan.altitude[..3], 3), 4, 2);
-            messageFormatPanel.Controls.Add(CreateTemplate("NEXT: "), 1, 3);
-            messageFormatPanel.Controls.Add(fix2, 2, 3);
-            messageFormatPanel.Controls.Add(CreateTemplate("AT: "), 3, 3);
-            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 4, 3);
-            messageFormatPanel.Controls.Add(CreateTemplate("THEN: "), 1, 4);
-            messageFormatPanel.Controls.Add(fix3, 2, 4);
+            AddBoeingHeader(messageFormatPanel, "POSITION REPORT", "Send current and next waypoint report");
+            messageFormatPanel.Controls.Add(CreateTemplate("RECIPIENT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.CurrentATCUnit, 4, true), 2, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTemplate("FIX:"), 1, BoeingRow(1));
+            messageFormatPanel.Controls.Add(fix1, 2, BoeingRow(1));
+            messageFormatPanel.Controls.Add(CreateTemplate("AT:"), 1, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox(DateTime.UtcNow.ToString("HHmm"), 4), 2, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTemplate("FL:"), 3, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTextBox(MainForm.UseFSUIPC ? (Math.Round(MainForm.fsuipc.altitude.Feet / 1000) * 10).ToString() : userVATSIMData.flight_plan.altitude[..3], 3), 4, BoeingRow(2));
+            messageFormatPanel.Controls.Add(CreateTemplate("NEXT:"), 1, BoeingRow(3));
+            messageFormatPanel.Controls.Add(fix2, 2, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTemplate("AT:"), 3, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTextBox("", 4), 4, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateTemplate("THEN:"), 1, BoeingRow(4));
+            messageFormatPanel.Controls.Add(fix3, 2, BoeingRow(4));
             FinalizeMessagePanel();
         }
         private void PreFill(object sender, EventArgs e)
@@ -619,11 +782,12 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
         }
 
-        private void LogonButton_Click(object sender, EventArgs e)
+                        private void LogonButton_Click(object sender, EventArgs e)
         {
             messageFormatPanel.Controls.Clear();
-            messageFormatPanel.Controls.Add(CreateTemplate("ATC UNIT:"), 1, 0);
-            messageFormatPanel.Controls.Add(CreateTextBox(NeedsLogon ? "" : MainForm.CurrentATCUnit, 4), 2, 0);
+            AddBoeingHeader(messageFormatPanel, NeedsLogon ? "CPDLC LOGON" : "CPDLC LOGOFF", NeedsLogon ? "Enter ATC unit and send logon request" : "Send logoff to current ATC unit");
+            messageFormatPanel.Controls.Add(CreateTemplate("ATC UNIT:"), 1, BoeingRow(0));
+            messageFormatPanel.Controls.Add(CreateTextBox(NeedsLogon ? "" : MainForm.CurrentATCUnit, 4), 2, BoeingRow(0));
 
             logonRadioButton.Checked = true;
             FinalizeMessagePanel();
@@ -703,11 +867,11 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             return _temp;
         }
 
-        private UITextBox CreateTextBox(string _text, int _maxLength, bool _readOnly = false, bool _numsOnly = false)
+                        private UITextBox CreateTextBox(string _text, int _maxLength, bool _readOnly = false, bool _numsOnly = false)
         {
             UITextBox _temp = new(controlFrontColor)
             {
-                BackColor = controlBackColor,
+                BackColor = DcduStyleManager.IsBoeing ? Color.FromArgb(4, 9, 14) : Color.FromArgb(2, 8, 14),
                 ForeColor = controlFrontColor,
                 Font = textFontBold,
                 MaxLength = _maxLength,
@@ -715,10 +879,11 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 Text = _text,
                 CharacterCasing = CharacterCasing.Upper,
                 Top = 10,
-                PlaceholderText = new string('▯', _maxLength),
-                Height = 24,
+                PlaceholderText = string.Empty,
+                Height = DcduStyleManager.IsBoeing ? 18 : 17,
                 ReadOnly = _readOnly,
                 TextAlign = HorizontalAlignment.Left,
+                Margin = DcduStyleManager.IsBoeing ? new Padding(3, 2, 3, 0) : new Padding(3, 1, 3, 0),
                 TabIndex = 0,
                 Anchor = AnchorStyles.Left
             };
@@ -728,10 +893,23 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 _temp.KeyPress += NumsOnly;
             }
 
+            _temp.GotFocus += (_, __) => messageFormatPanel?.Invalidate();
+            _temp.LostFocus += (_, __) => messageFormatPanel?.Invalidate();
+
             using (Graphics G = _temp.CreateGraphics())
             {
                 _temp.Width = (int)(_temp.MaxLength *
-                              G.MeasureString("▯", _temp.Font).Width * 1.5);
+                              G.MeasureString("W", _temp.Font).Width * (DcduStyleManager.IsBoeing ? 1.35 : 1.22));
+
+                int minimumWidth = _temp.MaxLength switch
+                {
+                    <= 1 => DcduStyleManager.IsBoeing ? 28 : 24,
+                    <= 2 => DcduStyleManager.IsBoeing ? 42 : 34,
+                    <= 4 => DcduStyleManager.IsBoeing ? 70 : 58,
+                    <= 7 => DcduStyleManager.IsBoeing ? 120 : 100,
+                    _ => _temp.Width
+                };
+                _temp.Width = Math.Max(_temp.Width, minimumWidth);
             }
 
             return _temp;
@@ -745,7 +923,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             }
         }
 
-        private UICheckBox CreateCheckBox(string _text, string _group)
+                        private UICheckBox CreateCheckBox(string _text, string _group)
         {
             UICheckBox _temp = new(_group)
             {
@@ -753,7 +931,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 ForeColor = controlFrontColor,
                 Font = textFont,
                 Text = _text,
-                Padding = new Padding(3, 4, 10, -30),
+                Padding = DcduStyleManager.IsBoeing ? new Padding(2, 1, 6, -4) : new Padding(2, 1, 6, -8),
                 AutoSize = true,
                 TabIndex = 0
             };
@@ -775,15 +953,15 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
         }
 
-        private UITextBox CreateMultiLineBox(string _text)
+                        private UITextBox CreateMultiLineBox(string _text)
         {
             UITextBox _temp = new(controlFrontColor)
             {
-                BackColor = controlBackColor,
+                BackColor = DcduStyleManager.IsBoeing ? Color.FromArgb(4, 9, 14) : Color.FromArgb(2, 8, 14),
                 ForeColor = controlFrontColor,
                 Font = textFontBold,
                 BorderStyle = BorderStyle.None,
-                Width = Math.Max(180, messageFormatPanel.ClientSize.Width - 20),
+                Width = Math.Max(180, messageFormatPanel.ClientSize.Width - (DcduStyleManager.IsBoeing ? 12 : 10)),
                 Multiline = true,
                 WordWrap = true,
                 ScrollBars = ScrollBars.None,
@@ -791,14 +969,17 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 AcceptsTab = false,
                 Text = _text,
                 MaxLength = 255,
-                Height = Math.Max(42, messageFormatPanel.ClientSize.Height - 118),
+                Height = Math.Max(34, messageFormatPanel.ClientSize.Height - (DcduStyleManager.IsBoeing ? 132 : 124)),
                 TabIndex = 0
             };
 
             _temp.CharacterCasing = CharacterCasing.Upper;
             _temp.Padding = new Padding(3, 0, 3, -10);
-            _temp.Margin = new Padding(3, 5, 3, -10);
+            _temp.Margin = new Padding(3, 4, 3, -10);
             _temp.TextAlign = HorizontalAlignment.Left;
+
+            _temp.GotFocus += (_, __) => messageFormatPanel?.Invalidate();
+            _temp.LostFocus += (_, __) => messageFormatPanel?.Invalidate();
 
             return _temp;
         }
@@ -808,9 +989,10 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             this.Close();
         }
 
-        private void ClearButton_Click(object sender, EventArgs e)
+                private void ClearButton_Click(object sender, EventArgs e)
         {
             messageFormatPanel.Controls.Clear();
+            messageFormatPanel.Invalidate();
             sendButton.Enabled = false;
         }
 
