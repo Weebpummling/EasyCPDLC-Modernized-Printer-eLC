@@ -108,6 +108,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
         public RequestForm(MainForm parent)
         {
             InitializeComponent();
+            AutoScaleMode = AutoScaleMode.None;
             this.ShowInTaskbar = false;
             requestFrame.AssetFileName = DcduStyleManager.AssetFile("RequestWindowFrame.png");
             ApplyTransparentScreenOverlays();
@@ -130,7 +131,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             userVATSIMData = parent.userVATSIMData;
             controlBackColor = parent.controlBackColor;
             controlFrontColor = parent.controlFrontColor;
-            controlFontBold = parent.controlFontBold ?? new Font("Consolas", 12.5F, FontStyle.Bold);
+            controlFontBold = parent.controlFontBold ?? MainForm.CreateDpiStablePointFont("Consolas", 12.5F, FontStyle.Bold);
             textFont = parent.textFont;
             textFontBold = parent.textFontBold;
 
@@ -175,8 +176,10 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 clearButton.Bounds = ScaleRect(new Rectangle(960, 189, 98, 48), baseSize, targetSize);
                 sendButton.Bounds = ScaleRect(new Rectangle(960, 249, 98, 48), baseSize, targetSize);
 
-                requestScreen.Bounds = new Rectangle(92, 24, 596, 186);
-                messageFormatPanel.Bounds = new Rectangle(28, 10, requestScreen.Width - 44, requestScreen.Height - 18);
+                requestScreen.Bounds = new Rectangle(92, 24, 596, 194);
+                // Boeing has a little more free vertical space below the screen, so use it
+                // to give the styled request forms a taller content area, especially REMARKS.
+                messageFormatPanel.Bounds = new Rectangle(28, 10, requestScreen.Width - 44, requestScreen.Height - 14);
                 messageFormatPanel.Padding = new Padding(0, 0, 2, 0);
                 ConfigureRequestMessageGrid();
                 radioContainer.Location = new Point(44, 228);
@@ -195,8 +198,8 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 sendButton.Bounds = new Rectangle(646, 164, 81, 31);
                 // Airbus: keep the original screen position, but place the styled content
                 // a little lower so the header is not glued to the top edge.
-                requestScreen.Bounds = new Rectangle(112, 29, 532, 177);
-                messageFormatPanel.Bounds = new Rectangle(10, 12, 512, 157);
+                requestScreen.Bounds = new Rectangle(112, 29, 513, 185);
+                messageFormatPanel.Bounds = new Rectangle(10, 12, 493, 165);
                 messageFormatPanel.Padding = new Padding(2, 0, 2, 0);
                 ConfigureRequestMessageGrid();
                 radioContainer.Location = new Point(18, 224);
@@ -283,10 +286,10 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             messageFormatPanel.ColumnStyles.Clear();
             messageFormatPanel.ColumnCount = 6;
             messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8F));
-            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DcduStyleManager.IsBoeing ? 88F : 82F));
-            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44F));
-            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DcduStyleManager.IsBoeing ? 105F : 98F));
-            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DcduStyleManager.IsBoeing ? 120F : 112F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DcduStyleManager.IsBoeing ? 120F : 112F));
+            messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             messageFormatPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8F));
 
             messageFormatPanel.RowStyles.Clear();
@@ -294,25 +297,26 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
             if (DcduStyleManager.IsBoeing)
             {
-                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 21F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 21F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 21F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 21F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 18F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
+            }
+            else
+            {
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
                 messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
                 messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
                 messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
                 messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
                 messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 18F));
-            }
-            else
-            {
-                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
-                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
-                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
-                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
-                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 19F));
-                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 16F));
+                messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             }
 
-            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            messageFormatPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             messageFormatPanel.ResumeLayout(false);
         }
@@ -466,8 +470,8 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             Panel panel = new()
             {
                 BackColor = Color.Transparent,
-                Height = isBoeing ? 36 : 30,
-                Margin = new Padding(0, 0, 0, 1),
+                Height = isBoeing ? 24 : 22,
+                Margin = new Padding(0, 0, 0, 0),
                 Padding = new Padding(0)
             };
 
@@ -476,23 +480,11 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = BoeingHeaderColor(),
-                Font = new Font(textFontBold.FontFamily, Math.Max(isBoeing ? 8.6f : 8.2f, textFontBold.Size - (isBoeing ? 1.55f : 2.0f)), FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(isBoeing ? 8.6f : 8.2f, textFontBold.Size - (isBoeing ? 1.55f : 2.0f)), FontStyle.Bold),
                 Text = title ?? string.Empty,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(25, 0),
-                Size = new Size(Math.Max(260, messageFormatPanel.Width - 36), isBoeing ? 17 : 15)
-            };
-
-            Label subLabel = new()
-            {
-                AutoSize = false,
-                BackColor = Color.Transparent,
-                ForeColor = BoeingSubtleColor(),
-                Font = new Font(textFont.FontFamily, Math.Max(isBoeing ? 7.0f : 6.7f, textFont.Size - (isBoeing ? 1.65f : 2.0f)), FontStyle.Regular),
-                Text = subtitle ?? string.Empty,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(25, isBoeing ? 16 : 14),
-                Size = new Size(Math.Max(260, messageFormatPanel.Width - 36), 13)
+                Location = new Point(25, 1),
+                Size = new Size(Math.Max(260, messageFormatPanel.Width - 36), isBoeing ? 18 : 16)
             };
 
             panel.Paint += (_, e) =>
@@ -511,7 +503,6 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             };
 
             panel.Controls.Add(titleLabel);
-            panel.Controls.Add(subLabel);
             return panel;
         }
 
@@ -588,7 +579,6 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             UITextBox remarksBox = CreateMultiLineBox("");
             _control.Controls.Add(remarksBox, 1, remarksBoxRow);
             _control.SetColumnSpan(remarksBox, 4);
-            _control.SetRowSpan(remarksBox, 2);
         }
 
                         private void DepClxClick(object sender, EventArgs e)
@@ -686,7 +676,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             messageFormatPanel.Controls.Add(CreateCheckBox("SPEED:", "unitParam"), 3, BoeingRow(2));
             messageFormatPanel.Controls.Add(CreateTextBox("", 3, false, true), 4, BoeingRow(2));
             messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO WX", "rsnParam"), 1, BoeingRow(3));
-            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 4, BoeingRow(3));
+            messageFormatPanel.Controls.Add(CreateCheckBox("DUE TO A/C PERFORMANCE", "rsnParam"), 3, BoeingRow(3));
 
             AddRemarksField(messageFormatPanel);
             FinalizeMessagePanel();
@@ -836,7 +826,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 Height = 20,
 
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(0, 4, 0, 0),
+                Padding = new Padding(0, 2, 0, 0),
                 Margin = new Padding(0, 0, 0, 0),
                 TabStop = true,
                 TabIndex = 0
@@ -858,7 +848,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 Height = 20,
 
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(0, 4, 0, 0),
+                Padding = new Padding(0, 2, 0, 0),
                 Margin = new Padding(0, 0, 0, 0),
                 TabStop = false,
                 Anchor = _leftOrRight
@@ -931,8 +921,10 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 ForeColor = controlFrontColor,
                 Font = textFont,
                 Text = _text,
-                Padding = DcduStyleManager.IsBoeing ? new Padding(2, 1, 6, -4) : new Padding(2, 1, 6, -8),
+                Padding = new Padding(2, 0, 4, 0),
+                Margin = new Padding(0, 0, 0, 0),
                 AutoSize = true,
+                MinimumSize = new Size(0, DcduStyleManager.IsBoeing ? 18 : 17),
                 TabIndex = 0
             };
             _temp.Click += DeselectCheckBox;
@@ -969,13 +961,17 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                 AcceptsTab = false,
                 Text = _text,
                 MaxLength = 255,
-                Height = Math.Max(34, messageFormatPanel.ClientSize.Height - (DcduStyleManager.IsBoeing ? 132 : 124)),
+                Height = DcduStyleManager.IsBoeing ? 40 : 40,
                 TabIndex = 0
             };
 
             _temp.CharacterCasing = CharacterCasing.Upper;
-            _temp.Padding = new Padding(3, 0, 3, -10);
-            _temp.Margin = new Padding(3, 4, 3, -10);
+            _temp.Padding = DcduStyleManager.IsBoeing
+                ? new Padding(4, 1, 4, 1)
+                : new Padding(3, 1, 3, 1);
+            _temp.Margin = DcduStyleManager.IsBoeing
+                ? new Padding(3, 4, 3, 0)
+                : new Padding(3, 4, 3, 0);
             _temp.TextAlign = HorizontalAlignment.Left;
 
             _temp.GotFocus += (_, __) => messageFormatPanel?.Invalidate();

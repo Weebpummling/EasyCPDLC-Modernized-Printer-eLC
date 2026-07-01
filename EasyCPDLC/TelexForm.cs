@@ -62,6 +62,7 @@ namespace EasyCPDLC
         public TelexForm(MainForm _parent, string _recipient = null)
         {
             InitializeComponent();
+            AutoScaleMode = AutoScaleMode.None;
             this.ShowInTaskbar = false;
             telexFrame.AssetFileName = DcduStyleManager.AssetFile("TelexWindowFrame.png");
             ApplyTransparentScreenOverlays();
@@ -443,7 +444,7 @@ namespace EasyCPDLC
                 return;
             }
 
-            if (IsWeatherStationAuto(box) || string.IsNullOrWhiteSpace(box.Text))
+            if (IsWeatherStationAuto(box))
             {
                 suppressWeatherStationAutoMark = true;
                 try
@@ -463,45 +464,21 @@ namespace EasyCPDLC
         private string GetWeatherStationForSend(string typedStation)
         {
             TextBox box = GetWeatherStationTextBox();
+            string value = box != null
+                ? box.Text
+                : typedStation;
 
-            if (box != null && IsWeatherStationAuto(box))
-            {
-                string freshStation = GetFreshWeatherStationForRequest();
-
-                if (!string.IsNullOrWhiteSpace(freshStation))
-                {
-                    suppressWeatherStationAutoMark = true;
-                    try
-                    {
-                        box.Text = freshStation;
-                        box.Tag = WeatherStationAutoTag;
-                    }
-                    finally
-                    {
-                        suppressWeatherStationAutoMark = false;
-                    }
-
-                    return freshStation;
-                }
-            }
-
-            return (typedStation ?? string.Empty).Trim().ToUpperInvariant();
+            // Manual TELEX weather requests must use the visible station field exactly.
+            // Do not refresh/switch DEP->ARR at SEND time. Quick actions handle automatic
+            // DEP/ARR selection separately in MainForm.
+            return (value ?? string.Empty).Trim().ToUpperInvariant();
         }
 
         private string ResolveWeatherStationForSend(string station)
         {
-            try
-            {
-                string resolved = parent.ResolveWeatherStationForRequest(station);
-
-                return string.IsNullOrWhiteSpace(resolved)
-                    ? (station ?? string.Empty).Trim().ToUpperInvariant()
-                    : resolved.Trim().ToUpperInvariant();
-            }
-            catch
-            {
-                return (station ?? string.Empty).Trim().ToUpperInvariant();
-            }
+            // TELEX manual METAR/ATIS must never silently replace the typed ICAO
+            // with DEP/ARR. Return the typed/visible station only.
+            return (station ?? string.Empty).Trim().ToUpperInvariant();
         }
 
         private static IEnumerable<TextBox> GetTextBoxesRecursive(Control root)
@@ -546,14 +523,24 @@ namespace EasyCPDLC
             return selected == "ON";
         }
 
-        private string GetSelectedAtisRequestIdentifier(string station)
+        private string GetSelectedAtisRequestType()
         {
-            string normalizedStation = (station ?? string.Empty).Trim().ToUpperInvariant();
-
             ComboBox combo = GetComboBoxesRecursive(messageFormatPanel)
                 .FirstOrDefault(x => x.Name == "atisTypeComboBox");
 
-            string selectedType = combo?.SelectedItem?.ToString()?.Trim().ToUpperInvariant() ?? "NONE";
+            return combo?.SelectedItem?.ToString()?.Trim().ToUpperInvariant() ?? "NONE";
+        }
+
+        private string GetSelectedAtisRequestIdentifier(string station)
+        {
+            string normalizedStation = (station ?? string.Empty).Trim().ToUpperInvariant();
+            string selectedType = GetSelectedAtisRequestType();
+
+            if (parent != null &&
+                parent.TryResolveAtisRequestTarget(normalizedStation, selectedType, out string resolvedTarget, out _))
+            {
+                return resolvedTarget;
+            }
 
             return selectedType switch
             {
@@ -629,8 +616,8 @@ namespace EasyCPDLC
                 DrawWeatherIcon(g, smallIconRect, Color.FromArgb(165, accent), 1.35f);
             }
 
-            using Font titleFont = new Font(textFontBold.FontFamily, Math.Max(9.0f, textFontBold.Size - 0.8f), FontStyle.Bold);
-            using Font subtitleFont = new Font(textFont.FontFamily, Math.Max(7.8f, textFont.Size - 1.6f), FontStyle.Regular);
+            using Font titleFont = MainForm.CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(9.0f, textFontBold.Size - 0.8f), FontStyle.Bold);
+            using Font subtitleFont = MainForm.CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(7.8f, textFont.Size - 1.6f), FontStyle.Regular);
 
             TextRenderer.DrawText(
                 g,
@@ -706,7 +693,7 @@ namespace EasyCPDLC
                 AutoSize = true,
                 BackColor = Color.Transparent,
                 ForeColor = AccentMutedColor(),
-                Font = new Font(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.2f), FontStyle.Regular),
+                Font = MainForm.CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.2f), FontStyle.Regular),
                 Text = hintText,
                 Location = new Point(0, 33),
                 Margin = new Padding(0)
@@ -788,7 +775,7 @@ namespace EasyCPDLC
                 FlatStyle = FlatStyle.Popup,
                 BackColor = Color.FromArgb(4, 10, 18),
                 ForeColor = AccentTitleColor(),
-                Font = new Font(textFontBold.FontFamily, Math.Max(8.2f, textFontBold.Size - 1.4f), FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(8.2f, textFontBold.Size - 1.4f), FontStyle.Bold),
                 Location = new Point(typeLabel.Right + 6, 0),
                 Size = new Size(DcduStyleManager.IsBoeing ? 132 : 126, DcduStyleManager.IsBoeing ? 30 : 28)
             };
@@ -818,7 +805,7 @@ namespace EasyCPDLC
                 FlatStyle = FlatStyle.Popup,
                 BackColor = Color.FromArgb(4, 10, 18),
                 ForeColor = AccentTitleColor(),
-                Font = new Font(textFontBold.FontFamily, Math.Max(8.2f, textFontBold.Size - 1.4f), FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(8.2f, textFontBold.Size - 1.4f), FontStyle.Bold),
                 Location = new Point(autoLabel.Right + 6, 34),
                 Size = new Size(82, DcduStyleManager.IsBoeing ? 30 : 28)
             };
@@ -832,7 +819,7 @@ namespace EasyCPDLC
                 AutoSize = true,
                 BackColor = Color.Transparent,
                 ForeColor = AccentMutedColor(),
-                Font = new Font(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.2f), FontStyle.Regular),
+                Font = MainForm.CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.2f), FontStyle.Regular),
                 Text = "NONE = ICAO   ARR = ICAO_A   DEP = ICAO_D",
                 Location = new Point(0, 66),
                 Margin = new Padding(0)
@@ -1019,13 +1006,40 @@ namespace EasyCPDLC
                 case "metarRadioButton":
                     string metarStation = GetWeatherStationForSend(recipientText);
                     string metarRequestIdentifier = ResolveWeatherStationForSend(metarStation);
+                    if (string.IsNullOrWhiteSpace(metarRequestIdentifier))
+                    {
+                        this.parent.WriteMessage("METAR REQUEST FAILED: NO STATION ENTERED", "SYSTEM", "SYSTEM");
+                        break;
+                    }
+
                     this.parent.WriteMessage("METAR REQUEST", "METAR", metarRequestIdentifier, true);
                     this.parent.ArtificialDelay("METAR " + metarRequestIdentifier, "INFOREQ", "REQUEST");
                     break;
 
                 case "atisRadioButton":
                     string atisStation = GetWeatherStationForSend(recipientText);
-                    string atisRequestIdentifier = GetSelectedAtisRequestIdentifier(ResolveWeatherStationForSend(atisStation));
+                    string resolvedAtisStation = ResolveWeatherStationForSend(atisStation);
+                    if (string.IsNullOrWhiteSpace(resolvedAtisStation))
+                    {
+                        this.parent.WriteMessage("ATIS REQUEST FAILED: NO STATION ENTERED", "SYSTEM", "SYSTEM");
+                        break;
+                    }
+
+                    string selectedAtisType = GetSelectedAtisRequestType();
+                    string atisRequestIdentifier = string.Empty;
+
+                    if (this.parent != null &&
+                        !this.parent.TryResolveAtisRequestTarget(resolvedAtisStation, selectedAtisType, out atisRequestIdentifier, out string warning))
+                    {
+                        this.parent.WriteMessage(warning, "SYSTEM", "SYSTEM");
+                        break;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(atisRequestIdentifier))
+                    {
+                        atisRequestIdentifier = GetSelectedAtisRequestIdentifier(resolvedAtisStation);
+                    }
+
                     bool autoRefreshAtis = IsAtisAutoRefreshSelected();
                     this.parent.SetAtisAutoRefresh(atisRequestIdentifier, autoRefreshAtis);
                     this.parent.WriteMessage("ATIS REQUEST", "ATIS", atisRequestIdentifier, true);
@@ -1113,7 +1127,7 @@ namespace EasyCPDLC
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = AccentTitleColor(),
-                Font = new Font(textFontBold.FontFamily, textFontBold.Size, FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePixelFont(textFontBold.FontFamily, textFontBold.Size, FontStyle.Bold),
                 Text = "TELEX  FREE TEXT",
                 Location = new Point(32, 3),
                 Size = new Size(width - 42, 21),
@@ -1126,7 +1140,7 @@ namespace EasyCPDLC
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = AccentMutedColor(),
-                Font = new Font(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.4f), FontStyle.Regular),
+                Font = MainForm.CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(8.0f, textFont.Size - 1.4f), FontStyle.Regular),
                 Text = "Send a custom message via Hoppie",
                 Location = new Point(32, 21),
                 Size = new Size(width - 42, 16),
@@ -1186,7 +1200,7 @@ namespace EasyCPDLC
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = AccentMutedColor(),
-                Font = new Font(textFont.FontFamily, Math.Max(7.5f, textFont.Size - 1.8f), FontStyle.Regular),
+                Font = MainForm.CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(7.5f, textFont.Size - 1.8f), FontStyle.Regular),
                 Text = "MAX 255 CHARS",
                 Location = new Point(width - 130, 72),
                 Size = new Size(122, 18),

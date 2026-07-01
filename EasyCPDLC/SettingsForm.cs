@@ -25,7 +25,7 @@ namespace EasyCPDLC
     public partial class SettingsForm : Form
     {
 
-        DcduCheckBox stayOnTopBox;
+        DcduCheckBox autoDeleteReqMessagesBox;
         DcduCheckBox audiblePingBox;
         DcduCheckBox useFSUIPCBox;
         UITextBox simbriefTextBox;
@@ -50,6 +50,7 @@ namespace EasyCPDLC
         {
             parent = _parent;
             InitializeComponent();
+            AutoScaleMode = AutoScaleMode.None;
             this.ShowInTaskbar = false;
             settingsFrame.AssetFileName = DcduStyleManager.AssetFile("SettingsWindowFrame.png");
             ApplyTransparentScreenOverlays();
@@ -168,16 +169,16 @@ namespace EasyCPDLC
         private void InitialiseSettings()
         {
             settingsFormatPanel.Controls.Clear();
-            stayOnTopBox = CreateCheckBox("Keep Window On Top", "0");
-            stayOnTopBox.Checked = parent.StayOnTop;
+            autoDeleteReqMessagesBox = CreateCheckBox("Auto-delete REQ/System messages", "0");
+            autoDeleteReqMessagesBox.Checked = parent.AutoDeleteRequestMessages;
             audiblePingBox = CreateCheckBox("Play Sound on Message Receive", "1");
             audiblePingBox.Checked = MainForm.PlaySound;
             useFSUIPCBox = CreateCheckBox("Use Simulator Connection (req. FSUIPC/XPUIPC)", "2");
             useFSUIPCBox.Checked = MainForm.UseFSUIPC;
             simbriefTextBox = CreateTextBox(MainForm.SimbriefID, 7, false, true);
 
-            settingsFormatPanel.Controls.Add(stayOnTopBox);
-            settingsFormatPanel.SetFlowBreak(stayOnTopBox, true);
+            settingsFormatPanel.Controls.Add(autoDeleteReqMessagesBox);
+            settingsFormatPanel.SetFlowBreak(autoDeleteReqMessagesBox, true);
             settingsFormatPanel.Controls.Add(audiblePingBox);
             settingsFormatPanel.SetFlowBreak(audiblePingBox, true);
             settingsFormatPanel.Controls.Add(useFSUIPCBox);
@@ -233,7 +234,7 @@ namespace EasyCPDLC
             {
                 BackColor = DcduTheme.ScreenAlt,
                 ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
-                Font = new Font("Consolas", isBoeing ? 8.0f : 8.2f, FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePointFont("Consolas", isBoeing ? 8.0f : 8.2f, FontStyle.Bold),
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 FlatStyle = FlatStyle.Popup,
                 Width = isBoeing ? 104 : 120,
@@ -258,7 +259,7 @@ namespace EasyCPDLC
             {
                 BackColor = Color.Transparent,
                 ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
-                Font = new Font("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePointFont("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
                 Text = _text,
                 Margin = isBoeing ? new Padding(0, 0, 0, 4) : new Padding(0, 0, 0, 4),
                 Size = isBoeing ? new Size(350, 23) : new Size(390, 25)
@@ -273,7 +274,7 @@ namespace EasyCPDLC
             {
                 BackColor = Color.Transparent,
                 ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
-                Font = new Font("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePointFont("Consolas", isBoeing ? 7.8f : 8.1f, FontStyle.Bold),
                 AutoSize = true,
                 Text = _text,
                 Top = 10,
@@ -293,7 +294,7 @@ namespace EasyCPDLC
             {
                 BackColor = DcduTheme.ScreenAlt,
                 ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
-                Font = new Font("Consolas", DcduStyleManager.IsBoeing ? 8.0f : 8.2f, FontStyle.Bold),
+                Font = MainForm.CreateDpiStablePointFont("Consolas", DcduStyleManager.IsBoeing ? 8.0f : 8.2f, FontStyle.Bold),
                 MaxLength = _maxLength,
                 BorderStyle = BorderStyle.FixedSingle,
                 Text = _text,
@@ -331,7 +332,7 @@ namespace EasyCPDLC
 
         private void StyleSelector_SelectedIndexChanged(object sender, EventArgs e)
         {
-            bool stayOnTop = stayOnTopBox?.Checked ?? parent.StayOnTop;
+            bool autoDeleteReqMessages = autoDeleteReqMessagesBox?.Checked ?? parent.AutoDeleteRequestMessages;
             bool playSound = audiblePingBox?.Checked ?? MainForm.PlaySound;
             bool useFsuipc = useFSUIPCBox?.Checked ?? MainForm.UseFSUIPC;
             string simbriefId = simbriefTextBox?.Text ?? MainForm.SimbriefID;
@@ -348,7 +349,7 @@ namespace EasyCPDLC
 
             // Rebuild the Settings content with style-specific spacing.
             InitialiseSettings();
-            stayOnTopBox.Checked = stayOnTop;
+            autoDeleteReqMessagesBox.Checked = autoDeleteReqMessages;
             audiblePingBox.Checked = playSound;
             useFSUIPCBox.Checked = useFsuipc;
             simbriefTextBox.Text = simbriefId;
@@ -359,7 +360,7 @@ namespace EasyCPDLC
 
         private void OkButton_Click(object sender, EventArgs e)
         {
-            parent.StayOnTop = stayOnTopBox.Checked;
+            parent.AutoDeleteRequestMessages = autoDeleteReqMessagesBox.Checked;
             MainForm.PlaySound = audiblePingBox.Checked;
             MainForm.UseFSUIPC = useFSUIPCBox.Checked;
             MainForm.SimbriefID = simbriefTextBox.Text;
