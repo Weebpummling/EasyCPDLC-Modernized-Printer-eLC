@@ -49,6 +49,7 @@ namespace EasyCPDLC
         private bool isReply = false;
 
         private readonly MainForm parent;
+        private bool DebugUiPreview => parent != null && parent.DebugUiPreviewButtonsUnlocked;
         private readonly Color controlBackColor;
         private readonly Color controlFrontColor;
         private readonly Font textFont;
@@ -79,6 +80,15 @@ namespace EasyCPDLC
 
             this.TopMost = parent.TopMost;
             sendButton.Enabled = false;
+
+            if (DebugUiPreview)
+            {
+                freeTextButton.Enabled = true;
+                metarButton.Enabled = true;
+                atisButton.Enabled = true;
+                clearButton.Enabled = true;
+                exitButton.Enabled = true;
+            }
         }
 
 
@@ -143,7 +153,7 @@ namespace EasyCPDLC
             Control[] hotspots = { freeTextButton, metarButton, atisButton, clearButton, sendButton, exitButton };
             foreach (Control hotspot in hotspots)
             {
-                if (hotspot != null && hotspot.Enabled && hotspot.Bounds.Contains(location))
+                if (hotspot != null && (DebugUiPreview || hotspot.Enabled) && hotspot.Bounds.Contains(location))
                 {
                     return hotspot;
                 }

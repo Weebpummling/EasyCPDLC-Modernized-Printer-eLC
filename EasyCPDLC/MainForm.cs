@@ -35,6 +35,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Security.Principal;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Security.Cryptography;
 using FSUIPC;
 
 namespace EasyCPDLC
@@ -99,7 +102,7 @@ namespace EasyCPDLC
 
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private const string UnreadMessageMarkerText = "✉";
-        private const bool MsfsClickGuardEnabled = true;
+        private static readonly bool MsfsClickGuardEnabled = true;
 
         private sealed class DcduBadgeLabel : System.Windows.Forms.Label
         {
@@ -409,16 +412,17 @@ namespace EasyCPDLC
 
         readonly private List<Contract> contracts = new();
 
-        private static readonly HttpClient webclient = new();
+        private static readonly HttpClient webclient = new() { Timeout = TimeSpan.FromSeconds(20) };
+
+        private static HttpClient CreateShortTimeoutHttpClient(int timeoutSeconds = 20)
+        {
+            return new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Max(3, timeoutSeconds)) };
+        }
         private string logonCode;
         private int cid;
         public string callsign;
-
-        private RequestForm rForm;
-        private TelexForm tForm;
-        private SettingsForm sForm;
-
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+private TelexForm tForm;
+[System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
 
         public bool StayOnTop
         {
@@ -470,16 +474,48 @@ namespace EasyCPDLC
             }
         }
 
+        private const string ProtectedCidSettingName = "ProtectedCID";
+
         public static int SavedCID
         {
             get
             {
-                return Properties.Settings.Default.CID;
+                string storedValue = ReadFixedStringSetting(ProtectedCidSettingName, string.Empty);
+
+                if (TryReadProtectedSetting(storedValue, "VATSIM CID", out string decryptedValue) &&
+                    int.TryParse(decryptedValue, out int protectedCid) &&
+                    protectedCid > 0)
+                {
+                    return protectedCid;
+                }
+
+                // Backwards compatibility: older builds stored CID as a plain integer setting.
+                // The next successful save migrates it to the DPAPI-protected string setting.
+                return Math.Max(0, Properties.Settings.Default.CID);
             }
             set
             {
-                Properties.Settings.Default.CID = value;
+                int cleanedValue = Math.Max(0, value);
 
+                if (cleanedValue == 0)
+                {
+                    SaveFixedStringSetting(ProtectedCidSettingName, string.Empty);
+                    Properties.Settings.Default.CID = 0;
+                    return;
+                }
+
+                if (TryProtectStringForCurrentUser(cleanedValue.ToString(System.Globalization.CultureInfo.InvariantCulture), out string protectedValue))
+                {
+                    SaveFixedStringSetting(ProtectedCidSettingName, DpapiProtectedSettingPrefix + protectedValue);
+                    Properties.Settings.Default.CID = 0;
+                    return;
+                }
+
+                // Do not prevent the user from connecting if Windows DPAPI is unexpectedly unavailable.
+                // Keep the legacy behaviour, but make the failure visible in the debug log.
+                Logger.Debug("Could not protect VATSIM CID with Windows DPAPI; storing legacy plain setting.");
+                SaveFixedStringSetting(ProtectedCidSettingName, string.Empty);
+                Properties.Settings.Default.CID = cleanedValue;
             }
         }
 
@@ -487,11 +523,39 @@ namespace EasyCPDLC
         {
             get
             {
-                return Properties.Settings.Default.HoppieCode;
+                string storedValue = Properties.Settings.Default.HoppieCode ?? string.Empty;
+
+                if (TryReadProtectedSetting(storedValue, "Hoppie code", out string decryptedValue))
+                {
+                    return decryptedValue;
+                }
+
+                // Backwards compatibility: older builds stored this value as plain text.
+                // The next successful save migrates it to the DPAPI-protected format.
+                return storedValue.StartsWith(DpapiProtectedSettingPrefix, StringComparison.Ordinal)
+                    ? string.Empty
+                    : storedValue;
             }
             set
             {
-                Properties.Settings.Default.HoppieCode = value;
+                string cleanedValue = (value ?? string.Empty).Trim();
+
+                if (string.IsNullOrWhiteSpace(cleanedValue))
+                {
+                    Properties.Settings.Default.HoppieCode = string.Empty;
+                    return;
+                }
+
+                if (TryProtectStringForCurrentUser(cleanedValue, out string protectedValue))
+                {
+                    Properties.Settings.Default.HoppieCode = DpapiProtectedSettingPrefix + protectedValue;
+                    return;
+                }
+
+                // Do not prevent the user from connecting if Windows DPAPI is unexpectedly unavailable.
+                // Keep the legacy behaviour, but make the failure visible in the debug log.
+                Logger.Debug("Could not protect Hoppie code with Windows DPAPI; storing legacy plain setting.");
+                Properties.Settings.Default.HoppieCode = cleanedValue;
 
             }
         }
@@ -500,12 +564,647 @@ namespace EasyCPDLC
         {
             get
             {
-                return Properties.Settings.Default.SimbriefUsername;
+                string storedValue = Properties.Settings.Default.SimbriefUsername ?? string.Empty;
+
+                if (TryReadProtectedSetting(storedValue, "SimBrief username", out string decryptedValue))
+                {
+                    return NormalizeSimbriefID(decryptedValue);
+                }
+
+                // Backwards compatibility: older builds stored this value as plain text.
+                // The next successful save migrates it to the DPAPI-protected format.
+                return storedValue.StartsWith(DpapiProtectedSettingPrefix, StringComparison.Ordinal)
+                    ? string.Empty
+                    : NormalizeSimbriefID(storedValue);
             }
             set
             {
-                Properties.Settings.Default.SimbriefUsername = value;
+                string cleanedValue = NormalizeSimbriefID(value);
+
+                if (string.IsNullOrWhiteSpace(cleanedValue))
+                {
+                    Properties.Settings.Default.SimbriefUsername = string.Empty;
+                    return;
+                }
+
+                if (TryProtectStringForCurrentUser(cleanedValue, out string protectedValue))
+                {
+                    Properties.Settings.Default.SimbriefUsername = DpapiProtectedSettingPrefix + protectedValue;
+                    return;
+                }
+
+                // Do not prevent SimBrief from working if Windows DPAPI is unexpectedly unavailable.
+                // Keep the legacy behaviour, but make the failure visible in the debug log.
+                Logger.Debug("Could not protect SimBrief username with Windows DPAPI; storing legacy plain setting.");
+                Properties.Settings.Default.SimbriefUsername = cleanedValue;
             }
+        }
+
+        private const string DpapiProtectedSettingPrefix = "dpapi:v1:";
+        private const int CryptProtectUiForbidden = 0x1;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct DataBlob
+        {
+            public int cbData;
+            public IntPtr pbData;
+        }
+
+        [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool CryptProtectData(
+            ref DataBlob pDataIn,
+            string szDataDescr,
+            IntPtr pOptionalEntropy,
+            IntPtr pvReserved,
+            IntPtr pPromptStruct,
+            int dwFlags,
+            ref DataBlob pDataOut);
+
+        [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool CryptUnprotectData(
+            ref DataBlob pDataIn,
+            IntPtr ppszDataDescr,
+            IntPtr pOptionalEntropy,
+            IntPtr pvReserved,
+            IntPtr pPromptStruct,
+            int dwFlags,
+            ref DataBlob pDataOut);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr LocalFree(IntPtr hMem);
+
+        private static bool TryReadProtectedSetting(string storedValue, string settingDisplayName, out string decryptedValue)
+        {
+            decryptedValue = string.Empty;
+
+            if (string.IsNullOrEmpty(storedValue) ||
+                !storedValue.StartsWith(DpapiProtectedSettingPrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (TryUnprotectStringForCurrentUser(storedValue.Substring(DpapiProtectedSettingPrefix.Length), out decryptedValue))
+            {
+                return true;
+            }
+
+            Logger.Debug("Saved " + settingDisplayName + " could not be decrypted for the current Windows user.");
+            decryptedValue = string.Empty;
+            return true;
+        }
+
+        private static bool TryProtectStringForCurrentUser(string value, out string protectedValue)
+        {
+            protectedValue = string.Empty;
+
+            if (string.IsNullOrEmpty(value))
+            {
+                return true;
+            }
+
+            byte[] plainBytes = Encoding.UTF8.GetBytes(value);
+            DataBlob inputBlob = new() { cbData = plainBytes.Length, pbData = Marshal.AllocHGlobal(plainBytes.Length) };
+            DataBlob outputBlob = new();
+
+            try
+            {
+                Marshal.Copy(plainBytes, 0, inputBlob.pbData, plainBytes.Length);
+
+                if (!CryptProtectData(ref inputBlob, "EasyCPDLC Hoppie Code", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, CryptProtectUiForbidden, ref outputBlob) ||
+                    outputBlob.pbData == IntPtr.Zero ||
+                    outputBlob.cbData <= 0)
+                {
+                    return false;
+                }
+
+                byte[] encryptedBytes = new byte[outputBlob.cbData];
+                Marshal.Copy(outputBlob.pbData, encryptedBytes, 0, encryptedBytes.Length);
+                protectedValue = Convert.ToBase64String(encryptedBytes);
+                return true;
+            }
+            catch
+            {
+                protectedValue = string.Empty;
+                return false;
+            }
+            finally
+            {
+                if (inputBlob.pbData != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(inputBlob.pbData);
+                }
+
+                if (outputBlob.pbData != IntPtr.Zero)
+                {
+                    LocalFree(outputBlob.pbData);
+                }
+            }
+        }
+
+        private static bool TryUnprotectStringForCurrentUser(string protectedValue, out string value)
+        {
+            value = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(protectedValue))
+            {
+                return true;
+            }
+
+            byte[] encryptedBytes;
+            try
+            {
+                encryptedBytes = Convert.FromBase64String(protectedValue);
+            }
+            catch
+            {
+                return false;
+            }
+
+            DataBlob inputBlob = new() { cbData = encryptedBytes.Length, pbData = Marshal.AllocHGlobal(encryptedBytes.Length) };
+            DataBlob outputBlob = new();
+
+            try
+            {
+                Marshal.Copy(encryptedBytes, 0, inputBlob.pbData, encryptedBytes.Length);
+
+                if (!CryptUnprotectData(ref inputBlob, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, CryptProtectUiForbidden, ref outputBlob) ||
+                    outputBlob.pbData == IntPtr.Zero ||
+                    outputBlob.cbData <= 0)
+                {
+                    return false;
+                }
+
+                byte[] plainBytes = new byte[outputBlob.cbData];
+                Marshal.Copy(outputBlob.pbData, plainBytes, 0, plainBytes.Length);
+                value = Encoding.UTF8.GetString(plainBytes);
+                return true;
+            }
+            catch
+            {
+                value = string.Empty;
+                return false;
+            }
+            finally
+            {
+                if (inputBlob.pbData != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(inputBlob.pbData);
+                }
+
+                if (outputBlob.pbData != IntPtr.Zero)
+                {
+                    LocalFree(outputBlob.pbData);
+                }
+            }
+        }
+
+        private static string NormalizeSimbriefID(string value)
+        {
+            string cleaned = (value ?? string.Empty).Trim();
+            return Regex.IsMatch(cleaned, @"^\d{1,7}$") ? cleaned : string.Empty;
+        }
+
+        private const string MessageTextSizeSettingName = "MessageTextSize";
+        private const string MessagePreviewTextTag = "EASYCPDLC_MESSAGE_PREVIEW_TEXT";
+
+        public static string MessageTextSize
+        {
+            get
+            {
+                return NormalizeMessageTextSize(ReadFixedStringSetting(MessageTextSizeSettingName, "Normal"));
+            }
+            set
+            {
+                SaveFixedStringSetting(MessageTextSizeSettingName, NormalizeMessageTextSize(value));
+            }
+        }
+
+        private static string NormalizeMessageTextSize(string value)
+        {
+            string cleaned = (value ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (cleaned.Contains("EXTRA") || cleaned == "XL" || cleaned.Contains("130"))
+            {
+                return "Extra Large";
+            }
+
+            if (cleaned.Contains("LARGE") || cleaned.Contains("115") || cleaned.Contains("125"))
+            {
+                return "Large";
+            }
+
+            return "Normal";
+        }
+
+        private static float MessageTextSizeOffsetPixels()
+        {
+            string size = MessageTextSize;
+
+            if (string.Equals(size, "Extra Large", StringComparison.OrdinalIgnoreCase))
+            {
+                return 3.0f;
+            }
+
+            if (string.Equals(size, "Large", StringComparison.OrdinalIgnoreCase))
+            {
+                return 1.6f;
+            }
+
+            return 0.0f;
+        }
+
+        private static string ReadFixedStringSetting(string settingName, string defaultValue)
+        {
+            try
+            {
+                string path = FixedEasyCpdlcSettingsPath();
+                if (string.IsNullOrWhiteSpace(settingName) || !File.Exists(path))
+                {
+                    return defaultValue;
+                }
+
+                System.Xml.Linq.XDocument document = System.Xml.Linq.XDocument.Load(path);
+                string value = document
+                    .Descendants()
+                    .FirstOrDefault(item =>
+                        item.Name.LocalName == "setting" &&
+                        string.Equals(item.Attribute("name")?.Value, settingName, StringComparison.OrdinalIgnoreCase))
+                    ?.Elements()
+                    .FirstOrDefault(item => item.Name.LocalName == "value")
+                    ?.Value;
+
+                return string.IsNullOrWhiteSpace(value) ? defaultValue : value;
+            }
+            catch
+            {
+                return defaultValue;
+            }
+        }
+
+        private static void SaveFixedStringSetting(string settingName, string settingValue)
+        {
+            try
+            {
+                string path = FixedEasyCpdlcSettingsPath();
+                string directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                System.Xml.Linq.XDocument document = File.Exists(path)
+                    ? System.Xml.Linq.XDocument.Load(path)
+                    : new System.Xml.Linq.XDocument(
+                        new System.Xml.Linq.XElement("configuration",
+                            new System.Xml.Linq.XElement("userSettings",
+                                new System.Xml.Linq.XElement("EasyCPDLC.Properties.Settings"))));
+
+                System.Xml.Linq.XElement root = document.Element("configuration");
+                if (root == null)
+                {
+                    root = new System.Xml.Linq.XElement("configuration");
+                    document.Add(root);
+                }
+
+                System.Xml.Linq.XElement userSettings = root.Elements().FirstOrDefault(item => item.Name.LocalName == "userSettings");
+                if (userSettings == null)
+                {
+                    userSettings = new System.Xml.Linq.XElement("userSettings");
+                    root.Add(userSettings);
+                }
+
+                System.Xml.Linq.XElement settingsNode = userSettings.Elements().FirstOrDefault(item => item.Name.LocalName == "EasyCPDLC.Properties.Settings");
+                if (settingsNode == null)
+                {
+                    settingsNode = new System.Xml.Linq.XElement("EasyCPDLC.Properties.Settings");
+                    userSettings.Add(settingsNode);
+                }
+
+                System.Xml.Linq.XElement setting = settingsNode.Elements()
+                    .FirstOrDefault(item =>
+                        item.Name.LocalName == "setting" &&
+                        string.Equals(item.Attribute("name")?.Value, settingName, StringComparison.OrdinalIgnoreCase));
+
+                if (setting == null)
+                {
+                    setting = new System.Xml.Linq.XElement("setting",
+                        new System.Xml.Linq.XAttribute("name", settingName),
+                        new System.Xml.Linq.XAttribute("serializeAs", "String"),
+                        new System.Xml.Linq.XElement("value", settingValue ?? string.Empty));
+                    settingsNode.Add(setting);
+                }
+                else
+                {
+                    setting.SetAttributeValue("serializeAs", "String");
+                    System.Xml.Linq.XElement valueElement = setting.Elements().FirstOrDefault(item => item.Name.LocalName == "value");
+                    if (valueElement == null)
+                    {
+                        valueElement = new System.Xml.Linq.XElement("value");
+                        setting.Add(valueElement);
+                    }
+
+                    valueElement.Value = settingValue ?? string.Empty;
+                }
+
+                document.Save(path);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Debug("Could not save fixed string setting " + settingName + ": " + ex.Message);
+                }
+                catch
+                {
+                    // Ignore logging failures.
+                }
+            }
+        }
+
+        private static string FixedEasyCpdlcSettingsPath()
+        {
+            string root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Path.Combine(root, "EasyCPDLCModernized", "user.config");
+        }
+
+        private const string SettingsUpgradeVersionSettingName = "SettingsUpgradeVersion";
+
+        private static void UpgradeUserSettingsForCurrentVersionIfNeeded()
+        {
+            try
+            {
+                string currentVersion = System.Windows.Forms.Application.ProductVersion ?? string.Empty;
+                string upgradedVersion = ReadFixedStringSetting(SettingsUpgradeVersionSettingName, string.Empty);
+
+                if (string.IsNullOrWhiteSpace(currentVersion) ||
+                    string.Equals(upgradedVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                Properties.Settings.Default.Upgrade();
+                Properties.Settings.Default.Save();
+                SaveFixedStringSetting(SettingsUpgradeVersionSettingName, currentVersion);
+                Logger.Debug("User settings upgraded for version " + currentVersion + ".");
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Debug("User settings upgrade check failed: " + ex.Message);
+                }
+                catch
+                {
+                    // Ignore logging failures during early startup.
+                }
+            }
+        }
+
+        private static string CurrentUserConfigFilePath()
+        {
+            try
+            {
+                string path = System.Configuration.ConfigurationManager
+                    .OpenExeConfiguration(System.Configuration.ConfigurationUserLevel.PerUserRoamingAndLocal)
+                    .FilePath;
+
+                return string.IsNullOrWhiteSpace(path) ? string.Empty : path;
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Debug("Could not resolve current user.config path: " + ex.Message);
+                }
+                catch
+                {
+                }
+
+                return string.Empty;
+            }
+        }
+
+        private static System.Xml.Linq.XDocument CreateEasyCpdlcUserConfigDocument()
+        {
+            return new System.Xml.Linq.XDocument(
+                new System.Xml.Linq.XElement("configuration",
+                    new System.Xml.Linq.XElement("userSettings",
+                        new System.Xml.Linq.XElement("EasyCPDLC.Properties.Settings"))));
+        }
+
+        private static void SetUserConfigStringSetting(System.Xml.Linq.XDocument document, string settingName, string settingValue)
+        {
+            if (document == null || string.IsNullOrWhiteSpace(settingName))
+            {
+                return;
+            }
+
+            System.Xml.Linq.XElement root = document.Element("configuration");
+            if (root == null)
+            {
+                root = new System.Xml.Linq.XElement("configuration");
+                document.Add(root);
+            }
+
+            System.Xml.Linq.XElement userSettings = root.Elements().FirstOrDefault(item => item.Name.LocalName == "userSettings");
+            if (userSettings == null)
+            {
+                userSettings = new System.Xml.Linq.XElement("userSettings");
+                root.Add(userSettings);
+            }
+
+            System.Xml.Linq.XElement settingsNode = userSettings.Elements().FirstOrDefault(item => item.Name.LocalName == "EasyCPDLC.Properties.Settings");
+            if (settingsNode == null)
+            {
+                settingsNode = new System.Xml.Linq.XElement("EasyCPDLC.Properties.Settings");
+                userSettings.Add(settingsNode);
+            }
+
+            System.Xml.Linq.XElement setting = settingsNode.Elements()
+                .FirstOrDefault(item =>
+                    item.Name.LocalName == "setting" &&
+                    string.Equals(item.Attribute("name")?.Value, settingName, StringComparison.OrdinalIgnoreCase));
+
+            if (setting == null)
+            {
+                setting = new System.Xml.Linq.XElement("setting",
+                    new System.Xml.Linq.XAttribute("name", settingName),
+                    new System.Xml.Linq.XAttribute("serializeAs", "String"),
+                    new System.Xml.Linq.XElement("value", settingValue ?? string.Empty));
+                settingsNode.Add(setting);
+                return;
+            }
+
+            setting.SetAttributeValue("serializeAs", "String");
+            System.Xml.Linq.XElement valueElement = setting.Elements().FirstOrDefault(item => item.Name.LocalName == "value");
+            if (valueElement == null)
+            {
+                valueElement = new System.Xml.Linq.XElement("value");
+                setting.Add(valueElement);
+            }
+
+            valueElement.Value = settingValue ?? string.Empty;
+        }
+
+        private static string PrepareUserConfigForVersionChange(Release targetRelease, string tempDir, string currentUserConfigPath)
+        {
+            try
+            {
+                Properties.Settings.Default.Save();
+
+                if (string.IsNullOrWhiteSpace(currentUserConfigPath))
+                {
+                    currentUserConfigPath = CurrentUserConfigFilePath();
+                }
+
+                Version targetVersion = ParseReleaseVersion(targetRelease?.TagName);
+                Version currentVersion = ParseReleaseVersion(System.Windows.Forms.Application.ProductVersion);
+                bool isRollback = targetVersion != null && currentVersion != null && targetVersion < currentVersion;
+
+                if (!isRollback)
+                {
+                    return currentUserConfigPath;
+                }
+
+                if (string.IsNullOrWhiteSpace(tempDir))
+                {
+                    tempDir = Path.GetTempPath();
+                }
+
+                Directory.CreateDirectory(tempDir);
+                string compatibilityPath = Path.Combine(tempDir, "EasyCPDLC_Rollback_Compatible_user.config");
+
+                System.Xml.Linq.XDocument document = !string.IsNullOrWhiteSpace(currentUserConfigPath) && File.Exists(currentUserConfigPath)
+                    ? System.Xml.Linq.XDocument.Load(currentUserConfigPath)
+                    : CreateEasyCpdlcUserConfigDocument();
+
+                // Older builds do not understand the DPAPI-protected settings.
+                // For an explicit rollback, decrypt values in the current process and write
+                // legacy-compatible plain settings into the copied user.config so the previous
+                // build can still populate its setup fields after restart.
+                SetUserConfigStringSetting(
+                    document,
+                    "CID",
+                    Math.Max(0, SavedCID).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                SetUserConfigStringSetting(document, "HoppieCode", SavedHoppieCode ?? string.Empty);
+                SetUserConfigStringSetting(document, "SimbriefUsername", SimbriefID ?? string.Empty);
+
+                document.Save(compatibilityPath);
+                return compatibilityPath;
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Debug("Could not prepare rollback-compatible user.config: " + ex.Message);
+                }
+                catch
+                {
+                }
+
+                return currentUserConfigPath ?? string.Empty;
+            }
+        }
+
+        private static void ResetEasyCpdlcLogFileForStartup(string logFilePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(logFilePath))
+                {
+                    return;
+                }
+
+                string directory = Path.GetDirectoryName(logFilePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                // Start every EasyCPDLC session with a fresh log file.
+                // This prevents LocalAppData logs from growing indefinitely.
+                using FileStream stream = new FileStream(
+                    logFilePath,
+                    System.IO.FileMode.Create,
+                    System.IO.FileAccess.Write,
+                    System.IO.FileShare.ReadWrite);
+                stream.SetLength(0);
+            }
+            catch
+            {
+                // Logging is not initialised yet. If the file is locked or unavailable,
+                // continue startup and let NLog append to the existing file.
+            }
+        }
+
+        private static string ResolveEasyCpdlcLogFilePath()
+        {
+            const string logFileName = "EasyCPDLCLog.txt";
+
+            try
+            {
+                string root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string logDirectory = Path.Combine(root, "EasyCPDLCModernized", "Logs");
+                Directory.CreateDirectory(logDirectory);
+                return Path.Combine(logDirectory, logFileName);
+            }
+            catch
+            {
+                try
+                {
+                    string fallbackDirectory = Path.Combine(Path.GetTempPath(), "EasyCPDLCModernized", "Logs");
+                    Directory.CreateDirectory(fallbackDirectory);
+                    return Path.Combine(fallbackDirectory, logFileName);
+                }
+                catch
+                {
+                    return Path.Combine(Path.GetTempPath(), logFileName);
+                }
+            }
+        }
+
+        private Font messageTextFont;
+        private Font messageTextFontBold;
+
+        private void RefreshMessageTextFonts()
+        {
+            float offset = MessageTextSizeOffsetPixels();
+            messageTextFont = CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(1.0f, textFont.Size + offset), FontStyle.Regular);
+            messageTextFontBold = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(1.0f, textFontBold.Size + offset), FontStyle.Bold);
+        }
+
+        private Font GetMessageTextFont(bool bold)
+        {
+            if (messageTextFont == null || messageTextFontBold == null)
+            {
+                RefreshMessageTextFonts();
+            }
+
+            return bold ? messageTextFontBold : messageTextFont;
+        }
+
+        public void ApplyMessageTextSizeSetting()
+        {
+            RefreshMessageTextFonts();
+            RefreshVisibleMessageColors();
+
+            if (messageFormatPanel != null && !messageFormatPanel.IsDisposed)
+            {
+                foreach (Control control in messageFormatPanel.Controls)
+                {
+                    if (control is System.Windows.Forms.Label label &&
+                        string.Equals(label.Tag as string, MessagePreviewTextTag, StringComparison.Ordinal))
+                    {
+                        label.Font = GetMessageTextFont(false);
+                        label.Invalidate();
+                    }
+                }
+
+                messageFormatPanel.PerformLayout();
+                HidePreviewHorizontalScrollbar();
+            }
+
+            HideNativeOutputScrollbars();
         }
 
         public int messageOutCounter = 1;
@@ -544,8 +1243,8 @@ namespace EasyCPDLC
 
         private void UpdateConnectionGatedControls()
         {
-            bool connected = _connected;
-            bool interactiveEnabled = connected && IsHoppieCallsignReadyForInteractiveMenus();
+            bool connected = _connected || DebugUiPreviewMode;
+            bool interactiveEnabled = DebugUiPreviewMode || (connected && IsHoppieCallsignReadyForInteractiveMenus());
 
             Control[] interactiveControls =
             {
@@ -626,10 +1325,6 @@ namespace EasyCPDLC
                 UpdateCurrentAtcUnitDisplay();
                 UpdateOnlineStatusLabel();
 
-                if (rForm != null)
-                {
-                    rForm.NeedsLogon = _currentATCUnit is null;
-                }
             }
         }
 
@@ -1020,7 +1715,7 @@ namespace EasyCPDLC
 
         private bool IsHoppieCallsignReadyForInteractiveMenus()
         {
-            return Connected && !HasBlockingCallsignMismatchForMenus();
+            return DebugUiPreviewMode || (Connected && !HasBlockingCallsignMismatchForMenus());
         }
 
         private static void CopyLiveVatsimTelemetry(Pilot target, Pilot source)
@@ -1094,10 +1789,6 @@ namespace EasyCPDLC
                     pendingLogon = null;
                     CurrentATCUnit = null;
 
-                    if (rForm != null && !rForm.IsDisposed)
-                    {
-                        rForm.NeedsLogon = true;
-                    }
 
                     WriteMessage("VATSIM CALLSIGN MATCH OK: " + callsign +
                         ". HOPPIE ACTIVE CALLSIGN SWITCHED" +
@@ -1399,6 +2090,88 @@ namespace EasyCPDLC
             return true;
         }
 
+        private bool TryGetFlightPhaseAirportDistances(Pilot pilot, out double departureDistanceNm, out double arrivalDistanceNm, out double routeDistanceNm)
+        {
+            departureDistanceNm = double.MaxValue;
+            arrivalDistanceNm = double.MaxValue;
+            routeDistanceNm = double.MaxValue;
+
+            string departure = pilot?.flight_plan?.departure?.Trim().ToUpperInvariant() ?? string.Empty;
+            string arrival = pilot?.flight_plan?.arrival?.Trim().ToUpperInvariant() ?? string.Empty;
+
+            if (pilot == null ||
+                string.IsNullOrWhiteSpace(departure) ||
+                string.IsNullOrWhiteSpace(arrival) ||
+                !TryGetSimbriefAirportPosition(departure, out double depLat, out double depLon) ||
+                !TryGetSimbriefAirportPosition(arrival, out double arrLat, out double arrLon))
+            {
+                return false;
+            }
+
+            departureDistanceNm = DistanceNm(pilot.latitude, pilot.longitude, depLat, depLon);
+            arrivalDistanceNm = DistanceNm(pilot.latitude, pilot.longitude, arrLat, arrLon);
+            routeDistanceNm = DistanceNm(depLat, depLon, arrLat, arrLon);
+
+            return routeDistanceNm > 20.0 &&
+                   departureDistanceNm < double.MaxValue &&
+                   arrivalDistanceNm < double.MaxValue;
+        }
+
+        private bool IsPilotLikelyInDepartureClimbout(Pilot pilot)
+        {
+            if (pilot?.flight_plan == null ||
+                pilot.altitude <= 3000 ||
+                pilot.altitude >= 22000 ||
+                !TryGetFlightPhaseAirportDistances(pilot, out double departureDistanceNm, out double arrivalDistanceNm, out double routeDistanceNm))
+            {
+                return false;
+            }
+
+            // If EasyCPDLC is restarted during climbout, this app session did not see the
+            // ground phase. Do not assume ARR just because altitude is below FL220.
+            // Use position instead: close to departure and clearly not near destination = DEP/AIRBORN.
+            if (departureDistanceNm <= 80.0 && departureDistanceNm + 20.0 < arrivalDistanceNm)
+            {
+                return true;
+            }
+
+            if (routeDistanceNm > 120.0 &&
+                departureDistanceNm / routeDistanceNm <= 0.28 &&
+                departureDistanceNm + 15.0 < arrivalDistanceNm)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsPilotLikelyInArrivalDescent(Pilot pilot)
+        {
+            if (pilot?.flight_plan == null ||
+                pilot.altitude <= 3000 ||
+                pilot.altitude >= 22000 ||
+                !TryGetFlightPhaseAirportDistances(pilot, out double departureDistanceNm, out double arrivalDistanceNm, out double routeDistanceNm))
+            {
+                return false;
+            }
+
+            // Restarted airborne below FL220 can be ARR only if position agrees:
+            // closer to destination and already well past the departure part of the route.
+            if (arrivalDistanceNm <= 160.0 && arrivalDistanceNm + 30.0 < departureDistanceNm)
+            {
+                return true;
+            }
+
+            if (routeDistanceNm > 120.0 &&
+                arrivalDistanceNm / routeDistanceNm <= 0.35 &&
+                arrivalDistanceNm + 20.0 < departureDistanceNm)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
         private void EnsureFlightPhaseSignature(Pilot pilot)
         {
             if (pilot != null && pilot.altitude <= 3000)
@@ -1442,22 +2215,30 @@ namespace EasyCPDLC
                     }
                     else if (pilot.altitude < 22000)
                     {
-                        if (flightPhaseGroundObservedThisSession)
+                        if (flightPhaseGroundObservedThisSession || IsPilotLikelyInDepartureClimbout(pilot))
                         {
-                            // Normal same-session departure/climbout after the app saw ground.
+                            // Normal same-session departure/climbout after the app saw ground,
+                            // or program restart during departure climbout near the origin airport.
                             flightPhaseDepartureSeen = true;
                             flightPhaseArrivalSeen = false;
                             preferArrivalStationAfterAirborne = false;
                         }
-                        else
+                        else if (IsPilotLikelyInArrivalDescent(pilot))
                         {
-                            // Program was started already airborne below FL220.
-                            // With no ground observation in this app session this is much more
-                            // likely a descent/arrival restart than a fresh climbout.
+                            // Program was started already airborne below FL220 and position is
+                            // clearly on/near arrival side of the route.
                             flightPhaseEnrouteSeen = true;
                             flightPhaseArrivalSeen = true;
                             flightPhaseDepartureSeen = true;
                             preferArrivalStationAfterAirborne = true;
+                        }
+                        else
+                        {
+                            // Ambiguous restart below FL220:
+                            // show AIRBORN instead of incorrectly forcing ARR.
+                            flightPhaseDepartureSeen = true;
+                            flightPhaseArrivalSeen = false;
+                            preferArrivalStationAfterAirborne = false;
                         }
                     }
                     else
@@ -1533,6 +2314,14 @@ namespace EasyCPDLC
             {
                 flightPhaseEnrouteSeen = true;
                 flightPhaseDepartureSeen = true;
+                return false;
+            }
+
+            if (IsPilotLikelyInDepartureClimbout(pilot))
+            {
+                flightPhaseDepartureSeen = true;
+                flightPhaseArrivalSeen = false;
+                preferArrivalStationAfterAirborne = false;
                 return false;
             }
 
@@ -1828,6 +2617,9 @@ namespace EasyCPDLC
         private Panel autoDeleteActionPopupPanel;
         private CPDLCMessage autoDeleteActionPopupMessage;
         private TimerLabel autoDeleteActionPopupMenuLabel;
+        private Panel manualDeleteConfirmPopupPanel;
+        private CPDLCMessage manualDeleteConfirmPopupMessage;
+        private const string OpenMessageActionsTag = "OPEN_ACTIONS";
         private readonly List<CpdlcDiscoveryResult> cpdlcDiscoveryCandidates = new();
         private readonly List<FirBoundaryFeature> firBoundaryFeatures = new();
         private DateTime firBoundaryLoadedUtc = DateTime.MinValue;
@@ -1835,11 +2627,29 @@ namespace EasyCPDLC
         private string currentFirDebugText = string.Empty;
         private static readonly TimeSpan firBoundaryCacheLifetime = TimeSpan.FromHours(12);
 
-        // CPDLC helper pre-alert radius for upcoming FIR/CTR candidates.
-        // A nearby candidate still needs a strict FIR/controller match and an online Hoppie logon.
-        private const double FirNearbyRadiusNm = 50.0;
-        private const double FirNearbyRadiusWhenInsideNm = 50.0;
+        private readonly object vatglassesDataLock = new();
+        private readonly Dictionary<string, VatglassesDataset> vatglassesDatasets = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, DateTime> vatglassesUnavailableUtc = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> vatglassesLoadInProgress = new(StringComparer.OrdinalIgnoreCase);
+        private string lastVatglassesDebugText = string.Empty;
+        private static readonly TimeSpan vatglassesDatasetCacheLifetime = TimeSpan.FromHours(24);
+        private static readonly TimeSpan vatglassesUnavailableRetry = TimeSpan.FromMinutes(30);
+        private const string VatglassesRawDataBaseUrl = "https://raw.githubusercontent.com/lennycolton/vatglasses-data/main/data/";
+        private static readonly HashSet<string> VatglassesKnownUsDataSetKeys = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "zab", "zak", "zau", "zhn", "zhu", "zjx", "zlc", "zma", "zoa", "zob", "zqm-zqx", "zul", "zyz"
+        };
+
+        // CPDLC helper pre-alert radius for upcoming sector/FIR/CTR candidates.
+        // A nearby candidate still needs a sector/FIR/controller match and an online Hoppie logon.
+        private const double FirNearbyRadiusNm = 200.0;
+        private const double FirNearbyRadiusWhenInsideNm = 200.0;
         private const string VatsimMapDataUrl = "https://api.vatsim.net/api/map_data/";
+        private const string VatsimAtcOnlineUrl = "https://api.vatsim.net/v2/atc/online";
+        private const string VatspyBoundariesGeoJsonUrl = "https://raw.githubusercontent.com/vatsimnetwork/vatspy-data-project/master/Boundaries.geojson";
+        private readonly HashSet<string> vatsimAtcOnlineCallsigns = new(StringComparer.OrdinalIgnoreCase);
+        private DateTime vatsimAtcOnlineLoadedUtc = DateTime.MinValue;
+        private string lastVatsimAtcOnlineDebugText = string.Empty;
         private readonly ToolTip smartStatusToolTip = new();
         private string activeMessageFilter = "ALL";
         private string clearanceStatusText = "CLR --";
@@ -1851,7 +2661,17 @@ namespace EasyCPDLC
         private string cpdlcDiscoveryText = "standby";
         private string cpdlcDiscoveryHoverText = "CPDLC standby";
         private bool cpdlcHelperEnabled = true;
-        private const bool CpdlcHelperPopupDebugPreview = false;
+        private static readonly bool CpdlcHelperPopupDebugPreview = false;
+#if DEBUG
+        private static readonly bool DebugUiPreviewMode = true;
+#else
+        private static readonly bool DebugUiPreviewMode = false;
+#endif
+
+        public bool DebugUiPreviewButtonsUnlocked => DebugUiPreviewMode;
+        private bool debugUiPreviewInitialised = false;
+        private bool debugUiPreviewStartupMessageWritten = false;
+        private bool debugUiPreviewSampleMessagesWritten = false;
         private string cpdlcDiscoveryLogonCode = string.Empty;
         private string cpdlcDiscoveryController = string.Empty;
         private string cpdlcHandoverTargetCode = string.Empty;
@@ -1865,6 +2685,8 @@ namespace EasyCPDLC
 
         private readonly System.Windows.Forms.Timer vatsimOnlineTimer = new();
         private DateTime lastVatsimOnlineRefreshUtc = DateTime.MinValue;
+        private bool vatsimOnlineRefreshInProgress = false;
+        private static readonly TimeSpan vatsimOnlineRefreshInterval = TimeSpan.FromSeconds(60);
         private readonly Dictionary<string, List<long>> vatsimTransceiverFrequencies = new(StringComparer.OrdinalIgnoreCase);
         private DateTime vatsimTransceiversLoadedUtc = DateTime.MinValue;
         private DateTime lastVatsimTransceiverRefreshAttemptUtc = DateTime.MinValue;
@@ -1979,6 +2801,7 @@ namespace EasyCPDLC
         private CancellationTokenSource requestCancellationTokenSource;
         private CancellationToken requestCancellationToken;
         private CancellationTokenSource protocolPipeCancellationTokenSource;
+        private DateTime lastProtocolCommandUtc = DateTime.MinValue;
         private NotifyIcon trayIcon;
         private ContextMenuStrip trayMenu;
         private readonly DcduHotspotButton mainMinimizeButton = new();
@@ -2005,13 +2828,172 @@ namespace EasyCPDLC
         private static readonly TimeSpan vatsimCallsignMismatchWarningInterval = TimeSpan.FromMinutes(2);
         private const string HoppieConnectUrl = "https://www.hoppie.nl/acars/system/connect.html";
 
+
+        private enum AirbusAocPage
+        {
+            None,
+            MainMenu,
+            AtcRequestMenu,
+            PreDepClearance,
+            OceanicClearance,
+            WxRequest,
+            AtisRequest,
+            FreeTextRequest,
+            AtcMainMenu,
+            AtcLatRequestMenu,
+            AtcVertRequestMenu,
+            AtcWhenCanWeMenu,
+            AtcOtherRequestMenu,
+            AtcReportsMenu,
+            AtcConnectionMenu,
+            AtcEmergencyMenu,
+            AtcTextRequest,
+            AtcDirectRequest,
+            AtcLevelRequest,
+            AtcSpeedRequest,
+            AtcWhenCanWeRequest,
+            SendConfirm
+        }
+
+        private enum AirbusAocPendingSendKind
+        {
+            None,
+            PreDepClearance,
+            OceanicClearance,
+            WxRequest,
+            AtisRequest,
+            FreeTextRequest,
+            AtcRequest
+        }
+
+        private enum BoeingTelexPage
+        {
+            None,
+            Menu,
+            FreeText,
+            Metar,
+            Atis,
+            AtcMainMenu,
+            AtcPreDepClearance,
+            AtcOceanicClearance,
+            AtcDirectRequest,
+            AtcLevelRequest,
+            AtcSpeedRequest,
+            AtcWhenCanWeRequest,
+            SendConfirm
+        }
+
+        private enum BoeingTelexPendingSendKind
+        {
+            None,
+            FreeText,
+            Metar,
+            Atis,
+            PreDepClearance,
+            OceanicClearance,
+            AtcRequest
+        }
+
+        private enum EmbeddedSetupPage
+        {
+            None,
+            MainMenu,
+            Account,
+            Options,
+            Style,
+            UpdateRollback,
+            RollbackConfirm
+        }
+
+        private AirbusAocPage airbusAocPage = AirbusAocPage.None;
+        private AirbusAocPage airbusAocConfirmReturnPage = AirbusAocPage.MainMenu;
+        private AirbusAocPendingSendKind airbusAocPendingSendKind = AirbusAocPendingSendKind.None;
+        private string airbusAocPendingRecipient = string.Empty;
+        private string airbusAocPendingMessage = string.Empty;
+        private string airbusAocPendingTitle = string.Empty;
+        private string airbusAocPendingPreview = string.Empty;
+        private string airbusAocPendingInfo = string.Empty;
+        private bool airbusAocPendingAutoRefresh;
+        private BoeingTelexPage boeingTelexPage = BoeingTelexPage.None;
+        private BoeingTelexPage boeingTelexConfirmReturnPage = BoeingTelexPage.Menu;
+        private BoeingTelexPendingSendKind boeingTelexPendingSendKind = BoeingTelexPendingSendKind.None;
+        private string boeingTelexPendingRecipient = string.Empty;
+        private string boeingTelexPendingMessage = string.Empty;
+        private string boeingTelexPendingTitle = string.Empty;
+        private string boeingTelexPendingPreview = string.Empty;
+        private bool boeingTelexPendingAutoRefresh;
+        private readonly Dictionary<string, TextBox> boeingTelexInputs = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> boeingTelexFormValues = new(StringComparer.OrdinalIgnoreCase);
+        private System.Windows.Forms.Label boeingTelexSendLabel;
+        private bool boeingTelexSendReady;
+        private const string BoeingTelexInputStation = "station";
+        private const string BoeingTelexInputMessage = "message";
+        private const string BoeingTelexInputAtisType = "atisType";
+        private const string BoeingTelexInputAtisAuto = "atisAuto";
+        private const string BoeingAtcInputDirectTo = "directTo";
+        private const string BoeingAtcInputRequestedFlightLevel = "requestedFlightLevel";
+        private const string BoeingAtcInputSpeedMode = "speedMode";
+        private const string BoeingAtcInputSpeedValue = "speedValue";
+        private const string BoeingAtcInputWcwType = "wcwType";
+        private const string BoeingAtcInputWcwValue = "wcwValue";
+        private const string BoeingAtcInputDueReason = "dueReason";
+        private const string BoeingAtcInputRemarks = "remarks";
+        private const string BoeingAtcInputGate = "gate";
+        private const string BoeingAtcInputAtis = "atis";
+        private const string BoeingAtcInputFreeText = "freeText";
+        private const string BoeingAtcInputEntryPoint = "entryPoint";
+        private const string BoeingAtcInputEta = "eta";
+        private const string BoeingAtcInputMach = "mach";
+        private const string BoeingAtcInputFlightLevel = "flightLevel";
+
+        private EmbeddedSetupPage embeddedSetupPage = EmbeddedSetupPage.None;
+        private readonly Dictionary<string, TextBox> embeddedSetupInputs = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<Release> embeddedSetupRollbackReleases = new();
+        private Release embeddedSetupSelectedRollbackRelease;
+        private bool embeddedSetupRollbackLoading;
+        private string embeddedSetupRollbackStatus = string.Empty;
+        private const string SetupInputCid = "cid";
+        private const string SetupInputHoppie = "hoppie";
+        private const string SetupInputSimbrief = "simbrief";
+
+        private readonly Dictionary<string, TextBox> airbusAocInputs = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> airbusAocFormValues = new(StringComparer.OrdinalIgnoreCase);
+private System.Windows.Forms.Label airbusAocSendLabel;
+        private bool airbusAocSendReady;
+        private const string AirbusAocInputGate = "gate";
+        private const string AirbusAocInputAtis = "atis";
+        private const string AirbusAocInputStation = "station";
+        private const string AirbusAocInputFreeText = "freeText";
+        private const string AirbusAocInputAtisType = "atisType";
+        private const string AirbusAocInputAtisAuto = "atisAuto";
+        private const string AirbusAocInputEntryPoint = "entryPoint";
+        private const string AirbusAocInputEta = "eta";
+        private const string AirbusAocInputMach = "mach";
+        private const string AirbusAocInputFlightLevel = "flightLevel";
+        private const string AirbusAocInputRemarks = "remarks";
+        private const string AirbusAocInputDirectTo = "directTo";
+        private const string AirbusAocInputRequestedFlightLevel = "requestedFlightLevel";
+        private const string AirbusAocInputSpeedValue = "speedValue";
+        private const string AirbusAocInputSpeedMode = "speedMode";
+        private const string AirbusAocInputDueReason = "dueReason";
+        private const string AirbusAocInputWcwType = "wcwType";
+        private const string AirbusAocInputWcwValue = "wcwValue";
+
         public MainForm()
         {
+            string easyCpdlcLogFilePath = ResolveEasyCpdlcLogFilePath();
+            ResetEasyCpdlcLogFileForStartup(easyCpdlcLogFilePath);
+
             var config = new NLog.Config.LoggingConfiguration();
-            var logFile = new NLog.Targets.FileTarget("logfile") { FileName = "EasyCPDLCLog.txt" };
+            var logFile = new NLog.Targets.FileTarget("logfile")
+            {
+                FileName = easyCpdlcLogFilePath,
+                KeepFileOpen = false
+            };
             config.AddRule(LogLevel.Debug, LogLevel.Fatal, logFile);
             LogManager.Configuration = config;
             Logger.Info("Logging initialised, beginning setup");
+            Logger.Debug("Log file path: " + easyCpdlcLogFilePath);
 
             if (TryForwardProtocolLaunchToExistingInstance())
             {
@@ -2023,6 +3005,7 @@ namespace EasyCPDLC
             AutoScaleMode = AutoScaleMode.None;
             textFont = CreateDpiStablePointFont("Consolas", 10.5f, FontStyle.Regular);
             textFontBold = CreateDpiStablePointFont("Consolas", 11.5f, FontStyle.Bold);
+            RefreshMessageTextFonts();
             controlFont = CreateDpiStablePointFont("Segoe UI", 10.0f, FontStyle.Regular);
             controlFontBold = CreateDpiStablePointFont("Segoe UI", 10.0f, FontStyle.Bold);
             dataEntryFont = CreateDpiStablePointFont("Consolas", 13.0f, FontStyle.Bold);
@@ -2043,6 +3026,7 @@ namespace EasyCPDLC
                 startupPlayer.Play();
             }
             InitializeComponent();
+            UpgradeUserSettingsForCurrentVersionIfNeeded();
             this.AutoScaleMode = AutoScaleMode.None;
             this.Font = controlFont;
             this.Icon = LoadTrayIcon();
@@ -2058,7 +3042,152 @@ namespace EasyCPDLC
             CurrentATCUnit = null;
             ClearNextAtcUnitDisplay();
             ConfigureMsfsClickGuard();
+            InitialiseDebugUiPreviewMode();
 
+            // Prime VATSpy FIR/ARTCC boundaries at startup.
+            // This is an in-memory fetch only. Nothing is written to the user's disk.
+            _ = EnsureFirBoundariesLoadedAsync(false);
+
+        }
+
+
+        private void InitialiseDebugUiPreviewMode()
+        {
+            if (!DebugUiPreviewMode)
+            {
+                return;
+            }
+
+            try
+            {
+                bool firstInitialisation = !debugUiPreviewInitialised;
+                debugUiPreviewInitialised = true;
+                if (cid <= 0)
+                {
+                    cid = 1000001;
+                }
+
+                logonCode = string.IsNullOrWhiteSpace(logonCode) ? "DEBUG" : logonCode;
+                callsign = string.IsNullOrWhiteSpace(callsign) ? "EZY123" : callsign.Trim().ToUpperInvariant();
+                activeVatsimCallsign = callsign;
+                pendingHoppieCallsign = string.Empty;
+                vatsimCallsignMismatchWarningActive = false;
+                pendingLogon = null;
+
+                if (userVATSIMData == null)
+                {
+                    userVATSIMData = new Pilot();
+                }
+
+                userVATSIMData.cid = cid;
+                userVATSIMData.callsign = callsign;
+                userVATSIMData.latitude = 50.63408F;
+                userVATSIMData.longitude = 7.99831F;
+                userVATSIMData.altitude = 35000;
+                userVATSIMData.groundspeed = 420;
+                userVATSIMData.heading = 90;
+
+                if (userVATSIMData.flight_plan == null)
+                {
+                    userVATSIMData.flight_plan = new Flight_Plan();
+                }
+
+                userVATSIMData.flight_plan.aircraft_short = string.IsNullOrWhiteSpace(userVATSIMData.flight_plan.aircraft_short) ? "A320" : userVATSIMData.flight_plan.aircraft_short;
+                userVATSIMData.flight_plan.aircraft = string.IsNullOrWhiteSpace(userVATSIMData.flight_plan.aircraft) ? "A320" : userVATSIMData.flight_plan.aircraft;
+                userVATSIMData.flight_plan.departure = string.IsNullOrWhiteSpace(userVATSIMData.flight_plan.departure) ? "EDDF" : userVATSIMData.flight_plan.departure;
+                userVATSIMData.flight_plan.arrival = string.IsNullOrWhiteSpace(userVATSIMData.flight_plan.arrival) ? "EDDP" : userVATSIMData.flight_plan.arrival;
+                userVATSIMData.flight_plan.altitude = string.IsNullOrWhiteSpace(userVATSIMData.flight_plan.altitude) ? "35000" : userVATSIMData.flight_plan.altitude;
+                userVATSIMData.flight_plan.route = string.IsNullOrWhiteSpace(userVATSIMData.flight_plan.route) ? "DCT GED DCT" : userVATSIMData.flight_plan.route;
+
+                if (reportFixes == null || reportFixes.Length == 0)
+                {
+                    reportFixes = new[] { "GED", "BOLBO", "OSKAN", "ERL", "MAG" };
+                }
+
+                nextFix = string.IsNullOrWhiteSpace(nextFix) ? reportFixes.FirstOrDefault() : nextFix;
+                loadedFlightPlanSignature = BuildFlightPlanSignature(userVATSIMData);
+                preserveLoadedFlightPlanOnLiveUpdate = true;
+
+                if (string.IsNullOrWhiteSpace(CurrentATCUnit))
+                {
+                    CurrentATCUnit = "EDGG";
+                }
+
+                // DEBUG UI Preview must look connected to the existing UI gating code.
+                // Do not start the real retrieve/logon flow here; outbound Hoppie traffic is still
+                // suppressed in SendCPDLCMessage and the online refresh is short-circuited below.
+                _connected = true;
+
+                hoppieOnlineStationsLoaded = true;
+                hoppieOnlineStations.Add("EDGG");
+                hoppieOnlineStations.Add("EDDF");
+                hoppieOnlineStations.Add("EDDP");
+
+                pdcDiscoveryLogonCode = "EDDF";
+                pdcDiscoveryController = "EDDF_DEL";
+                pdcDiscoverySource = "DEBUG UI PREVIEW";
+                pdcDiscoveryAllowReqClr = true;
+                pdcDiscoveryIsFallbackCandidate = false;
+                pdcDiscoveryHoverText = "DEBUG UI preview\nPDC/DCL action unlocked locally. Nothing is sent to Hoppie.";
+                datalinkStatusText = "PDC AVAIL";
+
+                cpdlcDiscoveryText = "possible";
+                cpdlcDiscoveryLogonCode = "EDGG";
+                cpdlcDiscoveryController = "EDGG_CTR";
+                cpdlcDiscoveryHoverText = "DEBUG UI preview\nCPDLC LOGON action unlocked locally. Nothing is sent to Hoppie.";
+
+                SetClearanceStatus("CLR RX");
+                atisStatusText = BuildDotBadgeText("ATIS");
+                atisAvailabilityState = "AVAILABLE";
+
+                retrieveButton.Enabled = true;
+                retrieveButton.Text = "DISC";
+                telexButton.Enabled = true;
+                atcButton.Enabled = true;
+                settingsButton.Enabled = true;
+                helpButton.Enabled = true;
+                exitButton.Enabled = true;
+                if (mainReloadFlightPlanButton != null) mainReloadFlightPlanButton.Enabled = true;
+                if (mainMinimizeButton != null) mainMinimizeButton.Enabled = true;
+
+                UpdateConnectionGatedControls();
+                UpdateCurrentAtcUnitDisplay();
+                UpdateCallsignDisplay();
+                UpdateFlightPhaseBadge();
+                UpdateClearanceStatusLabel();
+                UpdateSmartStatusLabelColors();
+
+                if (statusValueLabel != null)
+                {
+                    statusValueLabel.Text = "UI PREVIEW";
+                    statusValueLabel.ForeColor = DcduTheme.Green;
+                }
+
+                if (firstInitialisation && !debugUiPreviewStartupMessageWritten)
+                {
+                    debugUiPreviewStartupMessageWritten = true;
+                    WriteMessage("DEBUG UI PREVIEW MODE: BUTTONS ARE UNLOCKED LOCALLY. OUTBOUND HOPPIE MESSAGES ARE SUPPRESSED.", "SYSTEM", "SYSTEM");
+                }
+
+                if (firstInitialisation && !debugUiPreviewSampleMessagesWritten)
+                {
+                    debugUiPreviewSampleMessagesWritten = true;
+
+                    _ = CPDLCParser(
+                        "/data2/10//WU/CLD 1450 260706 EDDF PDC 001 DLH6YM CLRD TO @EDDN@ OFF @18@ VIA @CINDY8S@ SQUAWK @2675@ NEXT FREQ @121.855@ ATIS @E@ REPORT READY ON @121.855@",
+                        "EGKK");
+
+                    _ = CPDLCParser(
+                        "/data2/11//WU/CLIMB TO @FL340@",
+                        "EDGG");
+
+                    WriteMessage("DEPART REQUEST STATUS\nFSM 1302 250727 EDMM\nDLH06F RCD REQUEST\nBEING PROCESSED\nSTANDBY", "TELEX", "EDMM", false, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("Debug UI preview initialisation failed: " + ex.Message);
+            }
         }
 
         public static Font CreateDpiStablePointFont(string familyName, float pointSizeAt96Dpi, FontStyle style)
@@ -2413,6 +3542,13 @@ namespace EasyCPDLC
                 return;
             }
 
+            if (string.Equals(label.AccessibleDescription, "DCDU_STYLED_MESSAGE_ACTION", StringComparison.Ordinal))
+            {
+                // Styled message-preview actions are real DCDU line-select text.
+                // Do not paint the generic rounded button box here.
+                return;
+            }
+
             Rectangle bounds = new Rectangle(0, 0, Math.Max(1, label.Width - 1), Math.Max(1, label.Height - 1));
             Color accent = label.ForeColor;
             bool focused = label.Focused;
@@ -2460,27 +3596,27 @@ namespace EasyCPDLC
                     if (message is AtisOverviewMessage atisMessage)
                     {
                         atisMessage.BoldAtisLetter = emphasizeAtisLetter;
-                        atisMessage.AtisLetterBoldFont = CreateDpiStablePixelFont(textFontBold.FontFamily, textFontBold.Size + 0.25f, FontStyle.Bold);
+                        atisMessage.AtisLetterBoldFont = CreateDpiStablePixelFont(GetMessageTextFont(true).FontFamily, GetMessageTextFont(true).Size + 0.25f, FontStyle.Bold);
                     }
 
                     if (IsCallsignMismatchAlarmText(message.message))
                     {
-                        message.Font = textFontBold;
+                        message.Font = GetMessageTextFont(true);
                         message.ForeColor = CallsignMismatchAlarmColor();
                     }
                     else if (isUnread)
                     {
-                        message.Font = textFontBold;
+                        message.Font = GetMessageTextFont(true);
                         message.ForeColor = DcduTheme.Amber;
                     }
                     else if (message.acknowledged)
                     {
-                        message.Font = textFont;
+                        message.Font = GetMessageTextFont(false);
                         message.ForeColor = SystemColors.ControlDark;
                     }
                     else
                     {
-                        message.Font = textFont;
+                        message.Font = GetMessageTextFont(false);
                         message.ForeColor = MainPrimaryTextColor();
                     }
 
@@ -2922,7 +4058,7 @@ namespace EasyCPDLC
                 quickWxStatusLabel.MouseLeave += (_, __) => quickWxStatusLabel.Invalidate();
                 quickWxStatusLabel.Click += (_, __) =>
                 {
-                    if (!Connected)
+                    if (!Connected && !DebugUiPreviewMode)
                     {
                         HideQuickWxPopup();
                         return;
@@ -3348,9 +4484,9 @@ namespace EasyCPDLC
             if (quickWxStatusLabel != null)
             {
                 quickWxStatusLabel.Visible = true;
-                quickWxStatusLabel.Enabled = Connected;
-                quickWxStatusLabel.Cursor = Connected ? Cursors.Hand : Cursors.Default;
-                if (!Connected)
+                quickWxStatusLabel.Enabled = DebugUiPreviewMode || Connected;
+                quickWxStatusLabel.Cursor = (DebugUiPreviewMode || Connected) ? Cursors.Hand : Cursors.Default;
+                if (!Connected && !DebugUiPreviewMode)
                 {
                     HideQuickWxPopup();
                 }
@@ -4274,21 +5410,90 @@ namespace EasyCPDLC
 
         private void ConfigureVatsimOnlineRefresh()
         {
-            // Kept intentionally as a no-op.
-            // Online status is refreshed once on connect/start and manually by clicking the label.
+            // Dedicated background refresh for CPDLC/PDC/ATIS helper data.
+            // The timer ticks often, but RefreshVatsimOnlineStatusAsync(false) throttles
+            // actual VATSIM/Hoppie downloads to vatsimOnlineRefreshInterval.
+            vatsimOnlineTimer.Interval = 15000;
+            vatsimOnlineTimer.Tick += async (_, __) =>
+            {
+                if (!Connected)
+                {
+                    return;
+                }
+
+                await RefreshVatsimOnlineStatusAsync(false);
+            };
+            vatsimOnlineTimer.Start();
+        }
+
+        private async Task RefreshVatsimAtcOnlineAsync()
+        {
+            try
+            {
+                string json = await webclient.GetStringAsync(VatsimAtcOnlineUrl);
+                JArray array = JArray.Parse(json ?? "[]");
+
+                HashSet<string> callsigns = new(StringComparer.OrdinalIgnoreCase);
+                foreach (JToken item in array)
+                {
+                    string callsignValue = item?["callsign"]?.ToString()?.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(callsignValue))
+                    {
+                        callsigns.Add(callsignValue);
+                    }
+                }
+
+                vatsimAtcOnlineCallsigns.Clear();
+                foreach (string callsignValue in callsigns)
+                {
+                    vatsimAtcOnlineCallsigns.Add(callsignValue);
+                }
+
+                vatsimAtcOnlineLoadedUtc = DateTime.UtcNow;
+                lastVatsimAtcOnlineDebugText = "VATSIM ATC online v2: " + vatsimAtcOnlineCallsigns.Count + " stations";
+                Logger.Debug(lastVatsimAtcOnlineDebugText);
+            }
+            catch (Exception ex)
+            {
+                lastVatsimAtcOnlineDebugText = "VATSIM ATC online v2 failed: " + ex.Message;
+                Logger.Debug(lastVatsimAtcOnlineDebugText);
+            }
         }
 
         private async Task RefreshVatsimOnlineStatusAsync(bool force)
         {
-            if (!force && DateTime.UtcNow - lastVatsimOnlineRefreshUtc < TimeSpan.FromMinutes(10))
+            if (DebugUiPreviewMode)
+            {
+                // DEBUG UI preview must not periodically rebuild/reset the current Airbus AOC page.
+                // Keep the mocked status alive, but leave the currently visible screen untouched.
+                _connected = true;
+                if (statusValueLabel != null)
+                {
+                    statusValueLabel.Text = "UI PREVIEW";
+                    statusValueLabel.ForeColor = DcduTheme.Green;
+                }
+                UpdateOnlineStatusLabel();
+                return;
+            }
+
+            if (vatsimOnlineRefreshInProgress)
             {
                 UpdateOnlineStatusLabel();
                 return;
             }
 
+            if (!force && DateTime.UtcNow - lastVatsimOnlineRefreshUtc < vatsimOnlineRefreshInterval)
+            {
+                UpdateOnlineStatusLabel();
+                return;
+            }
+
+            vatsimOnlineRefreshInProgress = true;
+
             try
             {
                 await RefreshHoppieOnlineStationsAsync();
+                await RefreshVatsimAtcOnlineAsync();
 
                 string data = await webclient.GetStringAsync("https://data.vatsim.net/v3/vatsim-data.json");
                 VATSIMRootobject refreshed = JsonConvert.DeserializeObject<VATSIMRootobject>(data);
@@ -4323,6 +5528,10 @@ namespace EasyCPDLC
                     atisStatusText = "ATIS ?";
                     UpdateClearanceStatusLabel();
                 }
+            }
+            finally
+            {
+                vatsimOnlineRefreshInProgress = false;
             }
         }
 
@@ -4918,6 +6127,46 @@ namespace EasyCPDLC
             public double DistanceNmFromAircraft { get; set; } = 0;
         }
 
+        private sealed class VatglassesDataset
+        {
+            public string Key { get; set; } = string.Empty;
+            public Dictionary<string, VatglassesPosition> Positions { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public List<VatglassesAirspace> Airspaces { get; } = new();
+            public DateTime LoadedUtc { get; set; } = DateTime.MinValue;
+        }
+
+        private sealed class VatglassesPosition
+        {
+            public string Id { get; set; } = string.Empty;
+            public HashSet<string> Prefixes { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public string Type { get; set; } = string.Empty;
+            public string Frequency { get; set; } = string.Empty;
+            public long FrequencyHz { get; set; } = 0;
+        }
+
+        private sealed class VatglassesAirspace
+        {
+            public string Id { get; set; } = string.Empty;
+            public List<string> Owners { get; } = new();
+            public List<VatglassesAirspaceSector> Sectors { get; } = new();
+        }
+
+        private sealed class VatglassesAirspaceSector
+        {
+            public int? MinAltitude { get; set; }
+            public int? MaxAltitude { get; set; }
+            public GeoPolygon Polygon { get; set; }
+        }
+
+        private sealed class VatglassesSectorMatch
+        {
+            public string DataKey { get; set; } = string.Empty;
+            public string PositionId { get; set; } = string.Empty;
+            public string AirspaceId { get; set; } = string.Empty;
+            public bool IsNearbyCandidate { get; set; } = false;
+            public double DistanceNmFromAircraft { get; set; } = 0;
+        }
+
         private PdcDiscoveryResult DiscoverPdcAvailability(string departureStation)
         {
             string station = (departureStation ?? string.Empty).Trim().ToUpperInvariant();
@@ -5127,6 +6376,9 @@ namespace EasyCPDLC
 
         private bool IsCpdlcHelperSuppressedByConnection()
         {
+            // Only real CPDLC connection/logon/handover states suppress the helper.
+            // Being tuned to a normal voice ATC frequency without CPDLC must NOT suppress
+            // nearby/upcoming CPDLC suggestions.
             return !string.IsNullOrWhiteSpace(_currentATCUnit) ||
                    !string.IsNullOrWhiteSpace(pendingLogon) ||
                    !string.IsNullOrWhiteSpace(nextAtcUnitText) ||
@@ -5572,14 +6824,19 @@ namespace EasyCPDLC
                 : new List<FirBoundaryFeature>();
 
             currentFirDebugText = !firReady
-                ? "VATSIM map boundaries loading"
+                ? "VATSpy boundaries loading"
                 : currentFirs.Count == 0
-                    ? "VATSIM map: none/nearby not found for current position"
-                    : "VATSIM map/nearby: " + string.Join(", ", currentFirs.Select(GetFirDisplayName));
+                    ? "VATSpy boundaries: none/nearby not found for current position"
+                    : "VATSpy boundaries/nearby: " + string.Join(", ", currentFirs.Select(GetFirDisplayName));
 
             Logger.Debug("CPDLC discovery " + currentFirDebugText +
                 " position=" + (userVATSIMData?.latitude.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?") +
-                "," + (userVATSIMData?.longitude.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?"));
+                "," + (userVATSIMData?.longitude.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?") +
+                " nearbyRadiusNm=" + FirNearbyRadiusNm.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+            // Do not preload VATGlasses here.
+            // CPDLC discovery uses VATSpy boundaries first and only falls back to VATGlasses
+            // from the individual controller match path when the boundary result is uncertain.
 
             AddTunedFrequencyCpdlcCandidates();
             List<long> pilotTunedFrequencies = IsVatsimTransceiverDataStale()
@@ -5619,12 +6876,25 @@ namespace EasyCPDLC
                     Logger.Debug("CPDLC discovery " + callsign + " has no explicit CPDLC keyword, using online Hoppie token " + code + ".");
                 }
 
-                string matchReason = GetCpdlcControllerMatchReason(callsign, info, activeStation, departure, arrival, currentFirs);
+                // VATGlasses is intentionally not loaded for every candidate.
+                // It is requested lazily inside GetCpdlcControllerMatchReason only if VATSpy
+                // cannot produce a confident boundary match.
+
+                if (!IsControllerCoverageCompatibleWithLiveAltitude(controller, out string coverageAltitudeText))
+                {
+                    Logger.Debug("CPDLC discovery skip " + callsign + " / " + code + ": " + coverageAltitudeText + ".");
+                    continue;
+                }
+
+                string matchReason = GetCpdlcControllerMatchReason(controller, code, activeStation, departure, arrival, currentFirs);
                 bool tunedFrequencyMatch = TryGetTunedFrequencyMatch(controller, pilotTunedFrequencies, out string tunedFrequencyText);
 
                 if (string.IsNullOrWhiteSpace(matchReason) && !tunedFrequencyMatch)
                 {
-                    Logger.Debug("CPDLC discovery skip " + callsign + " / " + code + ": not related to current frequency/FIR/DEP/ARR.");
+                    string onlineV2Text = vatsimAtcOnlineCallsigns.Count == 0
+                        ? "v2 not loaded"
+                        : (vatsimAtcOnlineCallsigns.Contains(callsign) ? "seen in v2 online ATC" : "not seen in v2 online ATC");
+                    Logger.Debug("CPDLC discovery skip " + callsign + " / " + code + ": no active frequency, VATSpy boundary, or VATGlasses fallback sector match (" + onlineV2Text + ").");
                     continue;
                 }
 
@@ -5632,6 +6902,13 @@ namespace EasyCPDLC
                 {
                     matchReason = "TUNED FREQ MATCH" +
                         (string.IsNullOrWhiteSpace(matchReason) ? string.Empty : " / " + matchReason);
+                }
+
+                if (!string.IsNullOrWhiteSpace(coverageAltitudeText))
+                {
+                    matchReason = string.IsNullOrWhiteSpace(matchReason)
+                        ? coverageAltitudeText
+                        : matchReason + " / " + coverageAltitudeText;
                 }
 
                 cpdlcDiscoveryCandidates.Add(new CpdlcDiscoveryResult
@@ -5655,9 +6932,18 @@ namespace EasyCPDLC
                     .First();
             }
 
+            string vatglassesDebug;
+            lock (vatglassesDataLock)
+            {
+                vatglassesDebug = lastVatglassesDebugText;
+            }
+
             return new CpdlcDiscoveryResult
             {
-                Reason = "CPDLC standby\n" + currentFirDebugText + "\nNo matching online APP/CTR/FSS with usable Hoppie logon found"
+                Reason = "CPDLC standby\n" + currentFirDebugText +
+                    (string.IsNullOrWhiteSpace(lastVatsimAtcOnlineDebugText) ? string.Empty : "\n" + lastVatsimAtcOnlineDebugText) +
+                    (string.IsNullOrWhiteSpace(vatglassesDebug) ? string.Empty : "\n" + vatglassesDebug) +
+                    "\nNo matching online APP/CTR/FSS with usable Hoppie logon found"
             };
         }
 
@@ -5998,12 +7284,22 @@ namespace EasyCPDLC
                     Logger.Debug("CPDLC tuned-frequency match " + callsign + " accepted by online Hoppie token " + code + " without explicit CPDLC keyword.");
                 }
 
+                if (!IsControllerCoverageCompatibleWithLiveAltitude(controller, out string coverageAltitudeText))
+                {
+                    Logger.Debug("CPDLC tuned-frequency match " + callsign + " ignored: " + coverageAltitudeText + ".");
+                    continue;
+                }
+
+                string tunedMatchReason = string.IsNullOrWhiteSpace(coverageAltitudeText)
+                    ? "TUNED FREQ MATCH"
+                    : "TUNED FREQ MATCH / " + coverageAltitudeText;
+
                 cpdlcDiscoveryCandidates.Add(new CpdlcDiscoveryResult
                 {
                     Possible = true,
                     Controller = callsign,
                     Code = code,
-                    MatchReason = "TUNED FREQ MATCH",
+                    MatchReason = tunedMatchReason,
                     FrequencyText = tunedFrequencyText,
                     IsTunedFrequencyMatch = true
                 });
@@ -6012,10 +7308,221 @@ namespace EasyCPDLC
             }
         }
 
-        private string GetCpdlcControllerMatchReason(string callsign, string info, string activeStation, string departure, string arrival, List<FirBoundaryFeature> currentFirs)
+        private bool IsControllerCoverageCompatibleWithLiveAltitude(Controller controller, out string coverageAltitudeText)
         {
-            callsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
-            info = (info ?? string.Empty).Trim().ToUpperInvariant();
+            coverageAltitudeText = string.Empty;
+
+            string info = GetControllerInfoText(controller);
+            if (!TryParseControllerAltitudeCoverage(info, out int? minAltitudeFeet, out int? maxAltitudeFeet, out string coverageText))
+            {
+                return true;
+            }
+
+            if (!TryGetLivePilotAltitudeFeet(out int liveAltitudeFeet, out string altitudeSource))
+            {
+                coverageAltitudeText = "coverage " + coverageText + " not altitude-verified (live altitude unavailable)";
+                return true;
+            }
+
+            const int altitudeToleranceFeet = 200;
+            bool belowMinimum = minAltitudeFeet.HasValue && liveAltitudeFeet < minAltitudeFeet.Value - altitudeToleranceFeet;
+            bool aboveMaximum = maxAltitudeFeet.HasValue && liveAltitudeFeet > maxAltitudeFeet.Value + altitudeToleranceFeet;
+
+            string liveText = FormatAltitudeForCoverage(liveAltitudeFeet);
+            if (belowMinimum || aboveMaximum)
+            {
+                coverageAltitudeText = "ALT " + liveText + " outside coverage " + coverageText + " (" + altitudeSource + ")";
+                return false;
+            }
+
+            coverageAltitudeText = "ALT " + liveText + " within coverage " + coverageText + " (" + altitudeSource + ")";
+            return true;
+        }
+
+        private bool TryGetLivePilotAltitudeFeet(out int altitudeFeet, out string source)
+        {
+            altitudeFeet = 0;
+            source = string.Empty;
+
+            try
+            {
+                if (userVATSIMData != null && userVATSIMData.altitude > -1500 && userVATSIMData.altitude < 100000)
+                {
+                    altitudeFeet = userVATSIMData.altitude;
+                    source = "VATSIM live";
+                    return true;
+                }
+            }
+            catch
+            {
+                // Continue to simulator fallback.
+            }
+
+            try
+            {
+                if (UseFSUIPC && fsConnectionOpen && fsuipc != null)
+                {
+                    double simulatorAltitudeFeet = fsuipc.altitude.Feet;
+                    if (!double.IsNaN(simulatorAltitudeFeet) && !double.IsInfinity(simulatorAltitudeFeet) &&
+                        simulatorAltitudeFeet > -1500 && simulatorAltitudeFeet < 100000)
+                    {
+                        altitudeFeet = (int)Math.Round(simulatorAltitudeFeet);
+                        source = "FSUIPC live";
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Deliberately do not fall back to filed altitude. Filed altitude is not current aircraft altitude.
+            }
+
+            return false;
+        }
+
+        private static bool TryParseControllerAltitudeCoverage(string text, out int? minAltitudeFeet, out int? maxAltitudeFeet, out string coverageText)
+        {
+            minAltitudeFeet = null;
+            maxAltitudeFeet = null;
+            coverageText = string.Empty;
+
+            string upper = Regex.Replace(text ?? string.Empty, @"\s+", " ").Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(upper))
+            {
+                return false;
+            }
+
+            Match plus = Regex.Match(upper, @"\b(?<alt>FL\s*\d{2,3}|\d{4,5}\s*(?:FT|FEET)?)\s*\+\b");
+            if (plus.Success && TryParseAltitudeReferenceFeet(plus.Groups["alt"].Value, out int plusFeet))
+            {
+                minAltitudeFeet = plusFeet;
+                coverageText = "at/above " + FormatAltitudeForCoverage(plusFeet);
+                return true;
+            }
+
+            Match range = Regex.Match(upper,
+                @"\b(?<min>SFC|GND|GROUND|SURFACE|FL\s*\d{2,3}|\d{2,3}|\d{4,5}\s*(?:FT|FEET)?)\s*(?:-|–|—|/|\bTO\b)\s*(?<max>SFC|GND|GROUND|SURFACE|FL\s*\d{2,3}|\d{2,3}|\d{4,5}\s*(?:FT|FEET)?)\b");
+            if (range.Success)
+            {
+                string minToken = range.Groups["min"].Value;
+                string maxToken = range.Groups["max"].Value;
+
+                if ((AltitudeTokenLooksExplicit(minToken) || AltitudeTokenLooksExplicit(maxToken)) &&
+                    TryParseAltitudeReferenceFeet(minToken, out int minFeet) &&
+                    TryParseAltitudeReferenceFeet(maxToken, out int maxFeet))
+                {
+                    minAltitudeFeet = Math.Min(minFeet, maxFeet);
+                    maxAltitudeFeet = Math.Max(minFeet, maxFeet);
+                    coverageText = FormatAltitudeForCoverage(minAltitudeFeet.Value) + "-" + FormatAltitudeForCoverage(maxAltitudeFeet.Value);
+                    return true;
+                }
+            }
+
+            Match maxMatch = Regex.Match(upper,
+                @"\b(?:ONLY\s+)?(?:BELOW|UNDER|UP\s+TO|UNTIL|AT\s+OR\s+BELOW|MAX(?:IMUM)?)\s+(?<alt>(?:FL\s*)?\d{2,3}|\d{4,5}\s*(?:FT|FEET)?)\b");
+            if (!maxMatch.Success)
+            {
+                maxMatch = Regex.Match(upper,
+                    @"\b(?<alt>FL\s*\d{2,3}|\d{4,5}\s*(?:FT|FEET)?|\d{2,3})\s+(?:AND\s+)?(?:BELOW|UNDER)\b");
+            }
+
+            if (maxMatch.Success && TryParseAltitudeReferenceFeet(maxMatch.Groups["alt"].Value, out int maxOnlyFeet))
+            {
+                maxAltitudeFeet = maxOnlyFeet;
+                coverageText = "below " + FormatAltitudeForCoverage(maxOnlyFeet);
+                return true;
+            }
+
+            Match minMatch = Regex.Match(upper,
+                @"\b(?:ONLY\s+)?(?:ABOVE|OVER|AT\s+OR\s+ABOVE|MIN(?:IMUM)?|FROM)\s+(?<alt>(?:FL\s*)?\d{2,3}|\d{4,5}\s*(?:FT|FEET)?)\b");
+            if (!minMatch.Success)
+            {
+                minMatch = Regex.Match(upper,
+                    @"\b(?<alt>FL\s*\d{2,3}|\d{4,5}\s*(?:FT|FEET)?|\d{2,3})\s+(?:AND\s+)?(?:ABOVE|OVER)\b");
+            }
+
+            if (minMatch.Success && TryParseAltitudeReferenceFeet(minMatch.Groups["alt"].Value, out int minOnlyFeet))
+            {
+                minAltitudeFeet = minOnlyFeet;
+                coverageText = "above " + FormatAltitudeForCoverage(minOnlyFeet);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool AltitudeTokenLooksExplicit(string token)
+        {
+            string upper = (token ?? string.Empty).Trim().ToUpperInvariant();
+            return upper.Contains("FL") ||
+                   upper.Contains("FT") ||
+                   upper.Contains("FEET") ||
+                   upper.Contains("SFC") ||
+                   upper.Contains("GND") ||
+                   upper.Contains("GROUND") ||
+                   upper.Contains("SURFACE");
+        }
+
+        private static bool TryParseAltitudeReferenceFeet(string token, out int altitudeFeet)
+        {
+            altitudeFeet = 0;
+            string value = (token ?? string.Empty).Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            if (Regex.IsMatch(value, @"\b(?:SFC|GND|GROUND|SURFACE)\b"))
+            {
+                altitudeFeet = 0;
+                return true;
+            }
+
+            Match flightLevel = Regex.Match(value, @"\bFL\s*(?<level>\d{2,3})\b");
+            if (flightLevel.Success && int.TryParse(flightLevel.Groups["level"].Value, out int fl))
+            {
+                altitudeFeet = fl * 100;
+                return altitudeFeet >= 0 && altitudeFeet < 100000;
+            }
+
+            Match feet = Regex.Match(value, @"\b(?<feet>\d{4,5})\s*(?:FT|FEET)?\b");
+            if (feet.Success && int.TryParse(feet.Groups["feet"].Value, out int parsedFeet))
+            {
+                altitudeFeet = parsedFeet;
+                return altitudeFeet >= 0 && altitudeFeet < 100000;
+            }
+
+            Match plainFlightLevel = Regex.Match(value, @"\b(?<level>\d{2,3})\b");
+            if (plainFlightLevel.Success && int.TryParse(plainFlightLevel.Groups["level"].Value, out int plainFl))
+            {
+                altitudeFeet = plainFl * 100;
+                return altitudeFeet >= 0 && altitudeFeet < 100000;
+            }
+
+            return false;
+        }
+
+        private static string FormatAltitudeForCoverage(int altitudeFeet)
+        {
+            if (altitudeFeet <= 0)
+            {
+                return "SFC";
+            }
+
+            if (altitudeFeet >= 10000 || altitudeFeet % 100 == 0)
+            {
+                int flightLevel = (int)Math.Round(altitudeFeet / 100.0);
+                return "FL" + flightLevel.ToString("000", System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            return altitudeFeet.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ft";
+        }
+
+        private string GetCpdlcControllerMatchReason(Controller controller, string code, string activeStation, string departure, string arrival, List<FirBoundaryFeature> currentFirs)
+        {
+            string callsign = (controller?.callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string info = GetControllerInfoText(controller).Trim().ToUpperInvariant();
+            code = (code ?? string.Empty).Trim().ToUpperInvariant();
             activeStation = (activeStation ?? string.Empty).Trim().ToUpperInvariant();
             departure = (departure ?? string.Empty).Trim().ToUpperInvariant();
             arrival = (arrival ?? string.Empty).Trim().ToUpperInvariant();
@@ -6054,27 +7561,949 @@ namespace EasyCPDLC
             }
 
             // CTR/FSS handling:
-            // - geolocation first: aircraft must be inside/near an official VATSIM map_data boundary
-            // - controller callsign is only used as a rough area filter after that geolocation match
-            // - no fine sector promise and no DEP/ARR text fallback
-            // Active-frequency matches still bypass this path.
+            // - VATSpy Boundaries.geojson is the primary source.
+            // - Controller callsign/info must match the current/nearby VATSpy boundary first.
+            // - VATGlasses is queried lazily only when the VATSpy result is uncertain
+            //   (no exact boundary hit, only a nearby/pre-alert boundary, or ambiguous sector ownership).
+            // - Active-frequency matches still bypass this path.
             if (IsCenterLikeControllerCallsign(callsign))
             {
+                FirBoundaryFeature exactVatspyBoundary = null;
+                FirBoundaryFeature nearbyVatspyBoundary = null;
+
                 foreach (FirBoundaryFeature fir in currentFirs ?? Enumerable.Empty<FirBoundaryFeature>())
                 {
-                    if (ControllerMatchesFirStrict(callsign, info, fir))
+                    if (!ControllerMatchesFirStrict(callsign, info, fir))
                     {
-                        string firId = GetFirDisplayName(fir);
-                        return fir.IsNearbyCandidate
-                            ? "upcoming map boundary match " + firId + " (" + Math.Round(fir.DistanceNmFromAircraft) + " NM)"
-                            : "map boundary position match " + firId;
+                        continue;
                     }
+
+                    if (fir.IsNearbyCandidate)
+                    {
+                        if (nearbyVatspyBoundary == null ||
+                            fir.DistanceNmFromAircraft < nearbyVatspyBoundary.DistanceNmFromAircraft)
+                        {
+                            nearbyVatspyBoundary = fir;
+                        }
+
+                        continue;
+                    }
+
+                    exactVatspyBoundary = fir;
+                    break;
+                }
+
+                if (exactVatspyBoundary != null)
+                {
+                    return "VATSpy boundary position match " + GetFirDisplayName(exactVatspyBoundary);
+                }
+
+                // At this point VATSpy did not give us a confident exact match.
+                // Now, and only now, use VATGlasses as a sector-level fallback/validator.
+                VatglassesSectorMatch sectorMatch = TryGetVatglassesSectorMatch(controller, code, currentFirs);
+                if (sectorMatch != null)
+                {
+                    string sectorText = string.IsNullOrWhiteSpace(sectorMatch.AirspaceId)
+                        ? sectorMatch.PositionId
+                        : sectorMatch.AirspaceId + "/" + sectorMatch.PositionId;
+
+                    return sectorMatch.IsNearbyCandidate
+                        ? "VATGlasses fallback sector nearby " + sectorText + " (" + Math.Round(sectorMatch.DistanceNmFromAircraft) + " NM)"
+                        : "VATGlasses fallback sector match " + sectorText;
+                }
+
+                if (nearbyVatspyBoundary != null)
+                {
+                    string firId = GetFirDisplayName(nearbyVatspyBoundary);
+                    return "upcoming VATSpy boundary match " + firId + " (" + Math.Round(nearbyVatspyBoundary.DistanceNmFromAircraft) + " NM)";
                 }
 
                 return string.Empty;
             }
 
             return string.Empty;
+        }
+
+        private void EnsureVatglassesDatasetsLoadedForContext(IEnumerable<FirBoundaryFeature> currentFirs, string departure, string arrival, string code, string callsign, string info)
+        {
+            List<string> keys = GetVatglassesDataKeysForContext(currentFirs, departure, arrival, code, callsign, info).ToList();
+
+            lock (vatglassesDataLock)
+            {
+                if (keys.Count > 0)
+                {
+                    lastVatglassesDebugText = "VATGlasses keys: " + string.Join(", ", keys);
+                }
+            }
+
+            foreach (string key in keys)
+            {
+                _ = EnsureVatglassesDatasetLoadedAsync(key, false);
+            }
+        }
+
+        private IEnumerable<string> GetVatglassesDataKeysForContext(IEnumerable<FirBoundaryFeature> currentFirs, string departure, string arrival, string code, string callsign, string info)
+        {
+            HashSet<string> keys = new(StringComparer.OrdinalIgnoreCase);
+
+            void AddKey(string value)
+            {
+                string clean = (value ?? string.Empty).Trim().ToLowerInvariant();
+                clean = Regex.Replace(clean, @"[^a-z0-9-]", string.Empty);
+
+                if (!string.IsNullOrWhiteSpace(clean) &&
+                    clean.Length >= 2 &&
+                    clean.Length <= 20)
+                {
+                    keys.Add(clean);
+                }
+            }
+
+            void AddKeysFromIcaoOrFirId(string value)
+            {
+                string clean = Regex.Replace((value ?? string.Empty).Trim().ToUpperInvariant(), @"[^A-Z0-9]", string.Empty);
+                if (clean.Length < 2 || !char.IsLetter(clean[0]) || !char.IsLetter(clean[1]))
+                {
+                    return;
+                }
+
+                // US ARTCCs are commonly identified in FIR data as KZNY/KZDC/etc.
+                // VATGlasses only contains some US ARTCC data folders. Only add real
+                // dataset keys here; other US centers still work through the FIR boundary
+                // fallback below without causing repeated 404 downloads.
+                if (Regex.IsMatch(clean, @"^KZ[A-Z0-9]{2}$"))
+                {
+                    string artccKey = clean.Substring(1).ToLowerInvariant();
+
+                    if (string.Equals(artccKey, "zqm", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(artccKey, "zqx", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddKey("zqm-zqx");
+                    }
+                    else if (VatglassesKnownUsDataSetKeys.Contains(artccKey))
+                    {
+                        AddKey(artccKey);
+                    }
+
+                    return;
+                }
+
+                if (Regex.IsMatch(clean, @"^Z[A-Z0-9]{2}$"))
+                {
+                    string artccKey = clean.ToLowerInvariant();
+
+                    if (string.Equals(artccKey, "zqm", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(artccKey, "zqx", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddKey("zqm-zqx");
+                    }
+                    else if (VatglassesKnownUsDataSetKeys.Contains(artccKey))
+                    {
+                        AddKey(artccKey);
+                    }
+
+                    return;
+                }
+
+                // Normal country/region files: LTAA/LT78 -> lt, LOVV -> lo, ENOR -> en.
+                AddKey(clean.Substring(0, 2).ToLowerInvariant());
+            }
+
+            foreach (FirBoundaryFeature fir in currentFirs ?? Enumerable.Empty<FirBoundaryFeature>())
+            {
+                AddKeysFromIcaoOrFirId(fir?.Id);
+
+                // Some FIR ids are hidden in the search text/name instead of the primary Id.
+                foreach (Match match in Regex.Matches((fir?.SearchText ?? string.Empty) + " " + (fir?.Name ?? string.Empty), @"\b(?:KZ[A-Z0-9]{2}|Z[A-Z0-9]{2}|[A-Z]{2}[A-Z0-9]{2})\b"))
+                {
+                    AddKeysFromIcaoOrFirId(match.Value);
+                }
+            }
+
+            AddKeysFromIcaoOrFirId(departure);
+            AddKeysFromIcaoOrFirId(arrival);
+            AddKeysFromIcaoOrFirId(code);
+
+            // No vats.im/... front-end URL parsing here on purpose:
+            // dataset selection is driven by current/nearby FIR ids, FP ICAOs and Hoppie code.
+            // The controller itself is matched later against owner ids inside the selected data.
+
+            // Shared FSS data is small and useful for upper/large sectors.
+            AddKey("fss");
+
+            return keys.Where(key => !string.IsNullOrWhiteSpace(key)).Take(8).ToList();
+        }
+
+        private void RefreshCpdlcHelperAfterVatglassesLoad()
+        {
+            try
+            {
+                if (!Connected)
+                {
+                    return;
+                }
+
+                SafeUi(() =>
+                {
+                    UpdateCpdlcDiscoveryFromVatsim();
+                    UpdateCpdlcDiscoveryLabel();
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("VATGlasses post-load CPDLC refresh failed: " + ex.Message);
+            }
+        }
+
+        private async Task EnsureVatglassesDatasetLoadedAsync(string key, bool force)
+        {
+            key = (key ?? string.Empty).Trim().ToLowerInvariant();
+            if (!Regex.IsMatch(key, @"^[a-z0-9-]{2,20}$"))
+            {
+                return;
+            }
+
+            lock (vatglassesDataLock)
+            {
+                if (!force &&
+                    vatglassesDatasets.TryGetValue(key, out VatglassesDataset cached) &&
+                    cached != null &&
+                    DateTime.UtcNow - cached.LoadedUtc < vatglassesDatasetCacheLifetime)
+                {
+                    return;
+                }
+
+                if (!force &&
+                    vatglassesUnavailableUtc.TryGetValue(key, out DateTime unavailableUtc) &&
+                    DateTime.UtcNow - unavailableUtc < vatglassesUnavailableRetry)
+                {
+                    return;
+                }
+
+                if (vatglassesLoadInProgress.Contains(key))
+                {
+                    return;
+                }
+
+                vatglassesLoadInProgress.Add(key);
+                lastVatglassesDebugText = "VATGlasses loading data/" + key + ".json";
+            }
+
+            try
+            {
+                VatglassesDataset dataset = null;
+                string loadedPath = string.Empty;
+                Exception singleFileException = null;
+
+                try
+                {
+                    string url = VatglassesRawDataBaseUrl + key + ".json";
+                    string json = await webclient.GetStringAsync(url);
+                    dataset = ParseVatglassesStaticDataset(key, json);
+                    loadedPath = "data/" + key + ".json";
+                }
+                catch (Exception ex)
+                {
+                    singleFileException = ex;
+                }
+
+                if (dataset == null)
+                {
+                    // Some VATGlasses data sets are folders, e.g. data/zab/airspace.json
+                    // plus data/zab/positions.json.
+                    string airspaceUrl = VatglassesRawDataBaseUrl + key + "/airspace.json";
+                    string airspaceJson = await webclient.GetStringAsync(airspaceUrl);
+                    dataset = ParseVatglassesStaticDataset(key, airspaceJson);
+                    loadedPath = "data/" + key + "/airspace.json";
+
+                    try
+                    {
+                        string positionsUrl = VatglassesRawDataBaseUrl + key + "/positions.json";
+                        string positionsJson = await webclient.GetStringAsync(positionsUrl);
+                        ParseVatglassesPositionsIntoDataset(dataset, positionsJson);
+                        loadedPath += " + positions.json";
+                    }
+                    catch (Exception positionsEx)
+                    {
+                        Logger.Debug("VATGlasses optional positions load failed for " + key + ": " + positionsEx.Message);
+                    }
+                }
+
+                lock (vatglassesDataLock)
+                {
+                    vatglassesDatasets[key] = dataset;
+                    vatglassesUnavailableUtc.Remove(key);
+                    lastVatglassesDebugText = "VATGlasses loaded " + key + " (" + loadedPath + "): " + dataset.Positions.Count + " positions, " + dataset.Airspaces.Count + " airspaces";
+                }
+
+                Logger.Debug("Loaded VATGlasses data " + key + " (" + loadedPath + "): " + dataset.Positions.Count + " positions, " + dataset.Airspaces.Count + " airspaces.");
+                RefreshCpdlcHelperAfterVatglassesLoad();
+            }
+            catch (Exception ex)
+            {
+                lock (vatglassesDataLock)
+                {
+                    vatglassesUnavailableUtc[key] = DateTime.UtcNow;
+                    lastVatglassesDebugText = "VATGlasses failed " + key + ": " + ex.Message;
+                }
+
+                Logger.Debug("VATGlasses data load failed for " + key + ": " + ex.Message);
+                RefreshCpdlcHelperAfterVatglassesLoad();
+            }
+            finally
+            {
+                lock (vatglassesDataLock)
+                {
+                    vatglassesLoadInProgress.Remove(key);
+                }
+            }
+        }
+
+        private VatglassesDataset ParseVatglassesStaticDataset(string key, string json)
+        {
+            JToken root = JToken.Parse(string.IsNullOrWhiteSpace(json) ? "[]" : json);
+            VatglassesDataset dataset = new()
+            {
+                Key = key,
+                LoadedUtc = DateTime.UtcNow
+            };
+
+            JObject rootObject = root as JObject;
+            JObject positions = rootObject?["positions"] as JObject;
+            if (positions != null)
+            {
+                foreach (JProperty property in positions.Properties())
+                {
+                    VatglassesPosition position = ParseVatglassesPosition(property.Name, property.Value);
+                    if (position != null && !string.IsNullOrWhiteSpace(position.Id))
+                    {
+                        dataset.Positions[position.Id] = position;
+                    }
+                }
+            }
+
+            JArray airspace =
+                root as JArray ??
+                rootObject?["airspace"] as JArray ??
+                rootObject?["sectors"] as JArray;
+
+            if (airspace != null)
+            {
+                foreach (JToken item in airspace)
+                {
+                    VatglassesAirspace parsed = ParseVatglassesAirspace(item);
+                    if (parsed != null && parsed.Sectors.Count > 0)
+                    {
+                        dataset.Airspaces.Add(parsed);
+                    }
+                }
+            }
+
+            return dataset;
+        }
+
+        private void ParseVatglassesPositionsIntoDataset(VatglassesDataset dataset, string json)
+        {
+            if (dataset == null || string.IsNullOrWhiteSpace(json))
+            {
+                return;
+            }
+
+            JToken root = JToken.Parse(json);
+            JObject rootObject = root as JObject;
+            JObject positions = rootObject?["positions"] as JObject ?? rootObject;
+
+            if (positions == null)
+            {
+                return;
+            }
+
+            foreach (JProperty property in positions.Properties())
+            {
+                VatglassesPosition position = ParseVatglassesPosition(property.Name, property.Value);
+                if (position != null && !string.IsNullOrWhiteSpace(position.Id))
+                {
+                    dataset.Positions[position.Id] = position;
+                }
+            }
+        }
+
+        private VatglassesPosition ParseVatglassesPosition(string id, JToken token)
+        {
+            if (token == null)
+            {
+                return null;
+            }
+
+            VatglassesPosition position = new()
+            {
+                Id = NormalizeVatglassesOwnerId(id),
+                Type = (token["type"]?.ToString() ?? string.Empty).Trim().ToUpperInvariant(),
+                Frequency = (token["frequency"]?.ToString() ?? token["freq"]?.ToString() ?? string.Empty).Trim()
+            };
+
+            foreach (string prefix in ReadVatglassesStringArray(token["pre"]))
+            {
+                string cleanPrefix = prefix.Trim().ToUpperInvariant();
+                if (!string.IsNullOrWhiteSpace(cleanPrefix))
+                {
+                    position.Prefixes.Add(cleanPrefix);
+                }
+            }
+
+            if (TryParseControllerFrequencyHz(position.Frequency, out long hz))
+            {
+                position.FrequencyHz = hz;
+            }
+
+            return position;
+        }
+
+        private VatglassesAirspace ParseVatglassesAirspace(JToken token)
+        {
+            if (token == null)
+            {
+                return null;
+            }
+
+            VatglassesAirspace airspace = new()
+            {
+                Id = (token["id"]?.ToString() ?? string.Empty).Trim().ToUpperInvariant()
+            };
+
+            foreach (string owner in ReadVatglassesStringArray(token["owner"]))
+            {
+                string cleanOwner = NormalizeVatglassesOwnerId(owner);
+                if (!string.IsNullOrWhiteSpace(cleanOwner))
+                {
+                    airspace.Owners.Add(cleanOwner);
+                }
+            }
+
+            foreach (JToken sectorToken in token["sectors"] as JArray ?? new JArray())
+            {
+                GeoPolygon polygon = ParseVatglassesPointsPolygon(sectorToken["points"]);
+                if (polygon == null)
+                {
+                    continue;
+                }
+
+                airspace.Sectors.Add(new VatglassesAirspaceSector
+                {
+                    MinAltitude = TryReadVatglassesAltitude(sectorToken["min"], out int minAlt) ? minAlt : null,
+                    MaxAltitude = TryReadVatglassesAltitude(sectorToken["max"], out int maxAlt) ? maxAlt : null,
+                    Polygon = polygon
+                });
+            }
+
+            return airspace;
+        }
+
+        private static IEnumerable<string> ReadVatglassesStringArray(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null)
+            {
+                yield break;
+            }
+
+            if (token is JArray array)
+            {
+                foreach (JToken item in array)
+                {
+                    string value = item?.ToString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        yield return value;
+                    }
+                }
+
+                yield break;
+            }
+
+            string single = token.ToString();
+            if (!string.IsNullOrWhiteSpace(single))
+            {
+                yield return single;
+            }
+        }
+
+        private static bool TryReadVatglassesAltitude(JToken token, out int altitude)
+        {
+            altitude = 0;
+            if (token == null || token.Type == JTokenType.Null)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(token.ToString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int value))
+            {
+                return false;
+            }
+
+            altitude = NormalizeVatglassesAltitude(value);
+            return true;
+        }
+
+        private static int NormalizeVatglassesAltitude(int altitude)
+        {
+            // VATGlasses files may use FL-style small values in some data sets.
+            // Treat 1..599 as flight levels and larger values as feet.
+            if (altitude > 0 && altitude < 600)
+            {
+                return altitude * 100;
+            }
+
+            return altitude;
+        }
+
+        private GeoPolygon ParseVatglassesPointsPolygon(JToken pointsToken)
+        {
+            if (pointsToken is not JArray points)
+            {
+                return null;
+            }
+
+            GeoPolygon polygon = new();
+            List<GeoPoint> ring = new();
+
+            foreach (JToken pointToken in points)
+            {
+                if (pointToken is not JArray pair || pair.Count < 2)
+                {
+                    continue;
+                }
+
+                if (!TryParseVatglassesCoordinate(pair[0]?.ToString(), out double lat) ||
+                    !TryParseVatglassesCoordinate(pair[1]?.ToString(), out double lon))
+                {
+                    continue;
+                }
+
+                ring.Add(new GeoPoint { Lat = lat, Lon = lon });
+
+                polygon.MinLat = Math.Min(polygon.MinLat, lat);
+                polygon.MaxLat = Math.Max(polygon.MaxLat, lat);
+                polygon.MinLon = Math.Min(polygon.MinLon, lon);
+                polygon.MaxLon = Math.Max(polygon.MaxLon, lon);
+            }
+
+            if (ring.Count < 3)
+            {
+                return null;
+            }
+
+            polygon.Rings.Add(ring);
+            return polygon;
+        }
+
+        private static bool TryParseVatglassesCoordinate(string value, out double degrees)
+        {
+            degrees = 0;
+
+            string clean = (value ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return false;
+            }
+
+            if (double.TryParse(clean, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double decimalDegrees) &&
+                clean.Contains("."))
+            {
+                degrees = decimalDegrees;
+                return true;
+            }
+
+            int sign = 1;
+            if (clean.StartsWith("-", StringComparison.Ordinal))
+            {
+                sign = -1;
+                clean = clean.Substring(1);
+            }
+            else if (clean.StartsWith("+", StringComparison.Ordinal))
+            {
+                clean = clean.Substring(1);
+            }
+
+            clean = Regex.Replace(clean, @"[^0-9]", string.Empty);
+            if (clean.Length < 4)
+            {
+                return false;
+            }
+
+            if (clean.Length < 6)
+            {
+                clean = clean.PadLeft(6, '0');
+            }
+
+            string secondsText = clean.Substring(clean.Length - 2, 2);
+            string minutesText = clean.Substring(clean.Length - 4, 2);
+            string degreesText = clean.Substring(0, clean.Length - 4);
+
+            if (!int.TryParse(degreesText, out int deg) ||
+                !int.TryParse(minutesText, out int min) ||
+                !int.TryParse(secondsText, out int sec))
+            {
+                return false;
+            }
+
+            degrees = sign * (deg + (min / 60.0) + (sec / 3600.0));
+            return Math.Abs(degrees) <= 180.0;
+        }
+
+        private VatglassesSectorMatch TryGetVatglassesSectorMatch(Controller controller, string code, IEnumerable<FirBoundaryFeature> currentFirs)
+        {
+            Pilot pilot = userVATSIMData;
+            if (pilot == null || controller == null)
+            {
+                return null;
+            }
+
+            string callsign = (controller.callsign ?? string.Empty).Trim().ToUpperInvariant();
+            HashSet<string> candidateKeys = new(GetVatglassesDataKeysForContext(currentFirs, string.Empty, string.Empty, code, callsign, GetControllerInfoText(controller)), StringComparer.OrdinalIgnoreCase);
+            HashSet<string> controllerOwnerIds = GetVatglassesOwnerIdsForController(controller, code);
+
+            VatglassesSectorMatch best = null;
+            string debugBestReject = string.Empty;
+
+            foreach (string key in candidateKeys)
+            {
+                VatglassesDataset dataset;
+                lock (vatglassesDataLock)
+                {
+                    vatglassesDatasets.TryGetValue(key, out dataset);
+                }
+
+                if (dataset == null)
+                {
+                    lock (vatglassesDataLock)
+                    {
+                        lastVatglassesDebugText = "VATGlasses waiting for data/" + key + ".json";
+                    }
+
+                    Logger.Debug("VATGlasses sector match waiting for data/" + key + ".json.");
+                    _ = EnsureVatglassesDatasetLoadedAsync(key, false);
+                    continue;
+                }
+
+                if (dataset.Airspaces.Count == 0)
+                {
+                    debugBestReject = "VATGlasses " + key + " loaded but no airspace parsed";
+                    continue;
+                }
+
+                HashSet<string> candidatePositions = GetVatglassesPositionIdsForController(dataset, controller, code);
+                HashSet<string> allCandidateOwners = new(controllerOwnerIds, StringComparer.OrdinalIgnoreCase);
+
+                foreach (string position in candidatePositions)
+                {
+                    allCandidateOwners.Add(position);
+                }
+
+                if (allCandidateOwners.Count == 0)
+                {
+                    debugBestReject = "VATGlasses " + key + " loaded but no owner token for " + callsign + " / " + code;
+                    continue;
+                }
+
+                bool ownerFoundInDataset = false;
+                bool altitudeCandidateFound = false;
+                double nearestRejectedDistance = double.MaxValue;
+                string nearestRejectedOwner = string.Empty;
+                string nearestRejectedAirspace = string.Empty;
+
+                foreach (VatglassesAirspace airspace in dataset.Airspaces)
+                {
+                    string matchingOwner = airspace.Owners
+                        .Select(NormalizeVatglassesOwnerId)
+                        .FirstOrDefault(owner => VatglassesOwnerMatchesCandidate(owner, allCandidateOwners));
+
+                    if (string.IsNullOrWhiteSpace(matchingOwner))
+                    {
+                        continue;
+                    }
+
+                    ownerFoundInDataset = true;
+
+                    foreach (VatglassesAirspaceSector sector in airspace.Sectors)
+                    {
+                        if (!VatglassesAltitudeMatchesSector(sector, pilot.altitude))
+                        {
+                            continue;
+                        }
+
+                        altitudeCandidateFound = true;
+
+                        bool inside = PointInGeoPolygon(pilot.latitude, pilot.longitude, sector.Polygon);
+                        double distanceNm = inside ? 0 : DistanceNmToGeoPolygon(pilot.latitude, pilot.longitude, sector.Polygon);
+
+                        if (!inside && distanceNm > FirNearbyRadiusNm)
+                        {
+                            if (distanceNm < nearestRejectedDistance)
+                            {
+                                nearestRejectedDistance = distanceNm;
+                                nearestRejectedOwner = matchingOwner;
+                                nearestRejectedAirspace = airspace.Id;
+                            }
+
+                            continue;
+                        }
+
+                        VatglassesSectorMatch match = new()
+                        {
+                            DataKey = dataset.Key,
+                            PositionId = matchingOwner,
+                            AirspaceId = airspace.Id,
+                            IsNearbyCandidate = !inside,
+                            DistanceNmFromAircraft = distanceNm
+                        };
+
+                        if (best == null ||
+                            (!match.IsNearbyCandidate && best.IsNearbyCandidate) ||
+                            match.DistanceNmFromAircraft < best.DistanceNmFromAircraft)
+                        {
+                            best = match;
+                        }
+                    }
+                }
+
+                if (!ownerFoundInDataset)
+                {
+                    debugBestReject = "VATGlasses " + key + " loaded: owner not found for " + callsign + " / " + code + " tokens " + string.Join(",", allCandidateOwners.Take(8));
+                }
+                else if (!altitudeCandidateFound)
+                {
+                    debugBestReject = "VATGlasses " + key + " owner found, but no sector at altitude " + pilot.altitude;
+                }
+                else if (nearestRejectedDistance < double.MaxValue)
+                {
+                    debugBestReject = "VATGlasses " + key + " nearest " + nearestRejectedAirspace + "/" + nearestRejectedOwner + " " + Math.Round(nearestRejectedDistance) + " NM > " + FirNearbyRadiusNm + " NM";
+                }
+            }
+
+            lock (vatglassesDataLock)
+            {
+                if (best != null)
+                {
+                    lastVatglassesDebugText = "VATGlasses match " + best.DataKey + " " + best.AirspaceId + "/" + best.PositionId + " " + Math.Round(best.DistanceNmFromAircraft) + " NM";
+                }
+                else if (!string.IsNullOrWhiteSpace(debugBestReject))
+                {
+                    lastVatglassesDebugText = debugBestReject;
+                }
+            }
+
+            return best;
+        }
+
+        private HashSet<string> GetVatglassesPositionIdsForController(VatglassesDataset dataset, Controller controller, string code)
+        {
+            HashSet<string> matches = new(StringComparer.OrdinalIgnoreCase);
+
+            if (dataset == null || controller == null)
+            {
+                return matches;
+            }
+
+            foreach (VatglassesPosition position in dataset.Positions.Values)
+            {
+                if (VatglassesPositionMatchesController(position, controller, code))
+                {
+                    matches.Add(position.Id);
+                }
+            }
+
+            return matches;
+        }
+
+        private HashSet<string> GetVatglassesOwnerIdsForController(Controller controller, string code)
+        {
+            HashSet<string> owners = new(StringComparer.OrdinalIgnoreCase);
+
+            string callsign = (controller?.callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string advertisedCode = (code ?? string.Empty).Trim().ToUpperInvariant();
+
+            void AddOwner(string value)
+            {
+                string clean = NormalizeVatglassesOwnerId(value);
+                if (!string.IsNullOrWhiteSpace(clean))
+                {
+                    owners.Add(clean);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(callsign))
+            {
+                AddOwner(callsign);
+
+                string[] parts = callsign.Split(new[] { '_' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(part => part.Trim().ToUpperInvariant())
+                    .Where(part => !string.IsNullOrWhiteSpace(part))
+                    .ToArray();
+
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    string part = parts[i];
+                    if (part == "CTR" || part == "FSS" || part == "APP" || part == "TWR" || part == "GND" || part == "DEL")
+                    {
+                        continue;
+                    }
+
+                    AddOwner(part);
+
+                    if (i > 0)
+                    {
+                        AddOwner(parts[0] + part);
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(advertisedCode))
+            {
+                AddOwner(advertisedCode);
+
+                string digits = Regex.Replace(advertisedCode, @"\D", string.Empty);
+                if (!string.IsNullOrWhiteSpace(digits))
+                {
+                    AddOwner(digits);
+
+                    // Turkey/common sector style: Hoppie LT78 can correspond to owner W78.
+                    AddOwner("W" + digits);
+                    AddOwner("E" + digits);
+                    AddOwner("N" + digits);
+                    AddOwner("S" + digits);
+                }
+            }
+
+            return owners;
+        }
+
+        private static bool VatglassesOwnerMatchesCandidate(string owner, IEnumerable<string> candidates)
+        {
+            string cleanOwner = NormalizeVatglassesOwnerId(owner);
+            if (string.IsNullOrWhiteSpace(cleanOwner))
+            {
+                return false;
+            }
+
+            foreach (string candidate in candidates ?? Enumerable.Empty<string>())
+            {
+                string cleanCandidate = NormalizeVatglassesOwnerId(candidate);
+                if (string.IsNullOrWhiteSpace(cleanCandidate))
+                {
+                    continue;
+                }
+
+                if (string.Equals(cleanOwner, cleanCandidate, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                string ownerDigits = Regex.Replace(cleanOwner, @"\D", string.Empty);
+                string candidateDigits = Regex.Replace(cleanCandidate, @"\D", string.Empty);
+
+                if (!string.IsNullOrWhiteSpace(ownerDigits) &&
+                    ownerDigits.Length >= 2 &&
+                    string.Equals(ownerDigits, candidateDigits, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool VatglassesPositionMatchesController(VatglassesPosition position, Controller controller, string code = "")
+        {
+            if (position == null || controller == null)
+            {
+                return false;
+            }
+
+            HashSet<string> ownerTokens = GetVatglassesOwnerIdsForController(controller, code);
+            if (VatglassesOwnerMatchesCandidate(position.Id, ownerTokens))
+            {
+                return true;
+            }
+
+            string callsign = (controller.callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string[] parts = callsign.Split(new[] { '_' }, StringSplitOptions.RemoveEmptyEntries);
+            string prefix = parts.Length > 0 ? parts[0].Trim().ToUpperInvariant() : string.Empty;
+            string suffix = parts.Length > 1 ? parts[parts.Length - 1].Trim().ToUpperInvariant() : string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(position.Type) &&
+                !string.Equals(position.Type, suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (position.Prefixes.Count > 0 &&
+                !position.Prefixes.Any(item => string.Equals(item, prefix, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            if (position.FrequencyHz > 0)
+            {
+                List<long> controllerFreqs = GetControllerTunedFrequencies(controller);
+                if (controllerFreqs.Count > 0 &&
+                    !controllerFreqs.Any(freq => Math.Abs(freq - position.FrequencyHz) <= 8000))
+                {
+                    return false;
+                }
+            }
+
+            return position.Prefixes.Count > 0 &&
+                   !string.IsNullOrWhiteSpace(position.Type) &&
+                   string.IsNullOrWhiteSpace(position.Frequency);
+        }
+
+        private static bool VatglassesAltitudeMatchesSector(VatglassesAirspaceSector sector, int altitude)
+        {
+            if (sector == null)
+            {
+                return false;
+            }
+
+            if (sector.MinAltitude.HasValue && altitude < sector.MinAltitude.Value)
+            {
+                return false;
+            }
+
+            if (sector.MaxAltitude.HasValue && altitude > sector.MaxAltitude.Value)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string NormalizeVatglassesOwnerId(string value)
+        {
+            string clean = (value ?? string.Empty).Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return string.Empty;
+            }
+
+            int slash = clean.LastIndexOf('/');
+            if (slash >= 0 && slash < clean.Length - 1)
+            {
+                clean = clean.Substring(slash + 1);
+            }
+
+            clean = Regex.Replace(clean, @"\s+", string.Empty);
+            clean = clean.Trim('_');
+
+            foreach (string suffix in new[] { "_CTR", "_FSS", "_APP", "_TWR", "_GND", "_DEL" })
+            {
+                if (clean.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    clean = clean.Substring(0, clean.Length - suffix.Length);
+                    break;
+                }
+            }
+
+            return clean;
         }
 
         private static bool IsAppLikeControllerCallsign(string callsign)
@@ -6153,6 +8582,111 @@ namespace EasyCPDLC
 
             return false;
         }
+        private static bool IsGenericFirNameWord(string token)
+        {
+            string clean = (token ?? string.Empty).Trim().ToUpperInvariant();
+
+            return string.IsNullOrWhiteSpace(clean) ||
+                   clean == "FIR" ||
+                   clean == "UIR" ||
+                   clean == "CTA" ||
+                   clean == "CTR" ||
+                   clean == "ARTCC" ||
+                   clean == "ACC" ||
+                   clean == "CENTER" ||
+                   clean == "CENTRE" ||
+                   clean == "CONTROL" ||
+                   clean == "CONTROLS" ||
+                   clean == "SECTOR" ||
+                   clean == "SECTORS" ||
+                   clean == "AIRSPACE" ||
+                   clean == "BOUNDARY" ||
+                   clean == "RADAR" ||
+                   clean == "OCEANIC" ||
+                   clean == "DOMESTIC" ||
+                   clean == "UPPER" ||
+                   clean == "LOWER";
+        }
+
+        private static IEnumerable<string> GetFirNameDerivedPrefixes(string text)
+        {
+            string upper = (text ?? string.Empty).Trim().ToUpperInvariant();
+
+            foreach (Match match in Regex.Matches(upper, @"\b[A-Z][A-Z0-9]{2,}\b"))
+            {
+                string token = match.Value.Trim().ToUpperInvariant();
+
+                if (IsGenericFirNameWord(token))
+                {
+                    continue;
+                }
+
+                if (Regex.IsMatch(token, @"^KZ[A-Z0-9]{2}$"))
+                {
+                    yield return token.Substring(1);
+                    continue;
+                }
+
+                if (Regex.IsMatch(token, @"^Z[A-Z0-9]{2}$"))
+                {
+                    yield return token;
+                    continue;
+                }
+
+                if (token.Length >= 5 && token.All(char.IsLetter))
+                {
+                    // Generic city/radio-name contraction:
+                    // "DENVER ARTCC" -> DEN so live sector callsigns like DEN_17_CTR
+                    // can match the already-current KZDV boundary without any DEN hardcode.
+                    yield return token.Substring(0, 3);
+                }
+                else if (token.Length == 3 && token.All(char.IsLetterOrDigit))
+                {
+                    yield return token;
+                }
+            }
+        }
+        private static IEnumerable<string> GetBoundaryScopedUsArtccLivePrefixes(string firId)
+        {
+            string id = Regex.Replace((firId ?? string.Empty).Trim().ToUpperInvariant(), @"[^A-Z0-9]", string.Empty);
+            if (Regex.IsMatch(id, @"^KZ[A-Z0-9]{2}$"))
+            {
+                id = id.Substring(1);
+            }
+
+            // Boundary-scoped US VATSIM callsign resolver.
+            // This is only used after the aircraft is already inside/near that exact boundary.
+            // It is needed because many US ARTCCs use live callsigns like DEN_17_CTR instead of ZDV_17_CTR.
+            switch (id)
+            {
+                case "ZAB": yield return "ABQ"; break;
+                case "ZAN": yield return "ANC"; break;
+                case "ZAU": yield return "CHI"; break;
+                case "ZBW": yield return "BOS"; break;
+                case "ZDC": yield return "DC"; yield return "DCA"; break;
+                case "ZDV": yield return "DEN"; break;
+                case "ZFW": yield return "FTW"; break;
+                case "ZHU": yield return "HOU"; break;
+                case "ZID": yield return "IND"; break;
+                case "ZJX": yield return "JAX"; break;
+                case "ZKC": yield return "KC"; break;
+                case "ZLA": yield return "LAX"; break;
+                case "ZLC": yield return "SLC"; break;
+                case "ZMA": yield return "MIA"; break;
+                case "ZME": yield return "MEM"; break;
+                case "ZMP": yield return "MSP"; break;
+                case "ZNY": yield return "NY"; yield return "NYC"; break;
+                case "ZOA": yield return "OAK"; break;
+                case "ZOB": yield return "CLE"; break;
+                case "ZSE": yield return "SEA"; break;
+                case "ZTL": yield return "ATL"; break;
+                case "ZUA": yield return "GUM"; break;
+                case "ZHN": yield return "HCF"; yield return "HNL"; break;
+                case "ZSU": yield return "SJU"; break;
+            }
+        }
+
+
 
 
         private static IEnumerable<string> GetStrictFirControllerPrefixes(FirBoundaryFeature fir)
@@ -6162,7 +8696,7 @@ namespace EasyCPDLC
             void AddPrefix(string value)
             {
                 string clean = (value ?? string.Empty).Trim().ToUpperInvariant();
-                if (!string.IsNullOrWhiteSpace(clean) && clean.Length >= 3)
+                if (!string.IsNullOrWhiteSpace(clean) && clean.Length >= 2)
                 {
                     prefixes.Add(clean);
                 }
@@ -6173,6 +8707,15 @@ namespace EasyCPDLC
             string searchText = (fir?.SearchText ?? string.Empty).Trim().ToUpperInvariant();
 
             AddPrefix(id);
+
+            // Generic US ARTCC normalization:
+            // Boundary/FIR ids may be KZNY/KZDC while VATSIM callsigns are ZNY_CTR/ZDC_CTR.
+            // This is not a hardcoded center list; it is a format normalization after the
+            // aircraft is already inside/near that exact FIR boundary.
+            if (Regex.IsMatch(id, @"^KZ[A-Z0-9]{2}$"))
+            {
+                AddPrefix(id.Substring(1));
+            }
 
             // Aliases are only used after the aircraft/DEP airport position is inside
             // the exact FIR polygon. They are not standalone prefix shortcuts.
@@ -6197,7 +8740,26 @@ namespace EasyCPDLC
                 if (cleanToken.Length >= 4)
                 {
                     AddPrefix(cleanToken);
+
+                    if (Regex.IsMatch(cleanToken, @"^KZ[A-Z0-9]{2}$"))
+                    {
+                        AddPrefix(cleanToken.Substring(1));
+                    }
                 }
+                else if (Regex.IsMatch(cleanToken, @"^Z[A-Z0-9]{2}$"))
+                {
+                    AddPrefix(cleanToken);
+                }
+            }
+
+            foreach (string derivedPrefix in GetFirNameDerivedPrefixes(name + " " + searchText))
+            {
+                AddPrefix(derivedPrefix);
+            }
+
+            foreach (string scopedUsPrefix in GetBoundaryScopedUsArtccLivePrefixes(id))
+            {
+                AddPrefix(scopedUsPrefix);
             }
 
             return prefixes;
@@ -6236,6 +8798,19 @@ namespace EasyCPDLC
             if (!string.IsNullOrWhiteSpace(name) && upperInfo.Contains(name))
             {
                 return true;
+            }
+
+            // If the controller ATIS/info contains the FIR radio/city name, accept it
+            // only after the aircraft is already inside/near that exact FIR boundary.
+            // Example: KZDV boundary name contains DENVER, controller DEN_17_CTR info
+            // may say DENVER CENTER.
+            foreach (Match match in Regex.Matches(name + " " + (fir.SearchText ?? string.Empty), @"\b[A-Z]{5,}\b"))
+            {
+                string token = match.Value.Trim().ToUpperInvariant();
+                if (!IsGenericFirNameWord(token) && upperInfo.Contains(token))
+                {
+                    return true;
+                }
             }
 
             return false;
@@ -6461,6 +9036,11 @@ namespace EasyCPDLC
 
         private bool IsHoppieLogonOnline(string code)
         {
+            if (DebugUiPreviewMode)
+            {
+                return !string.IsNullOrWhiteSpace(code) && IsPossibleHoppieLogonCode(code);
+            }
+
             if (!hoppieOnlineStationsLoaded || string.IsNullOrWhiteSpace(code))
             {
                 return false;
@@ -6506,36 +9086,83 @@ namespace EasyCPDLC
                     webclient.DefaultRequestHeaders.UserAgent.ParseAdd("EasyCPDLC");
                 }
 
-                Logger.Debug("Loading official VATSIM map_data FIR boundaries.");
-                string mapDataJson = await webclient.GetStringAsync(VatsimMapDataUrl);
-                JObject mapData = JObject.Parse(mapDataJson);
-                string geoJsonUrl = mapData["fir_boundaries_geojson_url"]?.ToString();
+                List<FirBoundaryFeature> merged = new();
 
-                if (string.IsNullOrWhiteSpace(geoJsonUrl))
+                void AddUniqueBoundaries(IEnumerable<FirBoundaryFeature> source, string sourceName)
                 {
-                    Logger.Debug("VATSIM map_data returned no fir_boundaries_geojson_url.");
-                    return;
+                    foreach (FirBoundaryFeature item in source ?? Enumerable.Empty<FirBoundaryFeature>())
+                    {
+                        string id = (item.Id ?? string.Empty).Trim().ToUpperInvariant();
+                        string name = (item.Name ?? string.Empty).Trim().ToUpperInvariant();
+
+                        bool exists = merged.Any(existing =>
+                            !string.IsNullOrWhiteSpace(id) &&
+                            string.Equals((existing.Id ?? string.Empty).Trim().ToUpperInvariant(), id, StringComparison.OrdinalIgnoreCase));
+
+                        if (!exists && string.IsNullOrWhiteSpace(id))
+                        {
+                            exists = merged.Any(existing =>
+                                !string.IsNullOrWhiteSpace(name) &&
+                                string.Equals((existing.Name ?? string.Empty).Trim().ToUpperInvariant(), name, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        if (!exists)
+                        {
+                            item.SearchText = ((item.SearchText ?? string.Empty) + " " + sourceName).Trim();
+                            merged.Add(item);
+                        }
+                    }
                 }
 
-                string firGeoJson = await webclient.GetStringAsync(geoJsonUrl);
-                List<FirBoundaryFeature> parsed = ParseFirBoundaryGeoJson(firGeoJson);
-
-                if (parsed.Count > 0)
+                try
                 {
-                    firBoundaryFeatures.Clear();
-                    firBoundaryFeatures.AddRange(parsed);
-                    firBoundaryLoadedUtc = DateTime.UtcNow;
-                    Logger.Debug("Loaded " + firBoundaryFeatures.Count + " FIR boundary features.");
+                    Logger.Debug("Loading VATSpy FIR/ARTCC boundaries in memory.");
+                    string vatspyGeoJson = await webclient.GetStringAsync(VatspyBoundariesGeoJsonUrl);
+                    List<FirBoundaryFeature> vatspy = ParseFirBoundaryGeoJson(vatspyGeoJson);
+                    AddUniqueBoundaries(vatspy, "VATSPY_MEMORY");
+                    Logger.Debug("Loaded VATSpy boundary features in memory: " + vatspy.Count);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug("VATSpy in-memory boundary load failed: " + ex.Message);
+                }
 
-                    SafeUi(() =>
+                // Fallback only if VATSpy could not be loaded at all.
+                // This fallback is also in-memory only and is not written to disk.
+                if (merged.Count == 0)
+                {
+                    try
                     {
-                        UpdateOnlineStatusLabel();
-                        UpdateCpdlcDiscoveryLabel();
-                    });
+                        Logger.Debug("Loading official VATSIM map_data FIR boundaries as in-memory fallback.");
+                        string mapDataJson = await webclient.GetStringAsync(VatsimMapDataUrl);
+                        JObject mapData = JObject.Parse(mapDataJson);
+                        string geoJsonUrl = mapData["fir_boundaries_geojson_url"]?.ToString();
+
+                        if (!string.IsNullOrWhiteSpace(geoJsonUrl))
+                        {
+                            string firGeoJson = await webclient.GetStringAsync(geoJsonUrl);
+                            List<FirBoundaryFeature> official = ParseFirBoundaryGeoJson(firGeoJson);
+                            AddUniqueBoundaries(official, "VATSIM_MAP_DATA_MEMORY");
+                            Logger.Debug("Loaded VATSIM map_data boundary features in memory: " + official.Count);
+                        }
+                        else
+                        {
+                            Logger.Debug("VATSIM map_data returned no fir_boundaries_geojson_url.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Debug("VATSIM map_data in-memory fallback load failed: " + ex.Message);
+                    }
+                }
+
+                if (merged.Count > 0)
+                {
+                    ApplyFirBoundaryFeatures(merged, "in-memory boundary load");
                 }
                 else
                 {
-                    Logger.Debug("FIR boundary GeoJSON parsed zero features.");
+                    Logger.Debug("No FIR/ARTCC boundary features loaded in memory.");
                 }
             }
             catch (Exception ex)
@@ -6546,6 +9173,30 @@ namespace EasyCPDLC
             {
                 firBoundaryLoadInProgress = false;
             }
+        }
+
+        private void ApplyFirBoundaryFeatures(IEnumerable<FirBoundaryFeature> features, string sourceText)
+        {
+            List<FirBoundaryFeature> list = (features ?? Enumerable.Empty<FirBoundaryFeature>())
+                .Where(item => item != null && item.Polygons.Count > 0)
+                .ToList();
+
+            if (list.Count == 0)
+            {
+                return;
+            }
+
+            firBoundaryFeatures.Clear();
+            firBoundaryFeatures.AddRange(list);
+            firBoundaryLoadedUtc = DateTime.UtcNow;
+            currentFirDebugText = "Loaded boundary features: " + firBoundaryFeatures.Count + " (" + sourceText + ")";
+            Logger.Debug(currentFirDebugText);
+
+            SafeUi(() =>
+            {
+                UpdateOnlineStatusLabel();
+                UpdateCpdlcDiscoveryLabel();
+            });
         }
 
         private List<FirBoundaryFeature> ParseFirBoundaryGeoJson(string geoJson)
@@ -6598,8 +9249,8 @@ namespace EasyCPDLC
 
             FirBoundaryFeature parsed = new()
             {
-                Id = GetFirProperty(properties, "id", "icao", "fir", "fir_id", "fir_icao", "ident", "prefix", "callsign"),
-                Name = GetFirProperty(properties, "name", "fir_name", "firname", "label", "description")
+                Id = GetFirProperty(properties, "id", "icao", "fir", "fir_id", "fir_icao", "ident", "prefix", "callsign", "boundary_id", "firId", "firID"),
+                Name = GetFirProperty(properties, "name", "fir_name", "firname", "label", "description", "display_name", "firName", "fir_name_short")
             };
 
             parsed.SearchText = BuildFirSearchText(properties, parsed.Id, parsed.Name);
@@ -6660,6 +9311,18 @@ namespace EasyCPDLC
         private static string NormalizeFirToken(string value)
         {
             string upper = (value ?? string.Empty).Trim().ToUpperInvariant();
+
+            Match usArtcc = Regex.Match(upper, @"\bKZ[A-Z0-9]{2}\b");
+            if (usArtcc.Success)
+            {
+                return usArtcc.Value;
+            }
+
+            Match usShort = Regex.Match(upper, @"\bZ[A-Z0-9]{2}\b");
+            if (usShort.Success)
+            {
+                return usShort.Value;
+            }
 
             Match match = Regex.Match(upper, @"\b[A-Z]{2}[A-Z0-9]{2}\b");
             if (match.Success)
@@ -6961,12 +9624,22 @@ namespace EasyCPDLC
                 return 1;
             }
 
-            if (reason.Contains("FIR POSITION MATCH") || reason.Contains("APP REGIONAL FIR MATCH"))
+            if (reason.Contains("VATSPY BOUNDARY POSITION MATCH") ||
+                reason.Contains("MAP BOUNDARY POSITION MATCH") ||
+                reason.Contains("VATGLASSES FALLBACK SECTOR MATCH") ||
+                reason.Contains("VATGLASSES SECTOR MATCH") ||
+                reason.Contains("FIR POSITION MATCH") ||
+                reason.Contains("APP REGIONAL FIR MATCH"))
             {
                 return 2;
             }
 
-            if (reason.Contains("NEAR FIR BUFFER MATCH") || reason.Contains("APP NEAR FIR BUFFER"))
+            if (reason.Contains("UPCOMING VATSPY BOUNDARY MATCH") ||
+                reason.Contains("UPCOMING MAP BOUNDARY MATCH") ||
+                reason.Contains("VATGLASSES FALLBACK SECTOR NEARBY") ||
+                reason.Contains("VATGLASSES SECTOR NEARBY") ||
+                reason.Contains("NEAR FIR BUFFER MATCH") ||
+                reason.Contains("APP NEAR FIR BUFFER"))
             {
                 return 3;
             }
@@ -7356,6 +10029,11 @@ namespace EasyCPDLC
 
         private bool CanQuickCpdlcLogon()
         {
+            if (DebugUiPreviewMode)
+            {
+                return !string.IsNullOrWhiteSpace(cpdlcDiscoveryLogonCode);
+            }
+
             return Connected &&
                    IsHoppieCallsignReadyForInteractiveMenus() &&
                    cpdlcHelperEnabled &&
@@ -7367,6 +10045,11 @@ namespace EasyCPDLC
 
         private bool CanQuickRequestClearance()
         {
+            if (DebugUiPreviewMode)
+            {
+                return !string.IsNullOrWhiteSpace(pdcDiscoveryLogonCode);
+            }
+
             if (!Connected ||
                 !IsHoppieCallsignReadyForInteractiveMenus() ||
                 string.IsNullOrWhiteSpace(pdcDiscoveryLogonCode) ||
@@ -7388,6 +10071,11 @@ namespace EasyCPDLC
 
         private bool HasPdcPopupCandidate()
         {
+            if (DebugUiPreviewMode)
+            {
+                return !string.IsNullOrWhiteSpace(pdcDiscoveryLogonCode);
+            }
+
             if (!Connected ||
                 !IsHoppieCallsignReadyForInteractiveMenus() ||
                 string.IsNullOrWhiteSpace(pdcDiscoveryLogonCode) ||
@@ -7603,6 +10291,35 @@ namespace EasyCPDLC
             }
 
             HideCpdlcLogonPopup();
+        }
+
+        private void HideMainScreenQuickActionButtonsAfterReturn()
+        {
+            pdcQuickActionPinned = false;
+            cpdlcLogonPopupPinned = false;
+            HideQuickActionButtons();
+
+            if (pdcActionDebugLabel != null)
+            {
+                pdcActionDebugLabel.Visible = false;
+                pdcActionDebugLabel.Enabled = false;
+            }
+
+            if (cpdlcActionDebugLabel != null)
+            {
+                cpdlcActionDebugLabel.Visible = false;
+                cpdlcActionDebugLabel.Enabled = false;
+            }
+
+            if (pdcActionPopupPanel != null)
+            {
+                pdcActionPopupPanel.Visible = false;
+            }
+
+            if (cpdlcLogonPopupPanel != null)
+            {
+                cpdlcLogonPopupPanel.Visible = false;
+            }
         }
 
         private void HideCpdlcLogonPopup()
@@ -8147,7 +10864,9 @@ namespace EasyCPDLC
                 return string.Empty;
             }
 
-            return string.Join(" ", atis.text_atis);
+            return string.Join("\n", atis.text_atis
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim()));
         }
 
         private string BuildAtisHoverHeader(string target, string contents)
@@ -8804,7 +11523,7 @@ namespace EasyCPDLC
 
         private void ShowQuickWxPopup(bool pin)
         {
-            if (!Connected)
+            if (!Connected && !DebugUiPreviewMode)
             {
                 HideQuickWxPopup();
                 return;
@@ -8851,7 +11570,7 @@ namespace EasyCPDLC
 
         private void ToggleQuickWxPopup()
         {
-            if (!Connected)
+            if (!Connected && !DebugUiPreviewMode)
             {
                 HideQuickWxPopup();
                 return;
@@ -8865,6 +11584,3581 @@ namespace EasyCPDLC
 
             quickWxPopupPinned = true;
             ShowQuickWxPopup(true);
+        }
+
+
+        private bool IsAirbusAocActive()
+        {
+            return !DcduStyleManager.IsBoeing && airbusAocPage != AirbusAocPage.None;
+        }
+
+        private Rectangle AirbusAocLeftLskBounds(int index)
+        {
+            // Physical Airbus side-key hitboxes, tuned to DCDU_Main_V15.png.
+            int[] y = { 46, 88, 130, 172, 214 };
+            int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
+            return new Rectangle(8, y[i], 64, 36);
+        }
+
+        private Rectangle AirbusAocRightLskBounds(int index)
+        {
+            int[] y = { 64, 106, 148, 190, 232 };
+            int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
+            return new Rectangle(610, y[i], 66, 36);
+        }
+
+        private bool TryGetAirbusAocLineSelect(Point location, out bool rightSide, out int index)
+        {
+            rightSide = false;
+            index = 0;
+
+            if (!IsAirbusAocActive())
+            {
+                return false;
+            }
+
+            for (int i = 1; i <= 5; i++)
+            {
+                if (AirbusAocLeftLskBounds(i).Contains(location) && IsAirbusAocLineSelectActionAvailable(false, i))
+                {
+                    index = i;
+                    return true;
+                }
+
+                if (AirbusAocRightLskBounds(i).Contains(location) && IsAirbusAocLineSelectActionAvailable(true, i))
+                {
+                    rightSide = true;
+                    index = i;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsAirbusAocLineSelectActionAvailable(bool rightSide, int index)
+        {
+            switch (airbusAocPage)
+            {
+                case AirbusAocPage.MainMenu:
+                    return (!rightSide && (index == 1 || index == 2 || index == 5)) ||
+                           (rightSide && (index == 1 || index == 2));
+
+                case AirbusAocPage.AtcRequestMenu:
+                    return !rightSide && (index == 1 || index == 2 || index == 5);
+
+                case AirbusAocPage.AtcMainMenu:
+                    return (!rightSide && (index == 1 || index == 2 || index == 5)) ||
+                           (rightSide && (index == 1 || index == 2));
+
+                case AirbusAocPage.AtcDirectRequest:
+                case AirbusAocPage.AtcLevelRequest:
+                case AirbusAocPage.AtcSpeedRequest:
+                case AirbusAocPage.AtcWhenCanWeRequest:
+                case AirbusAocPage.AtcTextRequest:
+                    return (!rightSide && index == 5) ||
+                           (rightSide && index == 5 && airbusAocSendReady);
+
+                case AirbusAocPage.AtcLatRequestMenu:
+                case AirbusAocPage.AtcVertRequestMenu:
+                case AirbusAocPage.AtcWhenCanWeMenu:
+                case AirbusAocPage.AtcOtherRequestMenu:
+                case AirbusAocPage.AtcReportsMenu:
+                    return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 5)) ||
+                           (rightSide && (index == 1 || index == 2));
+
+                case AirbusAocPage.AtcConnectionMenu:
+                case AirbusAocPage.AtcEmergencyMenu:
+                    return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 5)) ||
+                           (rightSide && index == 1);
+
+                case AirbusAocPage.PreDepClearance:
+                case AirbusAocPage.OceanicClearance:
+                case AirbusAocPage.WxRequest:
+                case AirbusAocPage.AtisRequest:
+                case AirbusAocPage.FreeTextRequest:
+                    return (!rightSide && index == 5) ||
+                           (rightSide && index == 5 && airbusAocSendReady);
+
+                case AirbusAocPage.SendConfirm:
+                    return (!rightSide && index == 5) ||
+                           (rightSide && index == 5 && airbusAocPendingSendKind != AirbusAocPendingSendKind.None);
+
+                default:
+                    return false;
+            }
+        }
+
+        private bool IsAirbusAocLineSelectHit(Point location)
+        {
+            return TryGetAirbusAocLineSelect(location, out _, out _);
+        }
+
+        private bool HandleAirbusAocLineSelectClick(Point location)
+        {
+            if (!TryGetAirbusAocLineSelect(location, out bool rightSide, out int index))
+            {
+                return false;
+            }
+
+            HandleAirbusAocLineSelect(rightSide, index);
+            return true;
+        }
+
+        private void HandleAirbusAocLineSelect(bool rightSide, int index)
+        {
+            switch (airbusAocPage)
+            {
+                case AirbusAocPage.MainMenu:
+                    if (!rightSide && index == 1)
+                    {
+                        ShowAirbusAocAtcRequestMenu();
+                    }
+                    else if (rightSide && index == 1)
+                    {
+                        ShowAirbusAocWeatherRequest(false);
+                    }
+                    else if (!rightSide && index == 2)
+                    {
+                        ShowAirbusAocWeatherRequest(true);
+                    }
+                    else if (rightSide && index == 2)
+                    {
+                        ShowAirbusAocFreeTextRequest();
+                    }
+                    else if (!rightSide && index == 5)
+                    {
+                        CloseAirbusAocPages();
+                    }
+                    break;
+
+                case AirbusAocPage.AtcRequestMenu:
+                    if (!rightSide && index == 1)
+                    {
+                        ShowAirbusAocPreDepClearance();
+                    }
+                    else if (!rightSide && index == 2)
+                    {
+                        ShowAirbusAocOceanicClearance();
+                    }
+                    else if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAocMainMenu();
+                    }
+                    break;
+
+                case AirbusAocPage.AtcMainMenu:
+                    HandleAirbusAtcMainMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcLatRequestMenu:
+                    HandleAirbusAtcLatMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcVertRequestMenu:
+                    HandleAirbusAtcVertMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcWhenCanWeMenu:
+                    HandleAirbusAtcWhenCanWeMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcOtherRequestMenu:
+                    HandleAirbusAtcOtherMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcReportsMenu:
+                    HandleAirbusAtcReportsMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcConnectionMenu:
+                    HandleAirbusAtcConnectionMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcEmergencyMenu:
+                    HandleAirbusAtcEmergencyMenuLineSelect(rightSide, index);
+                    break;
+
+                case AirbusAocPage.AtcTextRequest:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAtcMainMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        ShowAirbusAtcTextConfirm();
+                    }
+                    break;
+
+                case AirbusAocPage.AtcDirectRequest:
+                case AirbusAocPage.AtcLevelRequest:
+                case AirbusAocPage.AtcSpeedRequest:
+                case AirbusAocPage.AtcWhenCanWeRequest:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAtcMainMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        ShowAirbusAtcRequestConfirm();
+                    }
+                    break;
+
+                case AirbusAocPage.PreDepClearance:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAocAtcRequestMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        ShowAirbusAocPreDepClearanceConfirm();
+                    }
+                    break;
+
+                case AirbusAocPage.OceanicClearance:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAocAtcRequestMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        ShowAirbusAocOceanicClearanceConfirm();
+                    }
+                    break;
+
+                case AirbusAocPage.WxRequest:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAocMainMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        ShowAirbusAocWeatherConfirm(false);
+                    }
+                    break;
+
+                case AirbusAocPage.AtisRequest:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAocMainMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        ShowAirbusAocWeatherConfirm(true);
+                    }
+                    break;
+
+                case AirbusAocPage.FreeTextRequest:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAocMainMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        ShowAirbusAocFreeTextConfirm();
+                    }
+                    break;
+
+                case AirbusAocPage.SendConfirm:
+                    if (!rightSide && index == 5)
+                    {
+                        ReturnFromAirbusAocConfirm();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        _ = SendAirbusAocPendingRequestAsync();
+                    }
+                    break;
+            }
+        }
+
+
+        private bool IsBoeingTelexActive()
+        {
+            return DcduStyleManager.IsBoeing && boeingTelexPage != BoeingTelexPage.None;
+        }
+
+        private Rectangle BoeingTelexLeftLskBounds(int index)
+        {
+            // Physical Boeing DCDU side-key hitboxes, tuned for DCDU_Main_V15 Boeing asset.
+            int[] y = { 66, 107, 149, 190, 232, 273 };
+            int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
+            return new Rectangle(4, y[i], 70, 35);
+        }
+
+        private Rectangle BoeingTelexRightLskBounds(int index)
+        {
+            int[] y = { 66, 107, 149, 190, 232, 273 };
+            int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
+            return new Rectangle(584, y[i], 70, 35);
+        }
+
+        private bool TryGetBoeingTelexLineSelect(Point location, out bool rightSide, out int index)
+        {
+            rightSide = false;
+            index = 0;
+
+            if (!IsBoeingTelexActive())
+            {
+                return false;
+            }
+
+            for (int i = 1; i <= 6; i++)
+            {
+                if (BoeingTelexLeftLskBounds(i).Contains(location) && IsBoeingTelexLineSelectActionAvailable(false, i))
+                {
+                    index = i;
+                    return true;
+                }
+
+                if (BoeingTelexRightLskBounds(i).Contains(location) && IsBoeingTelexLineSelectActionAvailable(true, i))
+                {
+                    rightSide = true;
+                    index = i;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsBoeingTelexLineSelectHit(Point location)
+        {
+            return TryGetBoeingTelexLineSelect(location, out _, out _);
+        }
+
+        private bool HandleBoeingTelexLineSelectClick(Point location)
+        {
+            if (!TryGetBoeingTelexLineSelect(location, out bool rightSide, out int index))
+            {
+                return false;
+            }
+
+            HandleBoeingTelexLineSelect(rightSide, index);
+            return true;
+        }
+
+        private bool IsBoeingTelexLineSelectActionAvailable(bool rightSide, int index)
+        {
+            switch (boeingTelexPage)
+            {
+                case BoeingTelexPage.Menu:
+                    return !rightSide && (index == 1 || index == 2 || index == 3 || index == 6);
+
+                case BoeingTelexPage.AtcMainMenu:
+                    return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 6)) ||
+                           (rightSide && (index == 1 || index == 2 || index == 3));
+
+                case BoeingTelexPage.FreeText:
+                case BoeingTelexPage.Metar:
+                case BoeingTelexPage.Atis:
+                case BoeingTelexPage.AtcPreDepClearance:
+                case BoeingTelexPage.AtcOceanicClearance:
+                case BoeingTelexPage.AtcDirectRequest:
+                case BoeingTelexPage.AtcLevelRequest:
+                case BoeingTelexPage.AtcSpeedRequest:
+                case BoeingTelexPage.AtcWhenCanWeRequest:
+                    return (!rightSide && index == 6) ||
+                           (rightSide && index == 6 && boeingTelexSendReady);
+
+                case BoeingTelexPage.SendConfirm:
+                    return (!rightSide && index == 6) ||
+                           (rightSide && index == 6 && boeingTelexPendingSendKind != BoeingTelexPendingSendKind.None);
+
+                default:
+                    return false;
+            }
+        }
+
+        private void HandleBoeingTelexLineSelect(bool rightSide, int index)
+        {
+            switch (boeingTelexPage)
+            {
+                case BoeingTelexPage.Menu:
+                    if (!rightSide && index == 1)
+                    {
+                        ShowBoeingTelexFreeText();
+                    }
+                    else if (!rightSide && index == 2)
+                    {
+                        ShowBoeingTelexMetarRequest();
+                    }
+                    else if (!rightSide && index == 3)
+                    {
+                        ShowBoeingTelexAtisRequest();
+                    }
+                    else if (!rightSide && index == 6)
+                    {
+                        CloseBoeingTelexPages();
+                    }
+                    break;
+
+                case BoeingTelexPage.FreeText:
+                    if (!rightSide && index == 6)
+                    {
+                        ShowBoeingTelexMenu();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        ShowBoeingTelexFreeTextConfirm();
+                    }
+                    break;
+
+                case BoeingTelexPage.Metar:
+                    if (!rightSide && index == 6)
+                    {
+                        ShowBoeingTelexMenu();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        ShowBoeingTelexInfoConfirm(false);
+                    }
+                    break;
+
+                case BoeingTelexPage.Atis:
+                    if (!rightSide && index == 6)
+                    {
+                        ShowBoeingTelexMenu();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        ShowBoeingTelexInfoConfirm(true);
+                    }
+                    break;
+
+                case BoeingTelexPage.AtcMainMenu:
+                    if (!rightSide && index == 1)
+                    {
+                        ShowBoeingAtcDirectRequest();
+                    }
+                    else if (!rightSide && index == 2)
+                    {
+                        ShowBoeingAtcLevelRequest();
+                    }
+                    else if (!rightSide && index == 3)
+                    {
+                        ShowBoeingAtcPreDepClearance();
+                    }
+                    else if (rightSide && index == 1)
+                    {
+                        ShowBoeingAtcWhenCanWeRequest();
+                    }
+                    else if (rightSide && index == 2)
+                    {
+                        ShowBoeingAtcSpeedRequest();
+                    }
+                    else if (rightSide && index == 3)
+                    {
+                        ShowBoeingAtcOceanicClearance();
+                    }
+                    else if (!rightSide && index == 6)
+                    {
+                        CloseBoeingTelexPages();
+                    }
+                    break;
+
+                case BoeingTelexPage.AtcPreDepClearance:
+                    if (!rightSide && index == 6)
+                    {
+                        ShowBoeingAtcMainMenu();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        ShowBoeingAtcPreDepClearanceSend();
+                    }
+                    break;
+
+                case BoeingTelexPage.AtcOceanicClearance:
+                    if (!rightSide && index == 6)
+                    {
+                        ShowBoeingAtcMainMenu();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        ShowBoeingAtcOceanicClearanceSend();
+                    }
+                    break;
+
+                case BoeingTelexPage.AtcDirectRequest:
+                case BoeingTelexPage.AtcLevelRequest:
+                case BoeingTelexPage.AtcSpeedRequest:
+                case BoeingTelexPage.AtcWhenCanWeRequest:
+                    if (!rightSide && index == 6)
+                    {
+                        ShowBoeingAtcMainMenu();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        ShowBoeingAtcRequestSend();
+                    }
+                    break;
+
+                case BoeingTelexPage.SendConfirm:
+                    if (!rightSide && index == 6)
+                    {
+                        ReturnFromBoeingTelexConfirm();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        _ = SendBoeingTelexPendingRequestAsync();
+                    }
+                    break;
+            }
+        }
+
+        private void PrepareBoeingTelexPage(BoeingTelexPage page)
+        {
+            if (!DcduStyleManager.IsBoeing)
+            {
+                return;
+            }
+
+            embeddedSetupPage = EmbeddedSetupPage.None;
+            boeingTelexPage = page;
+            boeingTelexInputs.Clear();
+            boeingTelexSendLabel = null;
+            boeingTelexSendReady = false;
+
+            HideQuickWxPopup();
+            HideClearanceTimelinePopup();
+            HideAtisAvailabilityPopup();
+            HideAtisAutoPopup();
+            HideQuickActionButtons();
+            HideCpdlcLogonPopup();
+            HidePdcQuickActionButton();
+
+            SetAirbusAocChromeVisible(false);
+            messageFormatPanel.SuspendLayout();
+            messageFormatPanel.Controls.Clear();
+            messageFormatPanel.Visible = true;
+            messageFormatPanel.Enabled = true;
+            messageFormatPanel.BringToFront();
+            messageFormatPanel.Location = new Point(12, 10);
+            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - 24), Math.Max(1, screenPanel.Height - 20));
+            messageFormatPanel.Padding = new Padding(0);
+            messageFormatPanel.Margin = new Padding(0);
+            messageFormatPanel.AutoScroll = false;
+            messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
+            messageFormatPanel.WrapContents = false;
+            messageFormatPanel.ResumeLayout(false);
+        }
+
+        private Panel CreateBoeingTelexCanvas()
+        {
+            Panel canvas = new()
+            {
+                BackColor = Color.Transparent,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Size = messageFormatPanel.ClientSize
+            };
+            messageFormatPanel.Controls.Add(canvas);
+            canvas.BringToFront();
+            return canvas;
+        }
+
+        private Font BoeingTelexTitleFont()
+        {
+            return CreateDpiStablePointFont("Consolas", 13.0f, FontStyle.Bold);
+        }
+
+        private Font BoeingTelexMenuFont()
+        {
+            return CreateDpiStablePointFont("Consolas", 12.6f, FontStyle.Bold);
+        }
+
+        private Font BoeingTelexCaptionFont()
+        {
+            return CreateDpiStablePointFont("Consolas", 9.5f, FontStyle.Bold);
+        }
+
+        private Font BoeingTelexValueFont()
+        {
+            // Boeing embedded pages: make filled/entered values stand out more clearly.
+            return CreateDpiStablePointFont("Consolas", 11.8f, FontStyle.Bold);
+        }
+
+        private int BoeingTelexLskTextY(Control parent, int index)
+        {
+            // Text rows sit a few pixels lower so the captions visually align
+            // with the painted Boeing side pushbuttons.
+            int[] y = { 24, 62, 100, 138, 176, 224 };
+            int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
+            return Math.Min(y[i], Math.Max(0, parent.Height - 34));
+        }
+
+        private int BoeingTelexActionY(Control parent)
+        {
+            return BoeingTelexLskTextY(parent, 6);
+        }
+
+        private System.Windows.Forms.Label AddBoeingTelexLabel(Control parent, string text, int x, int y, int width, int height, ContentAlignment align = ContentAlignment.MiddleLeft, Color? color = null, Font font = null)
+        {
+            System.Windows.Forms.Label label = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = color ?? MainPrimaryTextColor(),
+                Font = font ?? BoeingTelexMenuFont(),
+                Text = text ?? string.Empty,
+                TextAlign = align,
+                Location = new Point(x, y),
+                Size = new Size(width, height),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            parent.Controls.Add(label);
+            label.BringToFront();
+            return label;
+        }
+
+        private TextBox AddBoeingTelexTextBox(Control parent, string key, string text, int x, int y, int width, int maxLength, bool multiline = false, int height = 0)
+        {
+            TextBox box = new()
+            {
+                Name = "boeingTelex_" + key,
+                BackColor = Color.FromArgb(3, 8, 15),
+                ForeColor = MainPrimaryTextColor(),
+                BorderStyle = BorderStyle.FixedSingle,
+                CharacterCasing = CharacterCasing.Upper,
+                Font = BoeingTelexValueFont(),
+                Location = new Point(x, y),
+                Size = new Size(width, height > 0 ? height : (multiline ? 78 : 24)),
+                MaxLength = maxLength,
+                Text = text ?? string.Empty,
+                Multiline = multiline,
+                WordWrap = true,
+                ScrollBars = ScrollBars.None
+            };
+
+            box.TextChanged += (_, __) =>
+            {
+                SetStoredBoeingTelexInput(boeingTelexPage, key, box.Text ?? string.Empty);
+                UpdateBoeingTelexSendState();
+            };
+
+            parent.Controls.Add(box);
+            box.BringToFront();
+            boeingTelexInputs[key] = box;
+            SetStoredBoeingTelexInput(boeingTelexPage, key, box.Text ?? string.Empty);
+            return box;
+        }
+
+        private System.Windows.Forms.Label AddBoeingTelexCycleField(Control parent, BoeingTelexPage pageKey, string key, string[] items, string selectedItem, int x, int y, int width)
+        {
+            if (items == null || items.Length == 0)
+            {
+                items = new[] { string.Empty };
+            }
+
+            string selected = items.FirstOrDefault(item => string.Equals(item, selectedItem, StringComparison.OrdinalIgnoreCase)) ?? items[0];
+            SetStoredBoeingTelexInput(pageKey, key, selected);
+
+            System.Windows.Forms.Label label = new()
+            {
+                AutoSize = false,
+                BackColor = Color.FromArgb(3, 8, 15),
+                ForeColor = MainPrimaryTextColor(),
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = BoeingTelexValueFont(),
+                Text = selected,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(x, y),
+                Size = new Size(width, 23),
+                Padding = new Padding(4, 0, 2, 0),
+                Cursor = Cursors.Hand
+            };
+
+            void Cycle()
+            {
+                int index = Array.FindIndex(items, item => string.Equals(item, label.Text, StringComparison.OrdinalIgnoreCase));
+                index = index < 0 ? 0 : (index + 1) % items.Length;
+                label.Text = items[index];
+                SetStoredBoeingTelexInput(pageKey, key, label.Text);
+                UpdateBoeingTelexSendState();
+            }
+
+            label.Click += (_, __) => Cycle();
+            parent.Controls.Add(label);
+            label.BringToFront();
+            return label;
+        }
+
+        private void AddBoeingTelexSendPrompt(Control parent)
+        {
+            Font actionFont = BoeingTelexMenuFont();
+            int actionY = BoeingTelexActionY(parent);
+            AddBoeingTelexLabel(parent, "<RETURN", 4, actionY, 180, 30, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), actionFont);
+            boeingTelexSendLabel = AddBoeingTelexLabel(parent, "SEND", parent.Width - 116, actionY, 110, 30, ContentAlignment.MiddleRight, MainPrimaryTextColor(), actionFont);
+        }
+
+        private string BoeingTelexInputStateKey(BoeingTelexPage page, string key)
+        {
+            return page.ToString() + ":" + key;
+        }
+
+        private string GetStoredBoeingTelexInput(BoeingTelexPage page, string key, string defaultValue = "")
+        {
+            return boeingTelexFormValues.TryGetValue(BoeingTelexInputStateKey(page, key), out string value)
+                ? value
+                : (defaultValue ?? string.Empty);
+        }
+
+        private void SetStoredBoeingTelexInput(BoeingTelexPage page, string key, string value)
+        {
+            boeingTelexFormValues[BoeingTelexInputStateKey(page, key)] = value ?? string.Empty;
+        }
+
+        private void ClearStoredBoeingTelexPage(BoeingTelexPage page)
+        {
+            string prefix = page.ToString() + ":";
+            string[] keys = boeingTelexFormValues.Keys.Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray();
+            foreach (string key in keys)
+            {
+                boeingTelexFormValues.Remove(key);
+            }
+        }
+
+        private string GetBoeingTelexInput(string key)
+        {
+            return boeingTelexInputs.TryGetValue(key, out TextBox box)
+                ? (box.Text ?? string.Empty).Trim().ToUpperInvariant()
+                : string.Empty;
+        }
+
+        private string GetSuggestedBoeingTelexStation()
+        {
+            string arrival = AirbusAocArrival();
+            if (!string.IsNullOrWhiteSpace(arrival))
+            {
+                return arrival;
+            }
+
+            string departure = AirbusAocDeparture();
+            return string.IsNullOrWhiteSpace(departure) ? string.Empty : departure;
+        }
+
+        private void UpdateBoeingTelexSendState()
+        {
+            boeingTelexSendReady = IsBoeingTelexSendReady();
+            if (boeingTelexSendLabel != null)
+            {
+                boeingTelexSendLabel.Text = boeingTelexSendReady ? "SEND*" : "SEND";
+                boeingTelexSendLabel.ForeColor = MainPrimaryTextColor();
+                boeingTelexSendLabel.Cursor = Cursors.Default;
+                boeingTelexSendLabel.Invalidate();
+            }
+        }
+
+        private bool IsBoeingTelexSendReady()
+        {
+            switch (boeingTelexPage)
+            {
+                case BoeingTelexPage.FreeText:
+                    return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetBoeingTelexInput(BoeingTelexInputMessage));
+
+                case BoeingTelexPage.Metar:
+                case BoeingTelexPage.Atis:
+                    return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4;
+
+                case BoeingTelexPage.AtcPreDepClearance:
+                    return !string.IsNullOrWhiteSpace(AirbusAocDeparture()) &&
+                           !string.IsNullOrWhiteSpace(AirbusAocArrival()) &&
+                           !string.IsNullOrWhiteSpace(AirbusAocAircraft()) &&
+                           !string.IsNullOrWhiteSpace(AirbusAocCallsign()) &&
+                           GetBoeingTelexInput(BoeingAtcInputGate).Length > 0 &&
+                           GetBoeingTelexInput(BoeingAtcInputAtis).Length == 1 &&
+                           GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4;
+
+                case BoeingTelexPage.AtcOceanicClearance:
+                    return !string.IsNullOrWhiteSpace(AirbusAocCallsign()) &&
+                           GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4 &&
+                           GetBoeingTelexInput(BoeingAtcInputEntryPoint).Length > 0 &&
+                           GetBoeingTelexInput(BoeingAtcInputEta).Length == 4 &&
+                           GetBoeingTelexInput(BoeingAtcInputMach).Length == 2 &&
+                           GetBoeingTelexInput(BoeingAtcInputFlightLevel).Length == 3;
+
+                case BoeingTelexPage.AtcDirectRequest:
+                    return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetBoeingTelexInput(BoeingAtcInputDirectTo));
+
+                case BoeingTelexPage.AtcLevelRequest:
+                    return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetBoeingTelexInput(BoeingAtcInputRequestedFlightLevel));
+
+                case BoeingTelexPage.AtcSpeedRequest:
+                    return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetBoeingTelexInput(BoeingAtcInputSpeedValue));
+
+                case BoeingTelexPage.AtcWhenCanWeRequest:
+                    string wcwType = GetStoredBoeingTelexInput(BoeingTelexPage.AtcWhenCanWeRequest, BoeingAtcInputWcwType, "HIGHER");
+                    return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4 &&
+                           (!BoeingAtcWhenCanWeNeedsValue(wcwType) || !string.IsNullOrWhiteSpace(GetBoeingTelexInput(BoeingAtcInputWcwValue)));
+
+                default:
+                    return false;
+            }
+        }
+
+        private void ShowBoeingTelexMenu()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.Menu);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font menuFont = BoeingTelexMenuFont();
+            Color color = MainPrimaryTextColor();
+
+            AddBoeingTelexLabel(page, "TELEX MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingTelexLabel(page, "<FREE TEXT", 4, BoeingTelexLskTextY(page, 1), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<METAR REQUEST", 4, BoeingTelexLskTextY(page, 2), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<ATIS REQUEST", 4, BoeingTelexLskTextY(page, 3), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<RETURN", 4, BoeingTelexLskTextY(page, 6), 180, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void ShowBoeingTelexFreeText()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.FreeText);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Font hintFont = CreateDpiStablePointFont("Consolas", 8.8f, FontStyle.Bold);
+            Color color = MainPrimaryTextColor();
+            int leftX = 12;
+            int rightEdge = page.Width - 12;
+
+            AddBoeingTelexLabel(page, "TELEX FREE TEXT", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingTelexLabel(page, "SEND A CUSTOM MESSAGE VIA HOPPIE", leftX, 28, page.Width - 24, 18, ContentAlignment.MiddleLeft, Color.FromArgb(155, color), hintFont);
+            AddBoeingTelexLabel(page, "TO:", leftX, 58, 70, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(BoeingTelexPage.FreeText, BoeingTelexInputStation, string.Empty), leftX + 72, 54, 116, 8);
+            AddBoeingTelexLabel(page, "MSG:", leftX, 92, 70, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexLabel(page, "MAX 255 CHARS", rightEdge - 150, 92, 150, 18, ContentAlignment.MiddleRight, Color.FromArgb(155, color), hintFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputMessage, GetStoredBoeingTelexInput(BoeingTelexPage.FreeText, BoeingTelexInputMessage, string.Empty), leftX, 114, rightEdge - leftX, 255, true, Math.Max(58, BoeingTelexActionY(page) - 132));
+            AddBoeingTelexSendPrompt(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private void ShowBoeingTelexMetarRequest()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.Metar);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+            int leftX = 18;
+
+            AddBoeingTelexLabel(page, "TELEX METAR REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingTelexLabel(page, "STATION", leftX, 58, 120, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(BoeingTelexPage.Metar, BoeingTelexInputStation, GetSuggestedBoeingTelexStation()), leftX, 78, 80, 4);
+            AddBoeingTelexLabel(page, "ENTER ICAO OF DEP / ARR AERODROME", leftX, 118, page.Width - 36, 20, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddBoeingTelexSendPrompt(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private void ShowBoeingTelexAtisRequest()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.Atis);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+            int leftX = 18;
+
+            AddBoeingTelexLabel(page, "TELEX ATIS REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingTelexLabel(page, "STATION", leftX, 52, 120, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(BoeingTelexPage.Atis, BoeingTelexInputStation, GetSuggestedBoeingTelexStation()), leftX, 72, 80, 4);
+            AddBoeingTelexLabel(page, "TYPE", 154, 52, 70, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexCycleField(page, BoeingTelexPage.Atis, BoeingTelexInputAtisType, new[] { "NONE", "ARR", "DEP" }, GetStoredBoeingTelexInput(BoeingTelexPage.Atis, BoeingTelexInputAtisType, "NONE"), 154, 72, 70);
+            AddBoeingTelexLabel(page, "AUTO", 252, 52, 70, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexCycleField(page, BoeingTelexPage.Atis, BoeingTelexInputAtisAuto, new[] { "OFF", "ON" }, GetStoredBoeingTelexInput(BoeingTelexPage.Atis, BoeingTelexInputAtisAuto, IsAtisAutoRefreshEnabled() ? "ON" : "OFF"), 252, 72, 62);
+            AddBoeingTelexLabel(page, "NONE = ICAO    ARR = ICAO_A    DEP = ICAO_D", leftX, 116, page.Width - 36, 20, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddBoeingTelexSendPrompt(page);
+            UpdateBoeingTelexSendState();
+        }
+
+
+        private string GetBoeingAtcDefaultRecipient()
+        {
+            if (!string.IsNullOrWhiteSpace(CurrentATCUnit))
+            {
+                return CurrentATCUnit.Trim().ToUpperInvariant();
+            }
+
+            if (!string.IsNullOrWhiteSpace(pendingLogon))
+            {
+                return pendingLogon.Trim().ToUpperInvariant();
+            }
+
+            return string.Empty;
+        }
+
+        private string BoeingAtcDueReasonText(BoeingTelexPage page)
+        {
+            string reason = GetStoredBoeingTelexInput(page, BoeingAtcInputDueReason, "NONE").Trim().ToUpperInvariant();
+            return reason switch
+            {
+                "WX" => " DUE TO WEATHER",
+                "A/C" => " DUE TO PERFORMANCE",
+                "PERF" => " DUE TO PERFORMANCE",
+                _ => string.Empty
+            };
+        }
+
+        private bool BoeingAtcWhenCanWeNeedsValue(string type)
+        {
+            string normalized = (type ?? string.Empty).Trim().ToUpperInvariant();
+            return normalized == "CLIMB" || normalized == "DESCENT" || normalized == "MACH" || normalized == "SPEED" || normalized == "DIRECT";
+        }
+
+        private void AddBoeingAtcBottomActions(Panel page)
+        {
+            AddBoeingTelexSendPrompt(page);
+        }
+
+        private void AddBoeingAtcRecipientField(Panel page, BoeingTelexPage pageKey, int x, int y)
+        {
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+            AddBoeingTelexLabel(page, "RECIPIENT", x, y, 120, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(pageKey, BoeingTelexInputStation, GetBoeingAtcDefaultRecipient()), x, y + 20, 82, 8);
+        }
+
+        private void AddBoeingAtcRemarksField(Panel page, BoeingTelexPage pageKey, int x, int y, int width, int height)
+        {
+            Font captionFont = BoeingTelexCaptionFont();
+            AddBoeingTelexLabel(page, "REMARKS", x, y, width, 18, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputRemarks, GetStoredBoeingTelexInput(pageKey, BoeingAtcInputRemarks, string.Empty), x, y + 22, width, 180, true, height);
+        }
+
+        private void ShowBoeingAtcMainMenu()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcMainMenu);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font menuFont = BoeingTelexMenuFont();
+            Color color = MainPrimaryTextColor();
+
+            AddBoeingTelexLabel(page, "ATC MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingTelexLabel(page, "<DIRECT REQ", 4, BoeingTelexLskTextY(page, 1), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<LEVEL REQ", 4, BoeingTelexLskTextY(page, 2), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<PRE DEP CLEARANCE", 4, BoeingTelexLskTextY(page, 3), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "WHEN CAN WE>", page.Width - 250, BoeingTelexLskTextY(page, 1), 246, 30, ContentAlignment.MiddleRight, color, menuFont);
+            AddBoeingTelexLabel(page, "SPEED REQ>", page.Width - 230, BoeingTelexLskTextY(page, 2), 226, 30, ContentAlignment.MiddleRight, color, menuFont);
+            AddBoeingTelexLabel(page, "OCEANIC CLEARANCE>", page.Width - 310, BoeingTelexLskTextY(page, 3), 306, 30, ContentAlignment.MiddleRight, color, menuFont);
+            AddBoeingTelexLabel(page, "<RETURN", 4, BoeingTelexLskTextY(page, 6), 180, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+
+        private void ShowBoeingAtcPreDepClearance()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcPreDepClearance);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Font valueFont = BoeingTelexValueFont();
+            Color labelColor = Color.FromArgb(206, MainPrimaryTextColor());
+            Color valueColor = MainPrimaryTextColor();
+
+            int leftX = 24;
+            int rightLabelX = page.Width - 166;
+            int rightFieldX = page.Width - 112;
+            int fieldHeight = 24;
+
+            AddBoeingTelexLabel(page, "PRE DEP CLEARANCE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, valueColor, titleFont);
+
+            AddBoeingTelexLabel(page, "ORIG/DEST", leftX, 34, 126, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexLabel(page, AirbusAocDeparture() + "/" + AirbusAocArrival(), leftX, 52, 160, 24, ContentAlignment.MiddleLeft, valueColor, valueFont);
+
+            AddBoeingTelexLabel(page, "ATC CALLSIGN", rightLabelX, 34, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddBoeingTelexLabel(page, AirbusAocCallsign(), rightLabelX, 52, 150, 24, ContentAlignment.MiddleRight, valueColor, valueFont);
+
+            AddBoeingTelexLabel(page, "GATE NUMBER", leftX, 82, 140, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputGate, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingAtcInputGate, string.Empty), leftX, 101, 90, 6, false, fieldHeight);
+
+            AddBoeingTelexLabel(page, "ATIS ID", rightLabelX, 82, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputAtis, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingAtcInputAtis, string.Empty), page.Width - 78, 101, 54, 1, false, fieldHeight);
+
+            AddBoeingTelexLabel(page, "A/C TYPE", leftX, 132, 120, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexLabel(page, AirbusAocAircraft(), leftX, 150, 130, 24, ContentAlignment.MiddleLeft, valueColor, valueFont);
+
+            AddBoeingTelexLabel(page, "STATION", rightLabelX, 132, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingTelexInputStation, AirbusAocDeparture()), rightFieldX, 151, 88, 8, false, fieldHeight);
+
+            AddBoeingTelexLabel(page, "OPTIONAL FREE TEXT", leftX, 178, page.Width - 48, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputFreeText, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingAtcInputFreeText, string.Empty), leftX, 197, page.Width - 48, 160, true, 24);
+
+            AddBoeingAtcBottomActions(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private void ShowBoeingAtcPreDepClearanceSend()
+        {
+            UpdateBoeingTelexSendState();
+            if (!boeingTelexSendReady)
+            {
+                WriteMessage("PRE DEP CLEARANCE NOT READY: COMPLETE REQUIRED FIELDS", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetBoeingTelexInput(BoeingTelexInputStation);
+            string gate = GetBoeingTelexInput(BoeingAtcInputGate);
+            string atis = GetBoeingTelexInput(BoeingAtcInputAtis);
+            string freeText = GetBoeingTelexInput(BoeingAtcInputFreeText);
+
+            string message = string.Format(
+                "REQUEST PREDEP CLEARANCE {0} {1} TO {2} AT {3} STAND {4} ATIS {5}",
+                AirbusAocCallsign(),
+                AirbusAocAircraft(),
+                AirbusAocArrival(),
+                AirbusAocDeparture(),
+                gate,
+                atis);
+
+            if (!string.IsNullOrWhiteSpace(freeText))
+            {
+                message += " " + freeText;
+            }
+
+            boeingTelexConfirmReturnPage = BoeingTelexPage.AtcPreDepClearance;
+            boeingTelexPendingSendKind = BoeingTelexPendingSendKind.PreDepClearance;
+            boeingTelexPendingRecipient = recipient;
+            boeingTelexPendingMessage = message.Trim();
+            boeingTelexPendingTitle = "PRE DEP CLEARANCE";
+            boeingTelexPendingPreview = boeingTelexPendingMessage;
+            boeingTelexPendingAutoRefresh = false;
+            _ = SendBoeingTelexPendingRequestAsync();
+        }
+
+
+        private void ShowBoeingAtcOceanicClearance()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcOceanicClearance);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Font valueFont = BoeingTelexValueFont();
+            Color labelColor = Color.FromArgb(208, MainPrimaryTextColor());
+            Color valueColor = MainPrimaryTextColor();
+
+            int leftX = 20;
+            int midX = 172;
+            int rightX = page.Width - 168;
+            int rightFieldX = page.Width - 108;
+
+            AddBoeingTelexLabel(page, "OCEANIC CLEARANCE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, valueColor, titleFont);
+
+            AddBoeingTelexLabel(page, "CALLSIGN", leftX, 38, 120, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexLabel(page, AirbusAocCallsign(), leftX, 56, 130, 24, ContentAlignment.MiddleLeft, valueColor, valueFont);
+
+            AddBoeingTelexLabel(page, "ENTRY PT", rightX, 38, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputEntryPoint, GetStoredBoeingTelexInput(BoeingTelexPage.AtcOceanicClearance, BoeingAtcInputEntryPoint, string.Empty), page.Width - 134, 57, 116, 10);
+
+            AddBoeingTelexLabel(page, "ETA", leftX, 92, 80, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputEta, GetStoredBoeingTelexInput(BoeingTelexPage.AtcOceanicClearance, BoeingAtcInputEta, string.Empty), leftX, 111, 78, 4);
+
+            AddBoeingTelexLabel(page, "MACH", midX, 92, 80, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputMach, GetStoredBoeingTelexInput(BoeingTelexPage.AtcOceanicClearance, BoeingAtcInputMach, string.Empty), midX, 111, 64, 2);
+
+            AddBoeingTelexLabel(page, "FLT LVL", rightX, 92, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputFlightLevel, GetStoredBoeingTelexInput(BoeingTelexPage.AtcOceanicClearance, BoeingAtcInputFlightLevel, string.Empty), page.Width - 96, 111, 78, 3);
+
+            AddBoeingTelexLabel(page, "REMARKS", leftX, 150, 120, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputRemarks, GetStoredBoeingTelexInput(BoeingTelexPage.AtcOceanicClearance, BoeingAtcInputRemarks, string.Empty), leftX, 170, page.Width - 190, 180, true, 34);
+
+            AddBoeingTelexLabel(page, "RECIPIENT", rightX, 150, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(BoeingTelexPage.AtcOceanicClearance, BoeingTelexInputStation, AirbusAocDeparture()), rightFieldX, 170, 86, 8);
+
+            AddBoeingAtcBottomActions(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private void ShowBoeingAtcOceanicClearanceSend()
+        {
+            UpdateBoeingTelexSendState();
+            if (!boeingTelexSendReady)
+            {
+                WriteMessage("OCEANIC CLEARANCE NOT READY: COMPLETE REQUIRED FIELDS", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetBoeingTelexInput(BoeingTelexInputStation);
+            string entry = GetBoeingTelexInput(BoeingAtcInputEntryPoint);
+            string eta = GetBoeingTelexInput(BoeingAtcInputEta);
+            string mach = GetBoeingTelexInput(BoeingAtcInputMach);
+            string flightLevel = GetBoeingTelexInput(BoeingAtcInputFlightLevel);
+            string remarks = GetBoeingTelexInput(BoeingAtcInputRemarks);
+
+            string message = string.Format(
+                "OCEANIC CLEARANCE REQUEST CALLSIGN {0} ENTRY POINT {1} AT {2} REQ M{3} FL{4}",
+                AirbusAocCallsign(),
+                entry,
+                eta,
+                mach,
+                flightLevel);
+
+            if (!string.IsNullOrWhiteSpace(remarks))
+            {
+                message += " RMKS: " + remarks.Trim();
+            }
+
+            boeingTelexConfirmReturnPage = BoeingTelexPage.AtcOceanicClearance;
+            boeingTelexPendingSendKind = BoeingTelexPendingSendKind.OceanicClearance;
+            boeingTelexPendingRecipient = recipient;
+            boeingTelexPendingMessage = message.Trim();
+            boeingTelexPendingTitle = "OCEANIC CLEARANCE";
+            boeingTelexPendingPreview = boeingTelexPendingMessage;
+            boeingTelexPendingAutoRefresh = false;
+            _ = SendBoeingTelexPendingRequestAsync();
+        }
+
+        private void ShowBoeingAtcDirectRequest()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcDirectRequest);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+            int leftX = 18;
+            int rightEdge = page.Width - 18;
+
+            AddBoeingTelexLabel(page, "DIRECT REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingAtcRecipientField(page, BoeingTelexPage.AtcDirectRequest, leftX, 42);
+
+            AddBoeingTelexLabel(page, "DIRECT TO", 170, 42, 110, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputDirectTo, GetStoredBoeingTelexInput(BoeingTelexPage.AtcDirectRequest, BoeingAtcInputDirectTo, string.Empty), 170, 62, 116, 12);
+
+            AddBoeingTelexLabel(page, "DUE TO", leftX, 100, 90, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexCycleField(page, BoeingTelexPage.AtcDirectRequest, BoeingAtcInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredBoeingTelexInput(BoeingTelexPage.AtcDirectRequest, BoeingAtcInputDueReason, "NONE"), leftX, 120, 70);
+            AddBoeingTelexLabel(page, "NONE / WX / A/C PERF", 104, 120, 260, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+
+            AddBoeingAtcRemarksField(page, BoeingTelexPage.AtcDirectRequest, leftX, 158, rightEdge - leftX, 34);
+            AddBoeingAtcBottomActions(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private void ShowBoeingAtcLevelRequest()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcLevelRequest);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+            int leftX = 18;
+            int rightEdge = page.Width - 18;
+
+            AddBoeingTelexLabel(page, "LEVEL REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingAtcRecipientField(page, BoeingTelexPage.AtcLevelRequest, leftX, 42);
+
+            AddBoeingTelexLabel(page, "REQUESTED FL", 170, 42, 150, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputRequestedFlightLevel, GetStoredBoeingTelexInput(BoeingTelexPage.AtcLevelRequest, BoeingAtcInputRequestedFlightLevel, string.Empty), 170, 62, 74, 3);
+
+            AddBoeingTelexLabel(page, "DUE TO", leftX, 100, 90, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexCycleField(page, BoeingTelexPage.AtcLevelRequest, BoeingAtcInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredBoeingTelexInput(BoeingTelexPage.AtcLevelRequest, BoeingAtcInputDueReason, "NONE"), leftX, 120, 70);
+            AddBoeingTelexLabel(page, "NONE / WX / A/C PERF", 104, 120, 260, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+
+            AddBoeingAtcRemarksField(page, BoeingTelexPage.AtcLevelRequest, leftX, 158, rightEdge - leftX, 34);
+            AddBoeingAtcBottomActions(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private void ShowBoeingAtcSpeedRequest()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcSpeedRequest);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+            int leftX = 18;
+            int rightEdge = page.Width - 18;
+
+            AddBoeingTelexLabel(page, "SPEED REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingAtcRecipientField(page, BoeingTelexPage.AtcSpeedRequest, leftX, 42);
+
+            AddBoeingTelexLabel(page, "MODE", 170, 42, 80, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexCycleField(page, BoeingTelexPage.AtcSpeedRequest, BoeingAtcInputSpeedMode, new[] { "SPEED", "MACH" }, GetStoredBoeingTelexInput(BoeingTelexPage.AtcSpeedRequest, BoeingAtcInputSpeedMode, "SPEED"), 170, 62, 78);
+
+            AddBoeingTelexLabel(page, "VALUE", 270, 42, 80, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingAtcInputSpeedValue, GetStoredBoeingTelexInput(BoeingTelexPage.AtcSpeedRequest, BoeingAtcInputSpeedValue, string.Empty), 270, 62, 74, 4);
+
+            AddBoeingTelexLabel(page, "DUE TO", leftX, 100, 90, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexCycleField(page, BoeingTelexPage.AtcSpeedRequest, BoeingAtcInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredBoeingTelexInput(BoeingTelexPage.AtcSpeedRequest, BoeingAtcInputDueReason, "NONE"), leftX, 120, 70);
+            AddBoeingTelexLabel(page, "NONE / WX / A/C PERF", 104, 120, 260, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+
+            AddBoeingAtcRemarksField(page, BoeingTelexPage.AtcSpeedRequest, leftX, 158, rightEdge - leftX, 34);
+            AddBoeingAtcBottomActions(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private void ShowBoeingAtcWhenCanWeRequest()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcWhenCanWeRequest);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+            int leftX = 18;
+            int rightEdge = page.Width - 18;
+
+            AddBoeingTelexLabel(page, "WHEN CAN WE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingAtcRecipientField(page, BoeingTelexPage.AtcWhenCanWeRequest, leftX, 42);
+
+            string selectedType = GetStoredBoeingTelexInput(BoeingTelexPage.AtcWhenCanWeRequest, BoeingAtcInputWcwType, "HIGHER");
+            AddBoeingTelexLabel(page, "EXPECT", 170, 42, 90, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexCycleField(page, BoeingTelexPage.AtcWhenCanWeRequest, BoeingAtcInputWcwType,
+                new[] { "HIGHER", "LOWER", "BACK ROUTE", "CLIMB", "DESCENT", "MACH", "SPEED", "DIRECT" },
+                selectedType,
+                170, 62, 120);
+
+            bool needsValue = BoeingAtcWhenCanWeNeedsValue(selectedType);
+            int remarksY = needsValue ? 148 : 124;
+            if (needsValue)
+            {
+                AddBoeingTelexLabel(page, "VALUE", 318, 42, 80, 18, ContentAlignment.MiddleLeft, color, captionFont);
+                AddBoeingTelexTextBox(page, BoeingAtcInputWcwValue, GetStoredBoeingTelexInput(BoeingTelexPage.AtcWhenCanWeRequest, BoeingAtcInputWcwValue, string.Empty), 318, 62, 96, 8);
+                AddBoeingTelexLabel(page, "VALUE FOR CLIMB / DESCENT / MACH / SPEED / DIRECT", leftX, 110, page.Width - 36, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            }
+            else
+            {
+                AddBoeingTelexLabel(page, "NO VALUE REQUIRED", leftX, 110, page.Width - 36, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            }
+
+            AddBoeingAtcRemarksField(page, BoeingTelexPage.AtcWhenCanWeRequest, leftX, remarksY, rightEdge - leftX, 34);
+            AddBoeingAtcBottomActions(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private string BuildBoeingAtcRequestMessage()
+        {
+            string message = string.Empty;
+            string remarks = GetBoeingTelexInput(BoeingAtcInputRemarks);
+
+            switch (boeingTelexPage)
+            {
+                case BoeingTelexPage.AtcDirectRequest:
+                    message = "REQUEST DIRECT TO " + GetBoeingTelexInput(BoeingAtcInputDirectTo);
+                    message += BoeingAtcDueReasonText(BoeingTelexPage.AtcDirectRequest);
+                    break;
+
+                case BoeingTelexPage.AtcLevelRequest:
+                    message = "REQUEST FL" + GetBoeingTelexInput(BoeingAtcInputRequestedFlightLevel);
+                    message += BoeingAtcDueReasonText(BoeingTelexPage.AtcLevelRequest);
+                    break;
+
+                case BoeingTelexPage.AtcSpeedRequest:
+                    string mode = GetStoredBoeingTelexInput(BoeingTelexPage.AtcSpeedRequest, BoeingAtcInputSpeedMode, "SPEED").Trim().ToUpperInvariant();
+                    string value = GetBoeingTelexInput(BoeingAtcInputSpeedValue);
+                    message = mode == "MACH" ? "REQUEST M" + value : "REQUEST " + value + "K";
+                    message += BoeingAtcDueReasonText(BoeingTelexPage.AtcSpeedRequest);
+                    break;
+
+                case BoeingTelexPage.AtcWhenCanWeRequest:
+                    string type = GetStoredBoeingTelexInput(BoeingTelexPage.AtcWhenCanWeRequest, BoeingAtcInputWcwType, "HIGHER").Trim().ToUpperInvariant();
+                    string wcwValue = GetBoeingTelexInput(BoeingAtcInputWcwValue);
+                    message = "WHEN CAN WE EXPECT ";
+                    if (type == "HIGHER") message += "HIGHER LEVEL";
+                    else if (type == "LOWER") message += "LOWER LEVEL";
+                    else if (type == "BACK ROUTE") message += "BACK ON ROUTE";
+                    else if (type == "CLIMB") message += "CLIMB TO FL" + wcwValue;
+                    else if (type == "DESCENT") message += "DESCENT TO FL" + wcwValue;
+                    else if (type == "MACH") message += "M" + wcwValue;
+                    else if (type == "SPEED") message += wcwValue + "K";
+                    else if (type == "DIRECT") message += "DIRECT TO " + wcwValue;
+                    break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(remarks))
+            {
+                message = (message + " " + remarks).Trim();
+            }
+
+            return Regex.Replace(message ?? string.Empty, @"\s+", " ").Trim().ToUpperInvariant();
+        }
+
+        private void ShowBoeingAtcRequestSend()
+        {
+            UpdateBoeingTelexSendState();
+            if (!boeingTelexSendReady)
+            {
+                WriteMessage("ATC SEND NOT READY: COMPLETE REQUIRED FIELDS", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetBoeingTelexInput(BoeingTelexInputStation);
+            string parsedMessage = BuildBoeingAtcRequestMessage();
+            if (string.IsNullOrWhiteSpace(parsedMessage))
+            {
+                WriteMessage("ATC SEND NOT READY: NO REQUEST BUILT", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            boeingTelexConfirmReturnPage = boeingTelexPage;
+            boeingTelexPendingSendKind = BoeingTelexPendingSendKind.AtcRequest;
+            boeingTelexPendingRecipient = recipient;
+            boeingTelexPendingMessage = parsedMessage;
+            boeingTelexPendingTitle = "ATC REQUEST";
+            boeingTelexPendingPreview = parsedMessage;
+            boeingTelexPendingAutoRefresh = false;
+            _ = SendBoeingTelexPendingRequestAsync();
+        }
+
+        private void ShowBoeingTelexFreeTextConfirm()
+        {
+            UpdateBoeingTelexSendState();
+            if (!boeingTelexSendReady)
+            {
+                WriteMessage("TELEX SEND NOT READY: ENTER RECIPIENT AND MESSAGE", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetBoeingTelexInput(BoeingTelexInputStation);
+            string message = GetBoeingTelexInput(BoeingTelexInputMessage);
+            boeingTelexConfirmReturnPage = BoeingTelexPage.FreeText;
+            boeingTelexPendingSendKind = BoeingTelexPendingSendKind.FreeText;
+            boeingTelexPendingRecipient = recipient;
+            boeingTelexPendingMessage = message;
+            boeingTelexPendingTitle = "TELEX FREE TEXT";
+            boeingTelexPendingPreview = message;
+            boeingTelexPendingAutoRefresh = false;
+            _ = SendBoeingTelexPendingRequestAsync();
+        }
+
+        private void ShowBoeingTelexInfoConfirm(bool atis)
+        {
+            UpdateBoeingTelexSendState();
+            if (!boeingTelexSendReady)
+            {
+                WriteMessage("TELEX SEND NOT READY: ENTER STATION", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string station = GetBoeingTelexInput(BoeingTelexInputStation);
+            if (!atis)
+            {
+                boeingTelexConfirmReturnPage = BoeingTelexPage.Metar;
+                boeingTelexPendingSendKind = BoeingTelexPendingSendKind.Metar;
+                boeingTelexPendingRecipient = station;
+                boeingTelexPendingMessage = "METAR " + station;
+                boeingTelexPendingTitle = "TELEX METAR REQUEST";
+                boeingTelexPendingPreview = "REQUEST METAR FOR " + station;
+                boeingTelexPendingAutoRefresh = false;
+                _ = SendBoeingTelexPendingRequestAsync();
+                return;
+            }
+
+            string selectedType = GetStoredBoeingTelexInput(BoeingTelexPage.Atis, BoeingTelexInputAtisType, "NONE");
+            if (string.Equals(selectedType, "ARR", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedType = "ARRIVAL";
+            }
+            else if (string.Equals(selectedType, "DEP", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedType = "DEPARTURE";
+            }
+
+            if (!TryResolveAtisRequestTarget(station, selectedType, out string atisRequestIdentifier, out string warning))
+            {
+                WriteMessage(warning, "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string auto = GetStoredBoeingTelexInput(BoeingTelexPage.Atis, BoeingTelexInputAtisAuto, IsAtisAutoRefreshEnabled() ? "ON" : "OFF");
+            boeingTelexConfirmReturnPage = BoeingTelexPage.Atis;
+            boeingTelexPendingSendKind = BoeingTelexPendingSendKind.Atis;
+            boeingTelexPendingRecipient = atisRequestIdentifier;
+            boeingTelexPendingMessage = "VATATIS " + atisRequestIdentifier;
+            boeingTelexPendingTitle = "TELEX ATIS REQUEST";
+            boeingTelexPendingPreview = "REQUEST ATIS FOR " + atisRequestIdentifier;
+            boeingTelexPendingAutoRefresh = string.Equals(auto, "ON", StringComparison.OrdinalIgnoreCase);
+            _ = SendBoeingTelexPendingRequestAsync();
+        }
+
+        private void ShowBoeingTelexSendConfirmPage()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.SendConfirm);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font bodyFont = CreateDpiStablePointFont("Consolas", 10.6f, FontStyle.Bold);
+            Font actionFont = BoeingTelexMenuFont();
+
+            AddBoeingTelexLabel(page, "TELEX SEND CONFIRM", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, MainPrimaryTextColor(), titleFont);
+            AddBoeingTelexLabel(page, boeingTelexPendingTitle, 12, 44, page.Width - 24, 22, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), BoeingTelexValueFont());
+
+            System.Windows.Forms.Label preview = AddBoeingTelexLabel(
+                page,
+                WrapAirbusAocPreviewText(boeingTelexPendingPreview, 42),
+                30,
+                84,
+                Math.Max(1, page.Width - 60),
+                74,
+                ContentAlignment.MiddleLeft,
+                Color.FromArgb(16, 46, 55),
+                bodyFont);
+            preview.BackColor = DcduTheme.Cyan;
+            preview.Padding = new Padding(10, 4, 8, 4);
+
+            int actionY = BoeingTelexActionY(page);
+            AddBoeingTelexLabel(page, "*CANCEL", 4, actionY, 160, 30, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), actionFont);
+            AddBoeingTelexLabel(page, "SEND*", page.Width - 116, actionY, 110, 30, ContentAlignment.MiddleRight, MainPrimaryTextColor(), actionFont);
+        }
+
+        private void ShowBoeingTelexInlineSendStatus(string statusText)
+        {
+            try
+            {
+                if (messageFormatPanel == null || messageFormatPanel.IsDisposed)
+                {
+                    return;
+                }
+
+                Control root = messageFormatPanel.Controls.Count > 0 ? messageFormatPanel.Controls[0] : messageFormatPanel;
+                Font statusFont = BoeingTelexMenuFont();
+                int actionY = BoeingTelexActionY(root);
+                // Overlay the status box directly over the RETURN / SEND line.
+                // This prevents the old labels from looking like active menu options while sending.
+                int statusY = Math.Min(root.Height - 28, Math.Max(0, actionY + 2));
+                string name = "boeingTelexInlineSendStatus";
+
+                foreach (Control existing in root.Controls.Cast<Control>().Where(c => string.Equals(c.Name, name, StringComparison.Ordinal)).ToArray())
+                {
+                    root.Controls.Remove(existing);
+                    existing.Dispose();
+                }
+
+                System.Windows.Forms.Label status = new()
+                {
+                    Name = name,
+                    AutoSize = false,
+                    BackColor = Color.FromArgb(3, 8, 15),
+                    ForeColor = MainPrimaryTextColor(),
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Font = statusFont,
+                    Text = statusText ?? string.Empty,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Location = new Point(4, statusY),
+                    Size = new Size(Math.Max(1, root.Width - 8), 28),
+                    Padding = new Padding(6, 0, 4, 0)
+                };
+
+                root.Controls.Add(status);
+                status.BringToFront();
+            }
+            catch
+            {
+                // Cosmetic status only.
+            }
+        }
+
+        private void ShowBoeingTelexSendStatusPage(string statusText, string title, string previewText)
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.SendConfirm);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font bodyFont = CreateDpiStablePointFont("Consolas", 10.6f, FontStyle.Bold);
+            Font statusFont = CreateDpiStablePointFont("Consolas", 13.0f, FontStyle.Bold);
+
+            AddBoeingTelexLabel(page, statusText ?? string.Empty, 0, 48, page.Width, 30, ContentAlignment.MiddleCenter, DcduTheme.Cyan, statusFont);
+            if (!string.IsNullOrWhiteSpace(previewText))
+            {
+                System.Windows.Forms.Label preview = AddBoeingTelexLabel(
+                    page,
+                    WrapAirbusAocPreviewText(previewText, 42),
+                    30,
+                    100,
+                    Math.Max(1, page.Width - 60),
+                    74,
+                    ContentAlignment.MiddleLeft,
+                    Color.FromArgb(16, 46, 55),
+                    bodyFont);
+                preview.BackColor = DcduTheme.Cyan;
+                preview.Padding = new Padding(10, 4, 8, 4);
+            }
+        }
+
+        private void ReturnFromBoeingTelexConfirm()
+        {
+            BoeingTelexPendingSendKind pendingKind = boeingTelexPendingSendKind;
+            BoeingTelexPage returnPage = boeingTelexConfirmReturnPage;
+            ClearBoeingTelexPendingSend();
+
+            switch (returnPage)
+            {
+                case BoeingTelexPage.FreeText:
+                    ShowBoeingTelexFreeText();
+                    break;
+
+                case BoeingTelexPage.Metar:
+                    ShowBoeingTelexMetarRequest();
+                    break;
+
+                case BoeingTelexPage.Atis:
+                    ShowBoeingTelexAtisRequest();
+                    break;
+
+                case BoeingTelexPage.AtcPreDepClearance:
+                    ShowBoeingAtcPreDepClearance();
+                    break;
+
+                case BoeingTelexPage.AtcOceanicClearance:
+                    ShowBoeingAtcOceanicClearance();
+                    break;
+
+                case BoeingTelexPage.AtcDirectRequest:
+                    ShowBoeingAtcDirectRequest();
+                    break;
+
+                case BoeingTelexPage.AtcLevelRequest:
+                    ShowBoeingAtcLevelRequest();
+                    break;
+
+                case BoeingTelexPage.AtcSpeedRequest:
+                    ShowBoeingAtcSpeedRequest();
+                    break;
+
+                case BoeingTelexPage.AtcWhenCanWeRequest:
+                    ShowBoeingAtcWhenCanWeRequest();
+                    break;
+
+                default:
+                    if (pendingKind == BoeingTelexPendingSendKind.FreeText)
+                    {
+                        ShowBoeingTelexFreeText();
+                    }
+                    else if (pendingKind == BoeingTelexPendingSendKind.Metar)
+                    {
+                        ShowBoeingTelexMetarRequest();
+                    }
+                    else if (pendingKind == BoeingTelexPendingSendKind.Atis)
+                    {
+                        ShowBoeingTelexAtisRequest();
+                    }
+                    else
+                    {
+                        ShowBoeingTelexMenu();
+                    }
+                    break;
+            }
+        }
+
+        private async Task SendBoeingTelexPendingRequestAsync()
+        {
+            BoeingTelexPendingSendKind kind = boeingTelexPendingSendKind;
+            string recipient = boeingTelexPendingRecipient;
+            string message = boeingTelexPendingMessage;
+            string title = boeingTelexPendingTitle;
+            string preview = boeingTelexPendingPreview;
+            bool autoRefresh = boeingTelexPendingAutoRefresh;
+
+            if (kind == BoeingTelexPendingSendKind.None || string.IsNullOrWhiteSpace(recipient))
+            {
+                ReturnFromBoeingTelexConfirm();
+                return;
+            }
+
+            ShowBoeingTelexInlineSendStatus("SENDING....");
+            await Task.Delay(1600);
+            ClearBoeingTelexPendingSend();
+
+            try
+            {
+                switch (kind)
+                {
+                    case BoeingTelexPendingSendKind.FreeText:
+                        WriteMessage("TELEX FREE TEXT", "TELEX", recipient, true);
+                        await SendCPDLCMessage(recipient, "TELEX", message.Trim());
+                        ClearStoredBoeingTelexPage(BoeingTelexPage.FreeText);
+                        break;
+
+                    case BoeingTelexPendingSendKind.Metar:
+                        WriteMessage("METAR REQUEST", "METAR", recipient, true);
+                        ArtificialDelay("METAR " + recipient, "INFOREQ", "REQUEST");
+                        ClearStoredBoeingTelexPage(BoeingTelexPage.Metar);
+                        break;
+
+                    case BoeingTelexPendingSendKind.Atis:
+                        SetAtisAutoRefresh(recipient, autoRefresh);
+                        WriteMessage("ATIS REQUEST", "ATIS", recipient, true);
+                        ArtificialDelay("VATATIS " + recipient, "INFOREQ", "REQUEST");
+                        _ = RefreshVatsimForAtisHoverAsync();
+                        ClearStoredBoeingTelexPage(BoeingTelexPage.Atis);
+                        break;
+
+                    case BoeingTelexPendingSendKind.PreDepClearance:
+                        WriteMessage("PRE DEP CLEARANCE REQUEST", "TELEX", recipient, true);
+                        await SendCPDLCMessage(recipient, "TELEX", message.Trim());
+                        ClearStoredBoeingTelexPage(BoeingTelexPage.AtcPreDepClearance);
+                        break;
+
+                    case BoeingTelexPendingSendKind.OceanicClearance:
+                        WriteMessage("OCEANIC CLEARANCE REQUEST", "CPDLC", recipient, true);
+                        await SendCPDLCMessage(recipient, "CPDLC", message.Trim());
+                        ClearStoredBoeingTelexPage(BoeingTelexPage.AtcOceanicClearance);
+                        break;
+
+                    case BoeingTelexPendingSendKind.AtcRequest:
+                        string atcPacket = (message ?? string.Empty).Trim();
+                        if (!atcPacket.StartsWith("/data2/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            atcPacket = String.Format("/data2/{0}//Y/{1}", messageOutCounter, atcPacket);
+                            messageOutCounter += 1;
+                        }
+
+                        await SendCPDLCMessage(recipient, "CPDLC", atcPacket);
+                        ClearStoredBoeingTelexPage(boeingTelexConfirmReturnPage);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Debug("Boeing TELEX send failed: " + ex.Message);
+                }
+                catch
+                {
+                }
+
+                ShowBoeingTelexInlineSendStatus("SEND FAILED");
+                await Task.Delay(2200);
+                CloseBoeingTelexPages();
+                return;
+            }
+
+            ShowBoeingTelexInlineSendStatus("SENT");
+            await Task.Delay(1700);
+            CloseBoeingTelexPages();
+        }
+
+        private void ClearBoeingTelexPendingSend()
+        {
+            boeingTelexPendingSendKind = BoeingTelexPendingSendKind.None;
+            boeingTelexPendingRecipient = string.Empty;
+            boeingTelexPendingMessage = string.Empty;
+            boeingTelexPendingTitle = string.Empty;
+            boeingTelexPendingPreview = string.Empty;
+            boeingTelexPendingAutoRefresh = false;
+            boeingTelexConfirmReturnPage = BoeingTelexPage.Menu;
+        }
+
+        private void RestoreMainScreenFromEmbeddedPage()
+        {
+            if (messageFormatPanel != null && !messageFormatPanel.IsDisposed)
+            {
+                messageFormatPanel.SuspendLayout();
+                messageFormatPanel.Controls.Clear();
+                messageFormatPanel.Visible = false;
+                messageFormatPanel.Enabled = false;
+                messageFormatPanel.AutoScroll = false;
+                messageFormatPanel.AutoScrollMinSize = Size.Empty;
+                messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
+                messageFormatPanel.WrapContents = false;
+                try
+                {
+                    messageFormatPanel.HorizontalScroll.Enabled = false;
+                    messageFormatPanel.HorizontalScroll.Visible = false;
+                    messageFormatPanel.VerticalScroll.Enabled = false;
+                    messageFormatPanel.VerticalScroll.Visible = false;
+                }
+                catch { }
+                messageFormatPanel.ResumeLayout(false);
+                messageFormatPanel.SendToBack();
+            }
+
+            ApplyMainScreenLayout(DcduStyleManager.IsBoeing);
+            ApplyMainButtonLayout(DcduStyleManager.IsBoeing);
+            SetAirbusAocChromeVisible(true);
+            // Do not call SetSmartWidgetsVisible(true) here: that forces all top badges/actions on,
+            // which differs from the normal startup main screen. Restore via normal status updates below.
+
+            if (outputTable != null && !outputTable.IsDisposed)
+            {
+                outputTable.Visible = true;
+                outputTable.Enabled = true;
+                outputTable.BringToFront();
+                outputTable.PerformLayout();
+                outputTable.Invalidate(true);
+            }
+
+            if (outputScrollBar != null && !outputScrollBar.IsDisposed)
+            {
+                outputScrollBar.Visible = true;
+                outputScrollBar.BringToFront();
+                outputScrollBar.Target = outputTable;
+                outputScrollBar.Invalidate();
+            }
+
+            if (SendingProgress != null && !SendingProgress.IsDisposed)
+            {
+                // Normal main screen must look exactly like startup.
+                // Do not force the white send-progress bar visible after RETURN.
+                SendingProgress.Visible = false;
+                SendingProgress.Value = 0;
+                SendingProgress.SendToBack();
+            }
+
+            try { ActiveControl = null; } catch { }
+
+            UpdateCurrentAtcUnitDisplay();
+            UpdateCallsignDisplay();
+            UpdateFlightPhaseBadge();
+            UpdateSmartStatusLabelColors();
+            UpdateClearanceStatusLabel();
+            ApplySmartWidgetLayout(DcduStyleManager.IsBoeing);
+            HideMainScreenQuickActionButtonsAfterReturn();
+            RefreshVisibleMessageColors();
+            HidePreviewHorizontalScrollbar();
+            HideNativeOutputScrollbars();
+
+            Control[] mainControlsToFront =
+            {
+                statusCaptionLabel, statusValueLabel, atcUnitLabel, atcUnitDisplay,
+                nextAtcUnitLabel, nextAtcUnitDisplay, callsignCaptionLabel, callsignDisplayLabel,
+                routeCaptionLabel, callsignRouteLabel, flightPhaseCaptionLabel, flightPhaseLabel,
+                messageHeaderLabel, messageFilterLabel, clearanceStatusLabel, datalinkStatusLabel,
+                atisStatusLabel, atisAutoStatusLabel, quickWxStatusLabel, cpdlcDiscoveryLabel,
+                callsignUpdateLabel,
+                outputTable, outputScrollBar
+            };
+
+            foreach (Control control in mainControlsToFront)
+            {
+                if (control != null && !control.IsDisposed && control.Visible)
+                {
+                    control.BringToFront();
+                }
+            }
+
+            screenPanel?.PerformLayout();
+            screenPanel?.Invalidate(true);
+            dcduFrame?.Invalidate(true);
+        }
+
+
+        private void CloseBoeingTelexPages()
+        {
+            boeingTelexPage = BoeingTelexPage.None;
+            boeingTelexInputs.Clear();
+            boeingTelexSendLabel = null;
+            boeingTelexSendReady = false;
+            ClearBoeingTelexPendingSend();
+            boeingTelexFormValues.Clear();
+            RestoreMainScreenFromEmbeddedPage();
+        }
+
+        private void PrepareAirbusAocPage(AirbusAocPage page)
+        {
+            if (DcduStyleManager.IsBoeing)
+            {
+                return;
+            }
+
+            embeddedSetupPage = EmbeddedSetupPage.None;
+            airbusAocPage = page;
+            airbusAocInputs.Clear();
+airbusAocSendLabel = null;
+            airbusAocSendReady = false;
+
+            HideQuickWxPopup();
+            HideClearanceTimelinePopup();
+            HideAtisAvailabilityPopup();
+            HideAtisAutoPopup();
+            HideQuickActionButtons();
+            HideCpdlcLogonPopup();
+            HidePdcQuickActionButton();
+
+            SetAirbusAocChromeVisible(false);
+            messageFormatPanel.SuspendLayout();
+            messageFormatPanel.Controls.Clear();
+            messageFormatPanel.Visible = true;
+            messageFormatPanel.Enabled = true;
+            messageFormatPanel.BringToFront();
+            // Use the Airbus LCD area with a small bezel-safe inset.
+            // Text too close to the mask gets clipped on the left/top edges.
+            messageFormatPanel.Location = new Point(12, 10);
+            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - 24), Math.Max(1, screenPanel.Height - 20));
+            messageFormatPanel.Padding = new Padding(0);
+            messageFormatPanel.Margin = new Padding(0);
+            messageFormatPanel.AutoScroll = false;
+            messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
+            messageFormatPanel.WrapContents = false;
+            messageFormatPanel.ResumeLayout(false);
+        }
+
+        private void SetAirbusAocChromeVisible(bool visible)
+        {
+            Control[] controls =
+            {
+                statusCaptionLabel,
+                statusValueLabel,
+                atcUnitLabel,
+                atcUnitDisplay,
+                nextAtcUnitLabel,
+                nextAtcUnitDisplay,
+                callsignCaptionLabel,
+                callsignDisplayLabel,
+                callsignUpdateLabel,
+                routeCaptionLabel,
+                callsignRouteLabel,
+                flightPhaseCaptionLabel,
+                flightPhaseLabel,
+                clearanceStatusLabel,
+                datalinkStatusLabel,
+                atisStatusLabel,
+                atisAutoStatusLabel,
+                quickWxStatusLabel,
+                cpdlcDiscoveryLabel,
+                pdcActionDebugLabel,
+                cpdlcActionDebugLabel,
+                messageFilterLabel,
+                messageHeaderLabel,
+                outputTable,
+                outputScrollBar,
+                SendingProgress
+            };
+
+            foreach (Control control in controls)
+            {
+                if (control != null && !control.IsDisposed)
+                {
+                    control.Visible = visible;
+                }
+            }
+        }
+
+        private Panel CreateAirbusAocCanvas()
+        {
+            Panel canvas = new()
+            {
+                BackColor = Color.Transparent,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Size = messageFormatPanel.ClientSize
+            };
+            messageFormatPanel.Controls.Add(canvas);
+            canvas.BringToFront();
+            return canvas;
+        }
+
+        private int AirbusAocLskTextY(Control parent, int index)
+        {
+            // Physical Airbus DCDU line-select rows for DCDU_Main_V15.
+            // Left LSK text is intentionally a few pixels higher than the old generic row table;
+            // this lines the captions up with the centres of the left hardware keys.
+            int[] preferred = { 20, 62, 104, 146, 196 };
+            int i = Math.Max(0, Math.Min(index - 1, preferred.Length - 1));
+            return Math.Min(preferred[i], Math.Max(0, parent.Height - 34));
+        }
+
+        private int AirbusAocRightLskTextY(Control parent, int index)
+        {
+            // Right hand keys sit slightly lower in the artwork, so keep a separate table.
+            int[] preferred = { 20, 62, 104, 146, 196 };
+            int i = Math.Max(0, Math.Min(index - 1, preferred.Length - 1));
+            return Math.Min(preferred[i], Math.Max(0, parent.Height - 34));
+        }
+
+        private int AirbusAocActionY(Control parent)
+        {
+            // Bottom AOC actions are line-select-key actions, not footer labels.
+            // Keep them on the fifth LSK row so RETURN / SEND visually match the side buttons.
+            return AirbusAocLskTextY(parent, 5);
+        }
+
+        private Font AirbusAocTitleFont()
+        {
+            return CreateDpiStablePointFont("Consolas", 11.9f, FontStyle.Bold);
+        }
+
+        private Font AirbusAocMenuFont()
+        {
+            return CreateDpiStablePointFont("Consolas", 12.3f, FontStyle.Bold);
+        }
+
+        private Font AirbusAocCaptionFont()
+        {
+            return CreateDpiStablePointFont("Consolas", 9.9f, FontStyle.Bold);
+        }
+
+        private Font AirbusAocValueFont()
+        {
+            return CreateDpiStablePointFont("Consolas", 10.8f, FontStyle.Bold);
+        }
+
+        private Font AirbusAocInputFont(bool multiline = false)
+        {
+            // Unified Airbus embedded-page input typography.
+            // Empty compact fields show amber slots; filled values are painted as cyan text only.
+            return CreateDpiStablePointFont("Consolas", multiline ? 9.7f : 11.1f, FontStyle.Bold);
+        }
+
+        private System.Windows.Forms.Label AddAirbusAocLabel(Control parent, string text, int x, int y, int width, int height, ContentAlignment alignment = ContentAlignment.MiddleLeft, Color? color = null, Font font = null)
+        {
+            System.Windows.Forms.Label label = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = color ?? MainPrimaryTextColor(),
+                Font = font ?? AirbusAocMenuFont(),
+                Text = text ?? string.Empty,
+                TextAlign = alignment,
+                Location = new Point(x, y),
+                Size = new Size(width, height),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            parent.Controls.Add(label);
+            return label;
+        }
+
+        private void AddAirbusAocRule(Control parent, int y, int x = 0, int width = -1)
+        {
+            Panel rule = new()
+            {
+                BackColor = Color.Transparent,
+                Location = new Point(x, y),
+                Size = new Size(width < 0 ? Math.Max(1, parent.Width - x) : Math.Max(1, width), 2),
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Enabled = false
+            };
+            rule.Paint += (_, e) =>
+            {
+                using Pen pen = new Pen(Color.FromArgb(155, MainPrimaryTextColor()), 1.0f);
+                e.Graphics.DrawLine(pen, 0, 0, Math.Max(1, rule.Width - 1), 0);
+            };
+            parent.Controls.Add(rule);
+        }
+
+        private void AddAirbusAocVerticalRule(Control parent, int x, int y, int height)
+        {
+            Panel rule = new()
+            {
+                BackColor = Color.Transparent,
+                Location = new Point(x, y),
+                Size = new Size(2, Math.Max(1, height)),
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Enabled = false
+            };
+            rule.Paint += (_, e) =>
+            {
+                using Pen pen = new Pen(Color.FromArgb(165, MainPrimaryTextColor()), 1.0f);
+                e.Graphics.DrawLine(pen, 0, 0, 0, Math.Max(1, rule.Height - 1));
+            };
+            parent.Controls.Add(rule);
+        }
+
+        private string AirbusAocInputStateKey(AirbusAocPage page, string key)
+        {
+            return page.ToString() + ":" + key;
+        }
+
+        private string GetStoredAirbusAocInput(AirbusAocPage page, string key, string defaultValue = "")
+        {
+            return airbusAocFormValues.TryGetValue(AirbusAocInputStateKey(page, key), out string value)
+                ? value
+                : (defaultValue ?? string.Empty);
+        }
+
+        private void SetStoredAirbusAocInput(AirbusAocPage page, string key, string value)
+        {
+            airbusAocFormValues[AirbusAocInputStateKey(page, key)] = value ?? string.Empty;
+        }
+
+        private void ClearStoredAirbusAocPage(AirbusAocPage page)
+        {
+            string prefix = page.ToString() + ":";
+            string[] keys = airbusAocFormValues.Keys.Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray();
+            foreach (string key in keys)
+            {
+                airbusAocFormValues.Remove(key);
+            }
+        }
+
+        private TextBox AddAirbusAocTextBox(Control parent, string key, string text, int x, int y, int width, int maxLength, bool multiline = false, int heightOverride = 0)
+        {
+            int height = heightOverride > 0 ? heightOverride : (multiline ? 38 : 20);
+            if (!multiline)
+            {
+                // Keep the amber Airbus entry slots compact. They are painted manually,
+                // so they do not need normal WinForms textbox width.
+                width = Math.Min(width, Math.Max(18, (maxLength * 8) + 4));
+            }
+            Color frameColor = multiline ? Color.FromArgb(132, MainPrimaryTextColor()) : DcduTheme.Amber;
+            Panel frame = new()
+            {
+                BackColor = Color.Transparent,
+                Location = new Point(x, y),
+                Size = new Size(width, height),
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Cursor = Cursors.IBeam
+            };
+
+            TextBox box = new()
+            {
+                Name = "airbusAoc_" + key,
+                BackColor = Color.FromArgb(2, 8, 20),
+                ForeColor = DcduTheme.Cyan,
+                BorderStyle = BorderStyle.None,
+                CharacterCasing = CharacterCasing.Upper,
+                Font = AirbusAocInputFont(multiline),
+                Location = multiline ? new Point(4, 4) : new Point(2, 2),
+                Size = multiline ? new Size(Math.Max(1, width - 8), Math.Max(1, height - 8)) : new Size(1, 1),
+                MaxLength = maxLength,
+                Text = text ?? string.Empty,
+                Multiline = multiline,
+                WordWrap = true,
+                ScrollBars = ScrollBars.None
+            };
+
+            int emptyFrameWidth = width;
+            bool caretVisible = false;
+            System.Windows.Forms.Timer compactCaretTimer = null;
+
+            void StartCompactCaretBlink()
+            {
+                if (multiline)
+                {
+                    return;
+                }
+
+                caretVisible = true;
+                if (compactCaretTimer == null)
+                {
+                    compactCaretTimer = new System.Windows.Forms.Timer
+                    {
+                        Interval = 520
+                    };
+                    compactCaretTimer.Tick += (_, __) =>
+                    {
+                        if (box.IsDisposed || frame.IsDisposed || !box.Focused)
+                        {
+                            compactCaretTimer.Stop();
+                            caretVisible = false;
+                        }
+                        else
+                        {
+                            caretVisible = !caretVisible;
+                        }
+
+                        frame.Invalidate();
+                    };
+
+                    frame.Disposed += (_, __) =>
+                    {
+                        try
+                        {
+                            compactCaretTimer.Stop();
+                            compactCaretTimer.Dispose();
+                        }
+                        catch
+                        {
+                            // Cosmetic timer cleanup only.
+                        }
+                    };
+                }
+
+                compactCaretTimer.Start();
+                frame.Invalidate();
+            }
+
+            void StopCompactCaretBlink()
+            {
+                if (compactCaretTimer != null)
+                {
+                    compactCaretTimer.Stop();
+                }
+
+                caretVisible = false;
+                frame.Invalidate();
+            }
+
+            void DrawCompactCaret(Graphics graphics, int x)
+            {
+                if (!box.Focused || !caretVisible)
+                {
+                    return;
+                }
+
+                int caretX = Math.Max(1, Math.Min(frame.Width - 2, x));
+                using Pen caretPen = new Pen(DcduTheme.Cyan, 1.0f);
+                graphics.DrawLine(caretPen, caretX, 3, caretX, frame.Height - 4);
+            }
+
+            void SyncCompactTextBoxDisplay()
+            {
+                if (multiline)
+                {
+                    return;
+                }
+
+                string value = (box.Text ?? string.Empty).Trim().ToUpperInvariant();
+                bool hasValue = value.Length > 0;
+                if (hasValue)
+                {
+                    int measured = TextRenderer.MeasureText(value, box.Font, Size.Empty, TextFormatFlags.NoPadding).Width + 6;
+                    int maxAvailable = Math.Max(emptyFrameWidth, parent.ClientSize.Width - frame.Left - 4);
+                    frame.Width = Math.Max(emptyFrameWidth, Math.Min(measured, maxAvailable));
+                }
+                else
+                {
+                    frame.Width = emptyFrameWidth;
+                }
+
+                // Keep the real WinForms TextBox offscreen and use it only for keyboard input.
+                // The visible value is painted manually, which avoids the dark-blue rectangle.
+                box.Location = new Point(-80, -80);
+                box.Size = new Size(1, 1);
+                box.TextAlign = HorizontalAlignment.Left;
+            }
+
+            frame.Paint += (_, e) =>
+            {
+                Rectangle bounds = new Rectangle(0, 0, Math.Max(1, frame.Width - 1), Math.Max(1, frame.Height - 1));
+                using Pen border = new Pen(frameColor, 1.0f);
+
+                if (multiline)
+                {
+                    e.Graphics.DrawRectangle(border, bounds);
+                    return;
+                }
+
+                string value = (box.Text ?? string.Empty).Trim().ToUpperInvariant();
+                bool hasValue = value.Length > 0;
+
+                if (hasValue)
+                {
+                    Rectangle textRect = new Rectangle(0, -1, Math.Max(1, frame.Width + 2), frame.Height + 2);
+                    TextFormatFlags flags =
+                        TextFormatFlags.Left |
+                        TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.NoPadding |
+                        TextFormatFlags.NoClipping |
+                        TextFormatFlags.SingleLine;
+
+                    // Tiny dark shadow/outline only around glyphs, no filled textbox background.
+                    TextRenderer.DrawText(
+                        e.Graphics,
+                        value,
+                        box.Font,
+                        new Rectangle(textRect.Left + 1, textRect.Top + 1, textRect.Width, textRect.Height),
+                        Color.FromArgb(8, 16, 22),
+                        flags);
+
+                    TextRenderer.DrawText(
+                        e.Graphics,
+                        value,
+                        box.Font,
+                        textRect,
+                        DcduTheme.Cyan,
+                        flags);
+
+                    int caretX = TextRenderer.MeasureText(
+                        e.Graphics,
+                        value,
+                        box.Font,
+                        Size.Empty,
+                        TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + 2;
+                    DrawCompactCaret(e.Graphics, caretX);
+
+                    return;
+                }
+
+                // Empty Airbus entry fields show the amber slot boxes as prompts.
+                e.Graphics.DrawRectangle(border, bounds);
+                float slotWidth = frame.Width / (float)Math.Max(1, maxLength);
+                using Pen slotPen = new Pen(Color.FromArgb(176, frameColor), 1.0f);
+                for (int i = 1; i < maxLength; i++)
+                {
+                    int sx = (int)Math.Round(slotWidth * i);
+                    e.Graphics.DrawLine(slotPen, sx, 2, sx, frame.Height - 3);
+                }
+
+                // No focus rectangle here: real Airbus DCDU amber slots do not show a blue selection box.
+                DrawCompactCaret(e.Graphics, 2);
+            };
+
+            box.TextChanged += (_, __) =>
+            {
+                SetStoredAirbusAocInput(airbusAocPage, key, box.Text ?? string.Empty);
+                SyncCompactTextBoxDisplay();
+                UpdateAirbusAocSendState();
+                frame.Invalidate();
+            };
+            box.GotFocus += (_, __) => StartCompactCaretBlink();
+            box.LostFocus += (_, __) => StopCompactCaretBlink();
+            frame.Click += (_, __) => box.Focus();
+            frame.Controls.Add(box);
+            SyncCompactTextBoxDisplay();
+            parent.Controls.Add(frame);
+            frame.BringToFront();
+            airbusAocInputs[key] = box;
+            SetStoredAirbusAocInput(airbusAocPage, key, box.Text ?? string.Empty);
+            return box;
+        }
+
+        private string GetAirbusAocInput(string key)
+        {
+            return airbusAocInputs.TryGetValue(key, out TextBox box)
+                ? (box.Text ?? string.Empty).Trim().ToUpperInvariant()
+                : string.Empty;
+        }
+
+        private ComboBox AddAirbusAocComboBox(Control parent, string[] items, string selectedItem, int x, int y, int width)
+        {
+            ComboBox combo = new()
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(2, 8, 20),
+                ForeColor = DcduTheme.Cyan,
+                Font = AirbusAocInputFont(false),
+                Location = new Point(x, y),
+                Size = new Size(width, 26),
+                IntegralHeight = false,
+                DropDownHeight = 116,
+                Cursor = Cursors.Hand
+            };
+
+            combo.Items.AddRange(items.Cast<object>().ToArray());
+            combo.SelectedItem = combo.Items.Contains(selectedItem) ? selectedItem : (items.Length > 0 ? items[0] : null);
+
+            void OpenDropDown()
+            {
+                try
+                {
+                    combo.Focus();
+                    combo.DroppedDown = true;
+                }
+                catch
+                {
+                    // Cosmetic only; the field can still be changed with keyboard focus.
+                }
+            }
+
+            combo.MouseDown += (_, args) =>
+            {
+                if (args.Button == MouseButtons.Left)
+                {
+                    combo.BeginInvoke((System.Windows.Forms.MethodInvoker)(() => OpenDropDown()));
+                }
+            };
+            combo.Click += (_, __) => combo.BeginInvoke((System.Windows.Forms.MethodInvoker)(() => OpenDropDown()));
+            combo.KeyDown += (_, args) =>
+            {
+                if (args.KeyCode == Keys.Space || args.KeyCode == Keys.Enter || args.KeyCode == Keys.Down)
+                {
+                    OpenDropDown();
+                    args.Handled = true;
+                }
+            };
+
+            parent.Controls.Add(combo);
+            combo.BringToFront();
+            return combo;
+        }
+
+
+
+        private System.Windows.Forms.Label AddAirbusAocCycleBox(Control parent, AirbusAocPage pageKey, string key, string[] items, string selectedItem, int x, int y, int width)
+        {
+            if (items == null || items.Length == 0)
+            {
+                items = new[] { string.Empty };
+            }
+
+            string selected = items.FirstOrDefault(item => string.Equals(item, selectedItem, StringComparison.OrdinalIgnoreCase)) ?? items[0];
+            SetStoredAirbusAocInput(pageKey, key, selected);
+
+            Panel frame = new()
+            {
+                BackColor = Color.Transparent,
+                Location = new Point(x, y),
+                Size = new Size(width, 20),
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Cursor = Cursors.Hand
+            };
+
+            System.Windows.Forms.Label valueLabel = new()
+            {
+                AutoSize = false,
+                BackColor = Color.FromArgb(2, 8, 20),
+                ForeColor = DcduTheme.Cyan,
+                Font = AirbusAocInputFont(false),
+                Text = selected,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(2, 1),
+                Size = new Size(Math.Max(1, width - 4), 18),
+                Padding = new Padding(2, 0, 2, 0),
+                Cursor = Cursors.Hand
+            };
+
+            void Cycle()
+            {
+                string current = valueLabel.Text ?? items[0];
+                int index = Array.FindIndex(items, item => string.Equals(item, current, StringComparison.OrdinalIgnoreCase));
+                index = index < 0 ? 0 : (index + 1) % items.Length;
+                valueLabel.Text = items[index];
+                SetStoredAirbusAocInput(pageKey, key, valueLabel.Text);
+                UpdateAirbusAocSendState();
+                frame.Invalidate();
+
+                if (pageKey == AirbusAocPage.AtcWhenCanWeRequest &&
+                    string.Equals(key, AirbusAocInputWcwType, StringComparison.OrdinalIgnoreCase))
+                {
+                    BeginInvoke((System.Windows.Forms.MethodInvoker)(() => ShowAirbusAtcWhenCanWeRequest()));
+                }
+            }
+
+            frame.Paint += (_, e) =>
+            {
+                Rectangle bounds = new Rectangle(0, 0, Math.Max(1, frame.Width - 1), Math.Max(1, frame.Height - 1));
+                using Pen border = new Pen(DcduTheme.Amber, 1.0f);
+                e.Graphics.DrawRectangle(border, bounds);
+            };
+
+            frame.Click += (_, __) => Cycle();
+            valueLabel.Click += (_, __) => Cycle();
+            frame.Controls.Add(valueLabel);
+            parent.Controls.Add(frame);
+            frame.BringToFront();
+            return valueLabel;
+        }
+
+        private void AddAirbusAocSendPrompt(Control parent, bool includeSend)
+        {
+            int actionY = AirbusAocActionY(parent);
+            Font actionFont = AirbusAocMenuFont();
+            AddAirbusAocLabel(parent, "<RETURN", 14, actionY, 190, 30, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), actionFont);
+            if (includeSend)
+            {
+                airbusAocSendLabel = AddAirbusAocLabel(parent, "SEND", parent.Width - 108, actionY, 96, 30, ContentAlignment.MiddleRight, DcduTheme.Cyan, actionFont);
+            }
+        }
+
+        private string AirbusAocFlightPlanValue(Func<Flight_Plan, string> selector)
+        {
+            try
+            {
+                Flight_Plan plan = userVATSIMData?.flight_plan;
+                string value = plan == null ? string.Empty : selector(plan);
+                return (value ?? string.Empty).Trim().ToUpperInvariant();
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private string AirbusAocDeparture()
+        {
+            return AirbusAocFlightPlanValue(plan => plan.departure);
+        }
+
+        private string AirbusAocArrival()
+        {
+            return AirbusAocFlightPlanValue(plan => plan.arrival);
+        }
+
+        private string AirbusAocAircraft()
+        {
+            string shortType = AirbusAocFlightPlanValue(plan => plan.aircraft_short);
+            if (!string.IsNullOrWhiteSpace(shortType))
+            {
+                return shortType;
+            }
+
+            return AirbusAocFlightPlanValue(plan => plan.aircraft);
+        }
+
+        private string AirbusAocCallsign()
+        {
+            return GetConnectedPilotCallsign();
+        }
+
+        private string GetSuggestedAirbusAocStation()
+        {
+            string station = GetSuggestedWeatherStationForRequests();
+            if (!string.IsNullOrWhiteSpace(station))
+            {
+                return station.Trim().ToUpperInvariant();
+            }
+
+            string departure = AirbusAocDeparture();
+            return string.IsNullOrWhiteSpace(departure) ? AirbusAocArrival() : departure;
+        }
+
+
+        private int AirbusAocLskTextX(bool rightSide, Control parent, int width)
+        {
+            if (rightSide)
+            {
+                return Math.Max(1, parent.Width - width - 14);
+            }
+
+            return 6;
+        }
+
+        private void AddAirbusLskLabel(Control parent, string text, bool rightSide, int index, int width = 220, Color? color = null)
+        {
+            int y = rightSide ? AirbusAocRightLskTextY(parent, index) : AirbusAocLskTextY(parent, index);
+            int x = AirbusAocLskTextX(rightSide, parent, width);
+            AddAirbusAocLabel(
+                parent,
+                text,
+                x,
+                y,
+                width,
+                32,
+                rightSide ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
+                color ?? MainPrimaryTextColor(),
+                AirbusAocMenuFont());
+        }
+
+        private void ShowAirbusAtcMainMenu()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcMainMenu);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font menuFont = AirbusAocMenuFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            int leftMenuX = 8;
+            int rightMenuX = page.Width - 214;
+
+            AddAirbusAocLabel(page, "ATC MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "<LAT REQ", leftMenuX, AirbusAocLskTextY(page, 1), 210, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+            AddAirbusAocLabel(page, "VERT REQ>", rightMenuX, AirbusAocRightLskTextY(page, 1), 202, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<WHEN CAN WE", leftMenuX, AirbusAocLskTextY(page, 2), 250, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+            AddAirbusAocLabel(page, "OTHER REQ>", rightMenuX, AirbusAocRightLskTextY(page, 2), 202, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<RETURN", leftMenuX, AirbusAocLskTextY(page, 5), 190, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+        }
+
+        private void HandleAirbusAtcMainMenuLineSelect(bool rightSide, int index)
+        {
+            if (!rightSide && index == 1)
+            {
+                ShowAirbusAtcDirectRequest();
+            }
+            else if (rightSide && index == 1)
+            {
+                ShowAirbusAtcLevelRequest();
+            }
+            else if (!rightSide && index == 2)
+            {
+                ShowAirbusAtcWhenCanWeRequest();
+            }
+            else if (rightSide && index == 2)
+            {
+                ShowAirbusAtcSpeedRequest();
+            }
+            else if (!rightSide && index == 5)
+            {
+                CloseAirbusAocPages();
+            }
+        }
+
+        private string GetAirbusAtcDefaultRecipient()
+        {
+            if (!string.IsNullOrWhiteSpace(CurrentATCUnit))
+            {
+                return CurrentATCUnit.Trim().ToUpperInvariant();
+            }
+
+            if (!string.IsNullOrWhiteSpace(pendingLogon))
+            {
+                return pendingLogon.Trim().ToUpperInvariant();
+            }
+
+            return string.Empty;
+        }
+
+        private string AirbusAtcDueReasonText(AirbusAocPage page)
+        {
+            string reason = GetStoredAirbusAocInput(page, AirbusAocInputDueReason, "NONE").Trim().ToUpperInvariant();
+            return reason switch
+            {
+                "WX" => " DUE TO WEATHER",
+                "A/C" => " DUE TO PERFORMANCE",
+                "PERF" => " DUE TO PERFORMANCE",
+                _ => string.Empty
+            };
+        }
+
+        private bool AirbusAtcWhenCanWeNeedsValue(string type)
+        {
+            string normalized = (type ?? string.Empty).Trim().ToUpperInvariant();
+            return normalized == "CLIMB" || normalized == "DESCENT" || normalized == "MACH" || normalized == "SPEED" || normalized == "DIRECT";
+        }
+
+        private void AddAirbusAtcBottomActions(Panel page, string returnText = "<ATC MENU")
+        {
+            Font actionFont = AirbusAocMenuFont();
+            int actionY = AirbusAocActionY(page);
+            Color labelColor = MainPrimaryTextColor();
+            AddAirbusAocLabel(page, returnText, 8, actionY, 220, 30, ContentAlignment.MiddleLeft, labelColor, actionFont);
+            airbusAocSendLabel = AddAirbusAocLabel(page, "SEND", page.Width - 110, actionY, 98, 30, ContentAlignment.MiddleRight, DcduTheme.Cyan, actionFont);
+        }
+
+        private void AddAirbusAtcRecipientField(Panel page, AirbusAocPage pageKey, int x, int y)
+        {
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+            AddAirbusAocLabel(page, "RECIPIENT", x, y, 120, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputStation, GetStoredAirbusAocInput(pageKey, AirbusAocInputStation, GetAirbusAtcDefaultRecipient()), x, y + 18, 34, 4);
+        }
+
+        private void AddAirbusAtcRemarksField(Panel page, AirbusAocPage pageKey, int x, int y, int width, int height)
+        {
+            AddAirbusAocLabel(page, "REMARKS", x, y, width, 18, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), AirbusAocCaptionFont());
+            AddAirbusAocTextBox(page, AirbusAocInputRemarks, GetStoredAirbusAocInput(pageKey, AirbusAocInputRemarks, string.Empty), x, y + 18, width, 160, true, height);
+        }
+
+        private void ShowAirbusAtcDirectRequest()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcDirectRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+            int leftX = 22;
+            int rightEdge = page.Width - 22;
+
+            AddAirbusAocLabel(page, "DIRECT REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAtcRecipientField(page, AirbusAocPage.AtcDirectRequest, leftX, 38);
+
+            AddAirbusAocLabel(page, "DIRECT TO", leftX + 150, 38, 120, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputDirectTo, GetStoredAirbusAocInput(AirbusAocPage.AtcDirectRequest, AirbusAocInputDirectTo, string.Empty), leftX + 150, 56, 58, 7);
+
+            AddAirbusAocLabel(page, "DUE TO", leftX, 88, 90, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcDirectRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcDirectRequest, AirbusAocInputDueReason, "NONE"), leftX, 106, 48);
+            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 64, 106, 250, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+
+            AddAirbusAtcRemarksField(page, AirbusAocPage.AtcDirectRequest, leftX, 134, rightEdge - leftX, Math.Max(34, AirbusAocActionY(page) - 156));
+            AddAirbusAtcBottomActions(page);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private void ShowAirbusAtcLevelRequest()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcLevelRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+            int leftX = 22;
+            int rightEdge = page.Width - 22;
+
+            AddAirbusAocLabel(page, "LEVEL REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAtcRecipientField(page, AirbusAocPage.AtcLevelRequest, leftX, 38);
+
+            AddAirbusAocLabel(page, "REQUESTED FL", leftX + 150, 38, 140, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputRequestedFlightLevel, GetStoredAirbusAocInput(AirbusAocPage.AtcLevelRequest, AirbusAocInputRequestedFlightLevel, string.Empty), leftX + 150, 56, 26, 3);
+
+            AddAirbusAocLabel(page, "DUE TO", leftX, 88, 90, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcLevelRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcLevelRequest, AirbusAocInputDueReason, "NONE"), leftX, 106, 48);
+            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 64, 106, 250, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+
+            AddAirbusAtcRemarksField(page, AirbusAocPage.AtcLevelRequest, leftX, 134, rightEdge - leftX, Math.Max(34, AirbusAocActionY(page) - 156));
+            AddAirbusAtcBottomActions(page);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private void ShowAirbusAtcSpeedRequest()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcSpeedRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+            int leftX = 22;
+            int rightEdge = page.Width - 22;
+
+            AddAirbusAocLabel(page, "SPEED REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAtcRecipientField(page, AirbusAocPage.AtcSpeedRequest, leftX, 38);
+
+            AddAirbusAocLabel(page, "MODE", leftX + 150, 38, 70, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedMode, new[] { "MACH", "SPEED" }, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedMode, "SPEED"), leftX + 150, 56, 58);
+            AddAirbusAocLabel(page, "VALUE", leftX + 230, 38, 70, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputSpeedValue, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedValue, string.Empty), leftX + 230, 56, 30, 3);
+
+            AddAirbusAocLabel(page, "DUE TO", leftX, 88, 90, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcSpeedRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputDueReason, "NONE"), leftX, 106, 48);
+            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 64, 106, 250, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+
+            AddAirbusAtcRemarksField(page, AirbusAocPage.AtcSpeedRequest, leftX, 134, rightEdge - leftX, Math.Max(34, AirbusAocActionY(page) - 156));
+            AddAirbusAtcBottomActions(page);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private void ShowAirbusAtcWhenCanWeRequest()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcWhenCanWeRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+            int leftX = 22;
+            int rightEdge = page.Width - 22;
+
+            AddAirbusAocLabel(page, "WHEN CAN WE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAtcRecipientField(page, AirbusAocPage.AtcWhenCanWeRequest, leftX, 38);
+
+            AddAirbusAocLabel(page, "EXPECT", leftX + 150, 38, 110, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            string selectedWcwType = GetStoredAirbusAocInput(AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwType, "HIGHER");
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwType,
+                new[] { "HIGHER", "LOWER", "BACK ROUTE", "CLIMB", "DESCENT", "MACH", "SPEED", "DIRECT" },
+                selectedWcwType,
+                leftX + 150, 56, 88);
+
+            bool wcwNeedsValue = AirbusAtcWhenCanWeNeedsValue(selectedWcwType);
+            int remarksY = wcwNeedsValue ? 122 : 98;
+            int remarksBottomOffset = wcwNeedsValue ? 144 : 120;
+
+            if (wcwNeedsValue)
+            {
+                AddAirbusAocLabel(page, "VALUE", leftX + 260, 38, 70, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+                AddAirbusAocTextBox(page, AirbusAocInputWcwValue, GetStoredAirbusAocInput(AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwValue, string.Empty), leftX + 260, 56, 58, 7);
+                AddAirbusAocLabel(page, "VALUE FOR CLIMB / DESCENT / MACH / SPEED / DIRECT", leftX, 92, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            }
+            else
+            {
+                AddAirbusAocLabel(page, "NO VALUE REQUIRED", leftX, 92, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            }
+
+            AddAirbusAtcRemarksField(page, AirbusAocPage.AtcWhenCanWeRequest, leftX, remarksY, rightEdge - leftX, Math.Max(34, AirbusAocActionY(page) - remarksBottomOffset));
+            AddAirbusAtcBottomActions(page);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private string BuildAirbusAtcRequestMessage()
+        {
+            string message = string.Empty;
+            string remarks = GetAirbusAocInput(AirbusAocInputRemarks);
+            switch (airbusAocPage)
+            {
+                case AirbusAocPage.AtcDirectRequest:
+                    message = "REQUEST DIRECT TO " + GetAirbusAocInput(AirbusAocInputDirectTo);
+                    message += AirbusAtcDueReasonText(AirbusAocPage.AtcDirectRequest);
+                    break;
+
+                case AirbusAocPage.AtcLevelRequest:
+                    message = "REQUEST FL" + GetAirbusAocInput(AirbusAocInputRequestedFlightLevel);
+                    message += AirbusAtcDueReasonText(AirbusAocPage.AtcLevelRequest);
+                    break;
+
+                case AirbusAocPage.AtcSpeedRequest:
+                    string mode = GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedMode, "SPEED").Trim().ToUpperInvariant();
+                    string value = GetAirbusAocInput(AirbusAocInputSpeedValue);
+                    message = mode == "MACH" ? "REQUEST M" + value : "REQUEST " + value + "K";
+                    message += AirbusAtcDueReasonText(AirbusAocPage.AtcSpeedRequest);
+                    break;
+
+                case AirbusAocPage.AtcWhenCanWeRequest:
+                    string type = GetStoredAirbusAocInput(AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwType, "HIGHER").Trim().ToUpperInvariant();
+                    string wcwValue = GetAirbusAocInput(AirbusAocInputWcwValue);
+                    message = "WHEN CAN WE EXPECT ";
+                    if (type == "HIGHER") message += "HIGHER LEVEL";
+                    else if (type == "LOWER") message += "LOWER LEVEL";
+                    else if (type == "BACK ROUTE") message += "BACK ON ROUTE";
+                    else if (type == "CLIMB") message += "CLIMB TO FL" + wcwValue;
+                    else if (type == "DESCENT") message += "DESCENT TO FL" + wcwValue;
+                    else if (type == "MACH") message += "M" + wcwValue;
+                    else if (type == "SPEED") message += wcwValue + "K";
+                    else if (type == "DIRECT") message += "DIRECT TO " + wcwValue;
+                    break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(remarks))
+            {
+                message = (message + " " + remarks).Trim();
+            }
+
+            return Regex.Replace(message ?? string.Empty, @"\s+", " ").Trim().ToUpperInvariant();
+        }
+
+        private void ShowAirbusAtcRequestConfirm()
+        {
+            UpdateAirbusAocSendState();
+            if (!airbusAocSendReady)
+            {
+                WriteMessage("ATC SEND NOT READY: COMPLETE REQUIRED FIELDS", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            AirbusAocPage returnPage = airbusAocPage;
+            string recipient = GetAirbusAocInput(AirbusAocInputStation);
+            string parsedMessage = BuildAirbusAtcRequestMessage();
+            if (string.IsNullOrWhiteSpace(parsedMessage))
+            {
+                WriteMessage("ATC SEND NOT READY: NO REQUEST BUILT", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            airbusAocConfirmReturnPage = returnPage;
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.AtcRequest;
+            airbusAocPendingRecipient = recipient;
+            airbusAocPendingMessage = parsedMessage;
+            airbusAocPendingTitle = "ATC REQUEST";
+            airbusAocPendingInfo = "TO " + recipient;
+            airbusAocPendingPreview = parsedMessage;
+            airbusAocPendingAutoRefresh = false;
+            ShowAirbusAocSendConfirmPage();
+        }
+
+        private void ShowAirbusAtcTextRequest(string title, string prefill)
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcTextRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+            int leftX = 22;
+            int rightEdge = page.Width - 22;
+            int actionY = AirbusAocActionY(page);
+
+            AddAirbusAocLabel(page, title ?? "ATC TEXT REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAtcRecipientField(page, AirbusAocPage.AtcTextRequest, leftX, 38);
+            AddAirbusAocLabel(page, "ENTER ATC REQUEST TEXT", leftX, 82, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputFreeText, GetStoredAirbusAocInput(AirbusAocPage.AtcTextRequest, AirbusAocInputFreeText, prefill ?? string.Empty), leftX, 100, rightEdge - leftX, 220, true, Math.Max(40, actionY - 122));
+            AddAirbusAtcBottomActions(page);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private void ShowAirbusAtcTextConfirm()
+        {
+            UpdateAirbusAocSendState();
+            if (!airbusAocSendReady)
+            {
+                WriteMessage("ATC SEND NOT READY: ENTER RECIPIENT AND TEXT", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetAirbusAocInput(AirbusAocInputStation);
+            string message = GetAirbusAocInput(AirbusAocInputFreeText).Trim().ToUpperInvariant();
+            airbusAocConfirmReturnPage = AirbusAocPage.AtcTextRequest;
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.AtcRequest;
+            airbusAocPendingRecipient = recipient;
+            airbusAocPendingMessage = message;
+            airbusAocPendingTitle = "ATC REQUEST";
+            airbusAocPendingInfo = "TO " + recipient;
+            airbusAocPendingPreview = message;
+            airbusAocPendingAutoRefresh = false;
+            ShowAirbusAocSendConfirmPage();
+        }
+
+        private void ShowAirbusAtcQuickConfirm(string title, string message)
+        {
+            string recipient = GetAirbusAtcDefaultRecipient();
+            if (string.IsNullOrWhiteSpace(recipient))
+            {
+                ShowAirbusAtcTextRequest(title, message);
+                return;
+            }
+
+            airbusAocConfirmReturnPage = AirbusAocPage.AtcMainMenu;
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.AtcRequest;
+            airbusAocPendingRecipient = recipient;
+            airbusAocPendingMessage = (message ?? string.Empty).Trim().ToUpperInvariant();
+            airbusAocPendingTitle = "ATC REQUEST";
+            airbusAocPendingInfo = "TO " + recipient;
+            airbusAocPendingPreview = airbusAocPendingMessage;
+            airbusAocPendingAutoRefresh = false;
+            ShowAirbusAocSendConfirmPage();
+        }
+
+        private void HandleAirbusAtcLatMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+        private void HandleAirbusAtcVertMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+        private void HandleAirbusAtcWhenCanWeMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+        private void HandleAirbusAtcOtherMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+        private void HandleAirbusAtcReportsMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+        private void HandleAirbusAtcConnectionMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+        private void HandleAirbusAtcEmergencyMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+
+        private void ShowAirbusAocMainMenu()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.MainMenu);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font menuFont = AirbusAocMenuFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            int leftMenuX = 8;
+            int rightMenuX = page.Width - 218;
+
+            AddAirbusAocLabel(page, "AOC MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "<ATC REQUEST", leftMenuX, AirbusAocLskTextY(page, 1), 250, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+            AddAirbusAocLabel(page, "WX REQUEST>", rightMenuX, AirbusAocRightLskTextY(page, 1), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<ATIS REQUEST", leftMenuX, AirbusAocLskTextY(page, 2), 260, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+            AddAirbusAocLabel(page, "FREE TEXT>", rightMenuX, AirbusAocRightLskTextY(page, 2), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<RETURN", leftMenuX, AirbusAocLskTextY(page, 5), 190, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+        }
+
+        private void ShowAirbusAocAtcRequestMenu()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcRequestMenu);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font menuFont = AirbusAocMenuFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            int leftMenuX = 8;
+
+            AddAirbusAocLabel(page, "AOC ATC REQUEST MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "<PRE DEP CLEARANCE", leftMenuX, AirbusAocLskTextY(page, 1), 290, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<OCEANIC CLEARANCE", leftMenuX, AirbusAocLskTextY(page, 2), 290, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<AOC MENU", leftMenuX, AirbusAocLskTextY(page, 5), 210, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+        }
+
+        private void ShowAirbusAocPreDepClearance()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.PreDepClearance);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Font valueFont = AirbusAocValueFont();
+            Font actionFont = AirbusAocMenuFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            string departure = AirbusAocDeparture();
+            string arrival = AirbusAocArrival();
+            string callsignText = AirbusAocCallsign();
+            string aircraft = AirbusAocAircraft();
+            string station = string.IsNullOrWhiteSpace(pdcDiscoveryLogonCode) ? departure : pdcDiscoveryLogonCode.Trim().ToUpperInvariant();
+            string atisLetter = GetBestDepartureAtisLetter(departure);
+
+            int leftX = 28;
+            int rightEdge = page.Width - 24;
+            int rightX = Math.Max(270, rightEdge - 132);
+            int actionY = AirbusAocActionY(page);
+
+            int row1LabelY = 28;
+            int row1ValueY = 43;
+            int row2LabelY = 62;
+            int row2BoxY = 77;
+            int row3LabelY = 100;
+            int row3ValueY = 115;
+            int freeLabelY = 136;
+            int freeBoxY = 151;
+            int freeHeight = Math.Max(26, actionY - freeBoxY - 6);
+
+            AddAirbusAocLabel(page, "AOC DEPARTURE REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "ORIG/DEST", leftX, row1LabelY, 130, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocLabel(page, "ATC CALLSIGN", rightX, row1LabelY, rightEdge - rightX, 16, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddAirbusAocLabel(page, (departure + "/" + arrival).Trim('/'), leftX, row1ValueY, 190, 20, ContentAlignment.MiddleLeft, DcduTheme.Cyan, valueFont);
+            AddAirbusAocLabel(page, callsignText, rightX, row1ValueY, rightEdge - rightX, 20, ContentAlignment.MiddleRight, DcduTheme.Cyan, valueFont);
+
+            AddAirbusAocLabel(page, "GATE NUMBER", leftX, row2LabelY, 150, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocLabel(page, "ATIS ID", rightEdge - 78, row2LabelY, 78, 16, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputGate, GetStoredAirbusAocInput(AirbusAocPage.PreDepClearance, AirbusAocInputGate, string.Empty), leftX, row2BoxY, 66, 8);
+            AddAirbusAocTextBox(page, AirbusAocInputAtis, GetStoredAirbusAocInput(AirbusAocPage.PreDepClearance, AirbusAocInputAtis, atisLetter), rightEdge - 17, row2BoxY, 17, 1);
+
+            AddAirbusAocLabel(page, "A/C TYPE", leftX, row3LabelY, 100, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocLabel(page, "STATION", rightEdge - 90, row3LabelY, 90, 16, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddAirbusAocLabel(page, aircraft, leftX, row3ValueY, 110, 20, ContentAlignment.MiddleLeft, DcduTheme.Cyan, valueFont);
+            AddAirbusAocTextBox(page, AirbusAocInputStation, GetStoredAirbusAocInput(AirbusAocPage.PreDepClearance, AirbusAocInputStation, station), rightEdge - 34, row3ValueY, 34, 4);
+
+            AddAirbusAocLabel(page, "ENTER OPTIONAL FREE TEXT", leftX, freeLabelY, rightEdge - leftX, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputFreeText, GetStoredAirbusAocInput(AirbusAocPage.PreDepClearance, AirbusAocInputFreeText, string.Empty), leftX, freeBoxY, rightEdge - leftX, 160, true, freeHeight);
+
+            AddAirbusAocLabel(page, "<ATC REQ MENU", 14, actionY, 245, 30, ContentAlignment.MiddleLeft, labelColor, actionFont);
+            airbusAocSendLabel = AddAirbusAocLabel(page, "SEND", page.Width - 108, actionY, 96, 30, ContentAlignment.MiddleRight, DcduTheme.Cyan, actionFont);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private void ShowAirbusAocOceanicClearance()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.OceanicClearance);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Font valueFont = AirbusAocValueFont();
+            Font actionFont = AirbusAocMenuFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            string callsignText = AirbusAocCallsign();
+            int leftX = 28;
+            int rightEdge = page.Width - 24;
+            int rightX = Math.Max(292, rightEdge - 122);
+            int actionY = AirbusAocActionY(page);
+
+            int row1LabelY = 28;
+            int row1ValueY = 44;
+            int row2LabelY = 66;
+            int row2BoxY = 82;
+            int row3LabelY = 103;
+            int row3BoxY = 118;
+            int freeLabelY = 138;
+            int freeBoxY = 153;
+            int freeHeight = Math.Max(26, actionY - freeBoxY - 6);
+
+            AddAirbusAocLabel(page, "AOC OCEANIC CLEARANCE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "CALLSIGN", leftX, row1LabelY, 120, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocLabel(page, "ENTRY PT", rightX, row1LabelY, rightEdge - rightX, 16, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddAirbusAocLabel(page, callsignText, leftX, row1ValueY, 150, 20, ContentAlignment.MiddleLeft, DcduTheme.Cyan, valueFont);
+            AddAirbusAocTextBox(page, AirbusAocInputEntryPoint, GetStoredAirbusAocInput(AirbusAocPage.OceanicClearance, AirbusAocInputEntryPoint, string.Empty), rightEdge - 58, row1ValueY, 58, 7);
+
+            AddAirbusAocLabel(page, "ETA", leftX, row2LabelY, 80, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocLabel(page, "MACH", 185, row2LabelY, 70, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocLabel(page, "FLT LVL", rightEdge - 88, row2LabelY, 88, 16, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputEta, GetStoredAirbusAocInput(AirbusAocPage.OceanicClearance, AirbusAocInputEta, string.Empty), leftX, row2BoxY, 34, 4);
+            AddAirbusAocLabel(page, "M0.", 184, row2BoxY, 34, 20, ContentAlignment.MiddleLeft, labelColor, valueFont);
+            AddAirbusAocTextBox(page, AirbusAocInputMach, GetStoredAirbusAocInput(AirbusAocPage.OceanicClearance, AirbusAocInputMach, string.Empty), 214, row2BoxY, 20, 2);
+            AddAirbusAocTextBox(page, AirbusAocInputFlightLevel, GetStoredAirbusAocInput(AirbusAocPage.OceanicClearance, AirbusAocInputFlightLevel, string.Empty), rightEdge - 26, row2BoxY, 26, 3);
+
+            AddAirbusAocLabel(page, "RECIPIENT", rightEdge - 98, row3LabelY, 98, 16, ContentAlignment.MiddleRight, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputStation, GetStoredAirbusAocInput(AirbusAocPage.OceanicClearance, AirbusAocInputStation, CurrentATCUnit ?? string.Empty), rightEdge - 34, row3BoxY, 34, 4);
+
+            AddAirbusAocLabel(page, "ENTER OPTIONAL FREE TEXT", leftX, freeLabelY, rightEdge - leftX, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputRemarks, GetStoredAirbusAocInput(AirbusAocPage.OceanicClearance, AirbusAocInputRemarks, string.Empty), leftX, freeBoxY, rightEdge - leftX, 160, true, freeHeight);
+
+            AddAirbusAocLabel(page, "<ATC REQ MENU", 14, actionY, 245, 30, ContentAlignment.MiddleLeft, labelColor, actionFont);
+            airbusAocSendLabel = AddAirbusAocLabel(page, "SEND", page.Width - 108, actionY, 96, 30, ContentAlignment.MiddleRight, DcduTheme.Cyan, actionFont);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private void ShowAirbusAocWeatherRequest(bool atis)
+        {
+            PrepareAirbusAocPage(atis ? AirbusAocPage.AtisRequest : AirbusAocPage.WxRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            int leftX = 28;
+            int rightEdge = page.Width - 28;
+            int labelY = 48;
+            int boxY = 64;
+
+            AddAirbusAocLabel(page, atis ? "AOC ATIS REQUEST" : "AOC WX REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "STATION", leftX, labelY, 110, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputStation, GetStoredAirbusAocInput(atis ? AirbusAocPage.AtisRequest : AirbusAocPage.WxRequest, AirbusAocInputStation, GetSuggestedAirbusAocStation()), leftX, boxY, 34, 4);
+
+            if (atis)
+            {
+                int typeX = 174;
+                int autoX = 330;
+                AddAirbusAocLabel(page, "TYPE", typeX, labelY, 70, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+                string storedAtisType = GetStoredAirbusAocInput(AirbusAocPage.AtisRequest, AirbusAocInputAtisType, "NONE");
+                AddAirbusAocCycleBox(page, AirbusAocPage.AtisRequest, AirbusAocInputAtisType, new[] { "NONE", "ARR", "DEP" }, storedAtisType, typeX, boxY, 58);
+
+                AddAirbusAocLabel(page, "AUTO", autoX, labelY, 70, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+                string storedAtisAuto = GetStoredAirbusAocInput(AirbusAocPage.AtisRequest, AirbusAocInputAtisAuto, IsAtisAutoRefreshEnabled() ? "ON" : "OFF");
+                AddAirbusAocCycleBox(page, AirbusAocPage.AtisRequest, AirbusAocInputAtisAuto, new[] { "OFF", "ON" }, storedAtisAuto, autoX, boxY, 44);
+
+                AddAirbusAocRule(page, boxY + 30, leftX, rightEdge - leftX);
+                AddAirbusAocLabel(page, "NONE = ICAO    ARR = ICAO_A    DEP = ICAO_D", leftX, boxY + 40, rightEdge - leftX, 20, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            }
+            else
+            {
+                AddAirbusAocRule(page, boxY + 30, leftX, rightEdge - leftX);
+                AddAirbusAocLabel(page, "ENTER ICAO OF DEP / ARR AERODROME", leftX, boxY + 40, rightEdge - leftX, 20, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            }
+
+            AddAirbusAocSendPrompt(page, true);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private string GetSuggestedAirbusAocFreeTextRecipient()
+        {
+            string currentAtc = (CurrentATCUnit ?? string.Empty).Trim().ToUpperInvariant();
+            if (currentAtc.Length >= 4)
+            {
+                return currentAtc;
+            }
+
+            string station = GetSuggestedAirbusAocStation();
+            return string.IsNullOrWhiteSpace(station) ? string.Empty : station.Trim().ToUpperInvariant();
+        }
+
+        private void ShowAirbusAocFreeTextRequest()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.FreeTextRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Font hintFont = CreateDpiStablePointFont("Consolas", 9.0f, FontStyle.Bold);
+            Color labelColor = MainPrimaryTextColor();
+
+            int leftX = 28;
+            int rightEdge = page.Width - 28;
+            int actionY = AirbusAocActionY(page);
+
+            AddAirbusAocLabel(page, "AOC FREE TEXT", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "SEND A CUSTOM MESSAGE VIA HOPPIE", leftX, 30, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, Color.FromArgb(150, MainPrimaryTextColor()), hintFont);
+
+            AddAirbusAocLabel(page, "TO", leftX, 58, 90, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputStation, GetStoredAirbusAocInput(AirbusAocPage.FreeTextRequest, AirbusAocInputStation, string.Empty), leftX, 76, 42, 8);
+
+            AddAirbusAocLabel(page, "MSG", leftX, 110, 90, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocLabel(page, "MAX 255 CHARS", rightEdge - 150, 110, 150, 16, ContentAlignment.MiddleRight, Color.FromArgb(150, MainPrimaryTextColor()), hintFont);
+            AddAirbusAocTextBox(page, AirbusAocInputFreeText, GetStoredAirbusAocInput(AirbusAocPage.FreeTextRequest, AirbusAocInputFreeText, string.Empty), leftX, 130, rightEdge - leftX, 255, true, Math.Max(48, actionY - 154));
+
+            AddAirbusAocSendPrompt(page, true);
+            UpdateAirbusAocSendState();
+            FocusFirstAirbusAocInput();
+        }
+
+        private void ShowAirbusAocFreeTextConfirm()
+        {
+            UpdateAirbusAocSendState();
+            if (!airbusAocSendReady)
+            {
+                WriteMessage("AOC FREE TEXT NOT READY: ENTER RECIPIENT AND MESSAGE", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetAirbusAocInput(AirbusAocInputStation);
+            string message = GetAirbusAocInput(AirbusAocInputFreeText).Trim().ToUpperInvariant();
+
+            airbusAocConfirmReturnPage = AirbusAocPage.FreeTextRequest;
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.FreeTextRequest;
+            airbusAocPendingRecipient = recipient;
+            airbusAocPendingMessage = message;
+            airbusAocPendingTitle = "AOC FREE TEXT";
+            airbusAocPendingInfo = "TO " + recipient;
+            airbusAocPendingPreview = message;
+            airbusAocPendingAutoRefresh = false;
+            ShowAirbusAocSendConfirmPage();
+        }
+
+        private void FocusFirstAirbusAocInput()
+        {
+            try
+            {
+                TextBox first = airbusAocInputs.Values.FirstOrDefault();
+                first?.Focus();
+            }
+            catch
+            {
+            }
+        }
+
+        private void UpdateAirbusAocSendState()
+        {
+            airbusAocSendReady = IsAirbusAocSendReady();
+            if (airbusAocSendLabel != null)
+            {
+                airbusAocSendLabel.Text = airbusAocSendReady ? "SEND*" : "SEND";
+                airbusAocSendLabel.ForeColor = DcduTheme.Cyan;
+                // The visible SEND/SEND* text is only the DCDU line label.
+                // The real action is the adjacent hardware LSK/hotspot, so keep the label itself non-click-looking.
+                airbusAocSendLabel.Cursor = Cursors.Default;
+                airbusAocSendLabel.Invalidate();
+            }
+        }
+
+        private bool IsAirbusAocSendReady()
+        {
+            switch (airbusAocPage)
+            {
+                case AirbusAocPage.PreDepClearance:
+                    return !string.IsNullOrWhiteSpace(AirbusAocDeparture()) &&
+                           !string.IsNullOrWhiteSpace(AirbusAocArrival()) &&
+                           !string.IsNullOrWhiteSpace(AirbusAocAircraft()) &&
+                           !string.IsNullOrWhiteSpace(AirbusAocCallsign()) &&
+                           GetAirbusAocInput(AirbusAocInputGate).Length > 0 &&
+                           GetAirbusAocInput(AirbusAocInputAtis).Length == 1 &&
+                           GetAirbusAocInput(AirbusAocInputStation).Length >= 4;
+
+                case AirbusAocPage.OceanicClearance:
+                    return !string.IsNullOrWhiteSpace(AirbusAocCallsign()) &&
+                           GetAirbusAocInput(AirbusAocInputStation).Length >= 4 &&
+                           GetAirbusAocInput(AirbusAocInputEntryPoint).Length > 0 &&
+                           GetAirbusAocInput(AirbusAocInputEta).Length == 4 &&
+                           GetAirbusAocInput(AirbusAocInputMach).Length == 2 &&
+                           GetAirbusAocInput(AirbusAocInputFlightLevel).Length == 3;
+
+                case AirbusAocPage.WxRequest:
+                case AirbusAocPage.AtisRequest:
+                    return GetAirbusAocInput(AirbusAocInputStation).Length >= 4;
+
+                case AirbusAocPage.FreeTextRequest:
+                case AirbusAocPage.AtcTextRequest:
+                    return GetAirbusAocInput(AirbusAocInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetAirbusAocInput(AirbusAocInputFreeText));
+
+                case AirbusAocPage.AtcDirectRequest:
+                    return GetAirbusAocInput(AirbusAocInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetAirbusAocInput(AirbusAocInputDirectTo));
+
+                case AirbusAocPage.AtcLevelRequest:
+                    return GetAirbusAocInput(AirbusAocInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetAirbusAocInput(AirbusAocInputRequestedFlightLevel));
+
+                case AirbusAocPage.AtcSpeedRequest:
+                    return GetAirbusAocInput(AirbusAocInputStation).Length >= 4 &&
+                           !string.IsNullOrWhiteSpace(GetAirbusAocInput(AirbusAocInputSpeedValue));
+
+                case AirbusAocPage.AtcWhenCanWeRequest:
+                    string wcwType = GetStoredAirbusAocInput(AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwType, "HIGHER");
+                    return GetAirbusAocInput(AirbusAocInputStation).Length >= 4 &&
+                           (!AirbusAtcWhenCanWeNeedsValue(wcwType) || !string.IsNullOrWhiteSpace(GetAirbusAocInput(AirbusAocInputWcwValue)));
+
+                default:
+                    return false;
+            }
+        }
+
+        private void ShowAirbusAocPreDepClearanceConfirm()
+        {
+            UpdateAirbusAocSendState();
+            if (!airbusAocSendReady)
+            {
+                WriteMessage("AOC SEND NOT READY: COMPLETE REQUIRED FIELDS", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetAirbusAocInput(AirbusAocInputStation);
+            string clearanceCallsign = AirbusAocCallsign();
+            string departure = AirbusAocDeparture();
+            string arrival = AirbusAocArrival();
+            string aircraft = AirbusAocAircraft();
+            string gate = GetAirbusAocInput(AirbusAocInputGate);
+            string atis = GetAirbusAocInput(AirbusAocInputAtis);
+            string freeText = GetAirbusAocInput(AirbusAocInputFreeText);
+
+            string message = string.Format(
+                "REQUEST PREDEP CLEARANCE {0} {1} TO {2} AT {3} STAND {4} ATIS {5}",
+                clearanceCallsign,
+                aircraft,
+                arrival,
+                departure,
+                gate,
+                atis);
+
+            if (!string.IsNullOrWhiteSpace(freeText))
+            {
+                message += " " + freeText;
+            }
+
+            airbusAocConfirmReturnPage = AirbusAocPage.PreDepClearance;
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.PreDepClearance;
+            airbusAocPendingRecipient = recipient;
+            airbusAocPendingMessage = message.Trim();
+            airbusAocPendingTitle = "AOC DEPARTURE REQUEST";
+            airbusAocPendingInfo = "TO " + recipient;
+            airbusAocPendingPreview = airbusAocPendingMessage;
+            airbusAocPendingAutoRefresh = false;
+            ShowAirbusAocSendConfirmPage();
+        }
+
+        private void ShowAirbusAocOceanicClearanceConfirm()
+        {
+            UpdateAirbusAocSendState();
+            if (!airbusAocSendReady)
+            {
+                WriteMessage("AOC SEND NOT READY: COMPLETE REQUIRED FIELDS", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string recipient = GetAirbusAocInput(AirbusAocInputStation);
+            string callsignText = AirbusAocCallsign();
+            string entry = GetAirbusAocInput(AirbusAocInputEntryPoint);
+            string eta = GetAirbusAocInput(AirbusAocInputEta);
+            string mach = GetAirbusAocInput(AirbusAocInputMach);
+            string flightLevel = GetAirbusAocInput(AirbusAocInputFlightLevel);
+            string remarks = GetAirbusAocInput(AirbusAocInputRemarks);
+
+            string message = string.Format(
+                "OCEANIC CLEARANCE REQUEST CALLSIGN: {0} ENTRY POINT: {1} AT: {2} REQ: M.{3} FL{4} RMKS: {5}",
+                callsignText,
+                entry,
+                eta,
+                mach,
+                flightLevel,
+                remarks ?? string.Empty).Trim();
+
+            airbusAocConfirmReturnPage = AirbusAocPage.OceanicClearance;
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.OceanicClearance;
+            airbusAocPendingRecipient = recipient;
+            airbusAocPendingMessage = message;
+            airbusAocPendingTitle = "AOC OCEANIC CLEARANCE";
+            airbusAocPendingInfo = "TO " + recipient;
+            airbusAocPendingPreview = message;
+            airbusAocPendingAutoRefresh = false;
+            ShowAirbusAocSendConfirmPage();
+        }
+
+        private void ShowAirbusAocWeatherConfirm(bool atis)
+        {
+            UpdateAirbusAocSendState();
+            if (!airbusAocSendReady)
+            {
+                WriteMessage("AOC SEND NOT READY: ENTER STATION", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            string station = GetAirbusAocInput(AirbusAocInputStation);
+            if (string.IsNullOrWhiteSpace(station))
+            {
+                return;
+            }
+
+            if (!atis)
+            {
+                airbusAocConfirmReturnPage = AirbusAocPage.WxRequest;
+                airbusAocPendingSendKind = AirbusAocPendingSendKind.WxRequest;
+                airbusAocPendingRecipient = station;
+                airbusAocPendingMessage = "METAR " + station;
+                airbusAocPendingTitle = "AOC WX REQUEST";
+                airbusAocPendingInfo = string.Empty;
+                airbusAocPendingPreview = "REQUEST METAR FOR " + station;
+                airbusAocPendingAutoRefresh = false;
+                ShowAirbusAocSendConfirmPage();
+                return;
+            }
+
+            string selectedType = GetStoredAirbusAocInput(AirbusAocPage.AtisRequest, AirbusAocInputAtisType, "NONE");
+            if (string.Equals(selectedType, "ARR", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedType = "ARRIVAL";
+            }
+            else if (string.Equals(selectedType, "DEP", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedType = "DEPARTURE";
+            }
+
+            if (!TryResolveAtisRequestTarget(station, selectedType, out string atisRequestIdentifier, out string warning))
+            {
+                WriteMessage(warning, "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(atisRequestIdentifier))
+            {
+                atisRequestIdentifier = station;
+            }
+
+            bool autoRefresh = string.Equals(GetStoredAirbusAocInput(AirbusAocPage.AtisRequest, AirbusAocInputAtisAuto, "OFF"), "ON", StringComparison.OrdinalIgnoreCase);
+            airbusAocConfirmReturnPage = AirbusAocPage.AtisRequest;
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.AtisRequest;
+            airbusAocPendingRecipient = atisRequestIdentifier;
+            airbusAocPendingMessage = "VATATIS " + atisRequestIdentifier;
+            airbusAocPendingTitle = "AOC ATIS REQUEST";
+            airbusAocPendingInfo = string.Empty;
+            airbusAocPendingPreview = "REQUEST ATIS FOR " + atisRequestIdentifier;
+            airbusAocPendingAutoRefresh = autoRefresh;
+            ShowAirbusAocSendConfirmPage();
+        }
+
+        private void ShowAirbusAocSendConfirmPage()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.SendConfirm);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font headerFont = AirbusAocValueFont();
+            Font bodyFont = CreateDpiStablePointFont("Consolas", 10.0f, FontStyle.Bold);
+            Font actionFont = AirbusAocMenuFont();
+
+            bool showRouteHeader = !string.IsNullOrWhiteSpace(airbusAocPendingInfo) &&
+                airbusAocPendingSendKind != AirbusAocPendingSendKind.WxRequest &&
+                airbusAocPendingSendKind != AirbusAocPendingSendKind.AtisRequest;
+            string utcPrefix = DateTime.UtcNow.ToString("HHmm") + "Z ";
+            int titleY = showRouteHeader ? 56 : 36;
+            int ruleY = titleY + 28;
+            int boxY = ruleY + 12;
+            int actionTop = AirbusAocActionY(page);
+            int boxHeight = Math.Max(48, Math.Min(72, actionTop - boxY - 18));
+
+            AddAirbusAocLabel(page, "AOC SEND CONFIRM", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, MainPrimaryTextColor(), titleFont);
+            if (showRouteHeader)
+            {
+                AddAirbusAocLabel(page, utcPrefix + airbusAocPendingInfo, 14, 28, page.Width - 28, 22, ContentAlignment.MiddleLeft, DcduTheme.Green, headerFont);
+            }
+
+            AddAirbusAocLabel(page, airbusAocPendingTitle, 14, titleY, page.Width - 28, 22, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), headerFont);
+            AddAirbusAocRule(page, ruleY, 14, page.Width - 28);
+
+            System.Windows.Forms.Label preview = AddAirbusAocLabel(
+                page,
+                WrapAirbusAocPreviewText(airbusAocPendingPreview, 40),
+                42,
+                boxY,
+                Math.Max(1, page.Width - 84),
+                boxHeight,
+                ContentAlignment.MiddleLeft,
+                Color.FromArgb(16, 46, 55),
+                bodyFont);
+            preview.BackColor = DcduTheme.Cyan;
+            preview.Padding = new Padding(10, 4, 8, 4);
+
+            AddAirbusAocRule(page, actionTop - 10, 0, page.Width);
+            AddAirbusAocLabel(page, "*CANCEL", 14, actionTop, 150, 32, ContentAlignment.MiddleLeft, DcduTheme.Cyan, actionFont);
+            AddAirbusAocLabel(page, "SEND*", page.Width - 108, actionTop, 96, 32, ContentAlignment.MiddleRight, DcduTheme.Cyan, actionFont);
+        }
+
+        private void ShowAirbusAocSendStatusPage(string statusText, string recipient, string title, string previewText)
+        {
+            PrepareAirbusAocPage(AirbusAocPage.SendConfirm);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font headerFont = AirbusAocValueFont();
+            Font bodyFont = CreateDpiStablePointFont("Consolas", 10.0f, FontStyle.Bold);
+            Font statusFont = CreateDpiStablePointFont("Consolas", 12.0f, FontStyle.Bold);
+
+            bool showRouteHeader = !string.Equals(title, "AOC WX REQUEST", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(title, "AOC ATIS REQUEST", StringComparison.OrdinalIgnoreCase);
+            int actionTop = AirbusAocActionY(page);
+            int titleY = showRouteHeader ? 58 : 38;
+            int ruleY = titleY + 28;
+            int boxY = ruleY + 12;
+            int boxHeight = Math.Max(48, Math.Min(70, actionTop - boxY - 20));
+
+            AddAirbusAocLabel(page, "AOC SEND STATUS", 0, 4, page.Width, 24, ContentAlignment.MiddleCenter, MainPrimaryTextColor(), titleFont);
+            if (showRouteHeader)
+            {
+                AddAirbusAocLabel(page, "TO " + (recipient ?? string.Empty).Trim().ToUpperInvariant(), 14, 30, page.Width - 28, 22, ContentAlignment.MiddleLeft, DcduTheme.Green, headerFont);
+            }
+
+            AddAirbusAocLabel(page, title ?? string.Empty, 14, titleY, page.Width - 28, 22, ContentAlignment.MiddleLeft, MainPrimaryTextColor(), headerFont);
+            AddAirbusAocRule(page, ruleY, 14, page.Width - 28);
+
+            System.Windows.Forms.Label preview = AddAirbusAocLabel(
+                page,
+                WrapAirbusAocPreviewText(previewText, 40),
+                42,
+                boxY,
+                Math.Max(1, page.Width - 84),
+                boxHeight,
+                ContentAlignment.MiddleLeft,
+                Color.FromArgb(16, 46, 55),
+                bodyFont);
+            preview.BackColor = DcduTheme.Cyan;
+            preview.Padding = new Padding(10, 4, 8, 4);
+
+            AddAirbusAocRule(page, actionTop - 10, 0, page.Width);
+            AddAirbusAocLabel(page, statusText ?? string.Empty, 0, actionTop, page.Width, 32, ContentAlignment.MiddleCenter, DcduTheme.Cyan, statusFont);
+            screenPanel?.Refresh();
+            messageFormatPanel?.Refresh();
+        }
+
+        private string WrapAirbusAocPreviewText(string text, int maxChars)
+        {
+            string cleaned = Regex.Replace(text ?? string.Empty, @"\s+", " ").Trim();
+            if (cleaned.Length <= maxChars)
+            {
+                return cleaned;
+            }
+
+            List<string> lines = new();
+            StringBuilder line = new();
+            foreach (string word in cleaned.Split(' '))
+            {
+                if (line.Length > 0 && line.Length + 1 + word.Length > maxChars)
+                {
+                    lines.Add(line.ToString());
+                    line.Clear();
+                }
+
+                if (line.Length > 0)
+                {
+                    line.Append(' ');
+                }
+                line.Append(word);
+            }
+
+            if (line.Length > 0)
+            {
+                lines.Add(line.ToString());
+            }
+
+            return string.Join(Environment.NewLine, lines.Take(4));
+        }
+
+        private void ReturnFromAirbusAocConfirm()
+        {
+            AirbusAocPendingSendKind pendingKind = airbusAocPendingSendKind;
+            ClearAirbusAocPendingSend();
+
+            switch (airbusAocConfirmReturnPage)
+            {
+                case AirbusAocPage.PreDepClearance:
+                    ShowAirbusAocPreDepClearance();
+                    break;
+
+                case AirbusAocPage.OceanicClearance:
+                    ShowAirbusAocOceanicClearance();
+                    break;
+
+                case AirbusAocPage.WxRequest:
+                    ShowAirbusAocWeatherRequest(false);
+                    break;
+
+                case AirbusAocPage.AtisRequest:
+                    ShowAirbusAocWeatherRequest(true);
+                    break;
+
+                case AirbusAocPage.FreeTextRequest:
+                    ShowAirbusAocFreeTextRequest();
+                    break;
+
+                case AirbusAocPage.AtcRequestMenu:
+                    ShowAirbusAocAtcRequestMenu();
+                    break;
+
+                case AirbusAocPage.AtcMainMenu:
+                    ShowAirbusAtcMainMenu();
+                    break;
+
+                case AirbusAocPage.AtcTextRequest:
+                    ShowAirbusAtcTextRequest("ATC REQUEST", string.Empty);
+                    break;
+
+                case AirbusAocPage.AtcDirectRequest:
+                    ShowAirbusAtcDirectRequest();
+                    break;
+
+                case AirbusAocPage.AtcLevelRequest:
+                    ShowAirbusAtcLevelRequest();
+                    break;
+
+                case AirbusAocPage.AtcSpeedRequest:
+                    ShowAirbusAtcSpeedRequest();
+                    break;
+
+                case AirbusAocPage.AtcWhenCanWeRequest:
+                    ShowAirbusAtcWhenCanWeRequest();
+                    break;
+
+                default:
+                    if (pendingKind == AirbusAocPendingSendKind.PreDepClearance)
+                    {
+                        ShowAirbusAocPreDepClearance();
+                    }
+                    else if (pendingKind == AirbusAocPendingSendKind.OceanicClearance)
+                    {
+                        ShowAirbusAocOceanicClearance();
+                    }
+                    else if (pendingKind == AirbusAocPendingSendKind.FreeTextRequest)
+                    {
+                        ShowAirbusAocFreeTextRequest();
+                    }
+                    else
+                    {
+                        ShowAirbusAocMainMenu();
+                    }
+                    break;
+            }
+        }
+
+        private async Task SendAirbusAocPendingRequestAsync()
+        {
+            AirbusAocPendingSendKind kind = airbusAocPendingSendKind;
+            string recipient = airbusAocPendingRecipient;
+            string message = airbusAocPendingMessage;
+            string title = airbusAocPendingTitle;
+            string preview = airbusAocPendingPreview;
+            bool autoRefresh = airbusAocPendingAutoRefresh;
+
+            if (kind == AirbusAocPendingSendKind.None || string.IsNullOrWhiteSpace(recipient))
+            {
+                ReturnFromAirbusAocConfirm();
+                return;
+            }
+
+            ShowAirbusAocSendStatusPage("SENDING....", recipient, title, preview);
+            await Task.Delay(1200);
+            ClearAirbusAocPendingSend();
+
+            try
+            {
+                switch (kind)
+                {
+                    case AirbusAocPendingSendKind.PreDepClearance:
+                        WriteMessage("AOC PRE DEP CLEARANCE REQUEST", "TELEX", recipient, true);
+                        await SendCPDLCMessage(recipient, "TELEX", message.Trim());
+                        ClearStoredAirbusAocPage(AirbusAocPage.PreDepClearance);
+                        break;
+
+                    case AirbusAocPendingSendKind.OceanicClearance:
+                        WriteMessage("AOC OCEANIC CLEARANCE REQUEST", "CPDLC", recipient, true);
+                        await SendCPDLCMessage(recipient, "CPDLC", message.Trim());
+                        ClearStoredAirbusAocPage(AirbusAocPage.OceanicClearance);
+                        break;
+
+                    case AirbusAocPendingSendKind.WxRequest:
+                        WriteMessage("METAR REQUEST", "METAR", recipient, true);
+                        ArtificialDelay("METAR " + recipient, "INFOREQ", "REQUEST");
+                        ClearStoredAirbusAocPage(AirbusAocPage.WxRequest);
+                        break;
+
+                    case AirbusAocPendingSendKind.AtisRequest:
+                        SetAtisAutoRefresh(recipient, autoRefresh);
+                        WriteMessage("ATIS REQUEST", "ATIS", recipient, true);
+                        ArtificialDelay("VATATIS " + recipient, "INFOREQ", "REQUEST");
+                        _ = RefreshVatsimForAtisHoverAsync();
+                        ClearStoredAirbusAocPage(AirbusAocPage.AtisRequest);
+                        break;
+
+                    case AirbusAocPendingSendKind.FreeTextRequest:
+                        WriteMessage("AOC FREE TEXT", "TELEX", recipient, true);
+                        await SendCPDLCMessage(recipient, "TELEX", message.Trim());
+                        ClearStoredAirbusAocPage(AirbusAocPage.FreeTextRequest);
+                        break;
+
+                    case AirbusAocPendingSendKind.AtcRequest:
+                        string atcPacket = (message ?? string.Empty).Trim();
+                        if (!atcPacket.StartsWith("/data2/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            atcPacket = String.Format("/data2/{0}//Y/{1}", messageOutCounter, atcPacket);
+                            messageOutCounter += 1;
+                        }
+                        await SendCPDLCMessage(recipient, "CPDLC", atcPacket);
+                        ClearStoredAirbusAocPage(airbusAocConfirmReturnPage);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Debug("Airbus AOC send failed: " + ex.Message);
+                }
+                catch
+                {
+                }
+
+                ShowAirbusAocSendStatusPage("SEND FAILED", recipient, title, preview);
+                await Task.Delay(2200);
+                CloseAirbusAocPages();
+                return;
+            }
+
+            ShowAirbusAocSendStatusPage("SENT", recipient, title, preview);
+            await Task.Delay(1800);
+            CloseAirbusAocPages();
+        }
+
+        private void ClearAirbusAocPendingSend()
+        {
+            airbusAocPendingSendKind = AirbusAocPendingSendKind.None;
+            airbusAocPendingRecipient = string.Empty;
+            airbusAocPendingMessage = string.Empty;
+            airbusAocPendingTitle = string.Empty;
+            airbusAocPendingPreview = string.Empty;
+            airbusAocPendingInfo = string.Empty;
+            airbusAocPendingAutoRefresh = false;
+        }
+
+        private void CloseAirbusAocPages()
+        {
+            airbusAocPage = AirbusAocPage.None;
+            airbusAocInputs.Clear();
+            airbusAocSendLabel = null;
+            airbusAocSendReady = false;
+            ClearAirbusAocPendingSend();
+            airbusAocFormValues.Clear();
+            RestoreMainScreenFromEmbeddedPage();
         }
 
         private void ConfigureMainFrameButtonHotspots()
@@ -8886,11 +15180,11 @@ namespace EasyCPDLC
         {
             mainMinimizeButton.Bounds = isBoeing
                 ? new Rectangle(562, 379, 54, 28)
-                : new Rectangle(618, 149, 47, 32);
+                : new Rectangle(514, 314, 36, 23);
 
             mainReloadFlightPlanButton.Bounds = isBoeing
                 ? new Rectangle(166, 379, 55, 28)
-                : new Rectangle(21, 219, 47, 32);
+                : new Rectangle(311, 318, 48, 20);
         }
 
         private async void ReloadFlightPlanButton_Click(object sender, EventArgs e)
@@ -8901,15 +15195,14 @@ namespace EasyCPDLC
         private async Task ReloadFlightPlanDataAsync(bool showMessage)
         {
             string vatsimStatus = "VATSIM ERROR";
-            string simbriefStatus = "SIMBRIEF ERROR";
-            string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             string oldRouteText = BuildActiveFlightRouteText();
             string oldAtcUnit = CurrentATCUnit;
             bool pendingCallsignSwitch = false;
 
             try
             {
-                using HttpClient wc = new();
+                using HttpClient wc = CreateShortTimeoutHttpClient();
                 string vatsimJson = await wc.GetStringAsync("https://data.vatsim.net/v3/vatsim-data.json");
                 VATSIMRootobject refreshedData = JsonConvert.DeserializeObject<VATSIMRootobject>(vatsimJson);
                 Pilot refreshedPilot = refreshedData?.pilots?.FirstOrDefault(i => i.cid == cid);
@@ -9091,10 +15384,6 @@ namespace EasyCPDLC
                 lastClearanceHoverText = string.Empty;
                 SetClearanceStatus("CLR --");
 
-                if (rForm != null && !rForm.IsDisposed)
-                {
-                    rForm.NeedsLogon = true;
-                }
 
                 if (tForm != null && !tForm.IsDisposed)
                 {
@@ -9134,8 +15423,8 @@ namespace EasyCPDLC
             {
                 if (!string.IsNullOrWhiteSpace(SimbriefID))
                 {
-                    using HttpClient wc = new();
-                    string simbriefJson = await wc.GetStringAsync(string.Format("https://www.simbrief.com/api/xml.fetcher.php?userid={0}&json=1", SimbriefID));
+                    using HttpClient wc = CreateShortTimeoutHttpClient();
+                    string simbriefJson = await wc.GetStringAsync($"https://www.simbrief.com/api/xml.fetcher.php?userid={Uri.EscapeDataString(SimbriefID)}&json=1");
                     string simbriefNavlog = JObject.Parse(simbriefJson)["navlog"]?.ToString();
 
                     if (!string.IsNullOrWhiteSpace(simbriefNavlog))
@@ -9145,15 +15434,13 @@ namespace EasyCPDLC
                             .Where(x => x.is_sid_star == "0" && !new string[] { "apt" }.Contains(x.type))
                             .Select(x => x.ident)
                             .ToArray();
-                        simbriefStatus = "SIMBRIEF OK";
-                    }
+}
                 }
             }
             catch (Exception ex)
             {
                 Logger.Warn(ex, "Reload flight plan SimBrief failed");
-                simbriefStatus = "SIMBRIEF ERROR";
-            }
+}
 
             // RLD FP success is intentionally silent.
             // Errors and callsign mismatch warnings are still shown.
@@ -9194,7 +15481,7 @@ namespace EasyCPDLC
                     outputTable.ColumnStyles[1].SizeType = SizeType.Percent;
                     outputTable.ColumnStyles[1].Width = 100F;
                     outputTable.ColumnStyles[2].SizeType = SizeType.Absolute;
-                    outputTable.ColumnStyles[2].Width = 32F;
+                    outputTable.ColumnStyles[2].Width = OpenMessageActionsIndicatorWidth();
                 }
                 screenPanel.Location = new Point(76, 34);
                 screenPanel.Size = new Size(496, 282);
@@ -9254,7 +15541,7 @@ namespace EasyCPDLC
                 outputTable.ColumnStyles[1].SizeType = SizeType.Percent;
                 outputTable.ColumnStyles[1].Width = 100F;
                 outputTable.ColumnStyles[2].SizeType = SizeType.Absolute;
-                outputTable.ColumnStyles[2].Width = 32F;
+                outputTable.ColumnStyles[2].Width = OpenMessageActionsIndicatorWidth();
             }
             screenPanel.Location = new Point(103, 38);
             screenPanel.Size = new Size(493, 282);
@@ -9268,8 +15555,10 @@ namespace EasyCPDLC
             statusValueLabel.Location = new Point(104, 18);
             statusValueLabel.Size = new Size(126, 18);
             atcUnitLabel.Location = new Point(232, 18);
+            atcUnitLabel.Size = new Size(176, 18);
             atcUnitLabel.Text = "CURRENT ATS UNIT:";
             atcUnitDisplay.Location = new Point(413, 18);
+            atcUnitDisplay.Size = new Size(68, 18);
             if (nextAtcUnitLabel != null)
             {
                 nextAtcUnitLabel.Location = new Point(232, 38);
@@ -9320,6 +15609,7 @@ namespace EasyCPDLC
                 settingsButton.Location = new Point(171, 343);
                 settingsButton.Size = new Size(47, 24);
 
+                helpButton.Enabled = true;
                 helpButton.Location = new Point(505, 343);
                 helpButton.Size = new Size(49, 24);
 
@@ -9329,24 +15619,34 @@ namespace EasyCPDLC
                 return;
             }
 
-            // Airbus hitboxes aligned to the provided 700x350 DCDU_Main_V15.png.
-            retrieveButton.Location = new Point(21, 49);
-            retrieveButton.Size = new Size(47, 33);
+            // Airbus bottom-row hitboxes aligned to DCDU_Main_V15.png.
+            // Slightly higher/right with wider spacing to match the painted bottom pushbuttons.
+            // The side keys are now used as AOC line-select keys when an AOC page is open.
+            retrieveButton.Location = new Point(120, 318);
+            retrieveButton.Size = new Size(36, 20);
 
-            telexButton.Location = new Point(21, 93);
-            telexButton.Size = new Size(47, 31);
+            telexButton.Location = new Point(167, 318);
+            telexButton.Size = new Size(36, 20);
+            telexButton.AccessibleName = "AOC";
 
-            atcButton.Location = new Point(21, 135);
-            atcButton.Size = new Size(47, 31);
+            atcButton.Location = new Point(214, 318);
+            atcButton.Size = new Size(36, 20);
 
-            settingsButton.Location = new Point(21, 177);
-            settingsButton.Size = new Size(47, 32);
+            settingsButton.Location = new Point(261, 318);
+            settingsButton.Size = new Size(44, 20);
 
-            helpButton.Location = new Point(618, 66);
-            helpButton.Size = new Size(47, 31);
+            // Airbus: no active HELP hotspot here. Keep the visual artwork untouched,
+            // but remove the invisible clickspot so only MIN and CLOSE react.
+            helpButton.Enabled = false;
+            helpButton.Location = new Point(-200, -200);
+            helpButton.Size = new Size(1, 1);
 
-            exitButton.Location = new Point(618, 108);
-            exitButton.Size = new Size(47, 31);
+            // Align MIN / CLOSE to the actual painted Airbus bottom buttons.
+            exitButton.Location = new Point(556, 314);
+            exitButton.Size = new Size(37, 23);
+
+            mainMinimizeButton.BringToFront();
+            exitButton.BringToFront();
             UpdateMainFrameButtonHotspots(isBoeing);
         }
 
@@ -9579,7 +15879,7 @@ namespace EasyCPDLC
                 unreadMessages.Add(message);
             }
 
-            message.Font = textFontBold;
+            message.Font = GetMessageTextFont(true);
             message.ForeColor = DcduTheme.Amber;
 
             if (menuLabel != null)
@@ -9612,12 +15912,12 @@ namespace EasyCPDLC
 
             if (IsCallsignMismatchAlarmText(message.message))
             {
-                message.Font = textFontBold;
+                message.Font = GetMessageTextFont(true);
                 message.ForeColor = CallsignMismatchAlarmColor();
             }
             else
             {
-                message.Font = textFont;
+                message.Font = GetMessageTextFont(false);
                 message.ForeColor = message.acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
             }
 
@@ -9752,6 +16052,26 @@ namespace EasyCPDLC
                 return;
             }
 
+            if (HandleAirbusAocLineSelectClick(e.Location))
+            {
+                return;
+            }
+
+            if (HandleStyledMessagePreviewLineSelectClick(e.Location))
+            {
+                return;
+            }
+
+            if (HandleBoeingTelexLineSelectClick(e.Location))
+            {
+                return;
+            }
+
+            if (HandleEmbeddedSetupLineSelectClick(e.Location))
+            {
+                return;
+            }
+
             if (HitDcduButton(retrieveButton, e.Location))
             {
                 RetrieveButton_Click(retrieveButton, EventArgs.Empty);
@@ -9802,6 +16122,11 @@ namespace EasyCPDLC
 
         private Control GetDcduButtonAt(Point location)
         {
+            if (IsStyledMessagePreviewLineSelectHit(location) || IsAirbusAocLineSelectHit(location) || IsBoeingTelexLineSelectHit(location) || IsEmbeddedSetupLineSelectHit(location))
+            {
+                return dcduFrame;
+            }
+
             Control[] candidates =
             {
                 retrieveButton,
@@ -9827,7 +16152,7 @@ namespace EasyCPDLC
 
         private static bool HitDcduButton(Control button, Point location)
         {
-            return button != null && button.Enabled && button.Bounds.Contains(location);
+            return button != null && (DebugUiPreviewMode || button.Enabled) && button.Bounds.Contains(location);
         }
 
         private void DcduFrame_MouseMove(object sender, MouseEventArgs e)
@@ -10109,7 +16434,11 @@ namespace EasyCPDLC
                             await server.WaitForConnectionAsync(token).ConfigureAwait(false);
 
                             using StreamReader reader = new(server);
-                            string command = (await reader.ReadLineAsync().ConfigureAwait(false) ?? "SHOW").Trim().ToUpperInvariant();
+                            string command = (await reader.ReadLineAsync().ConfigureAwait(false) ?? "SHOW").Trim();
+                            if (command.Length > 16)
+                            {
+                                command = string.Empty;
+                            }
 
                             SafeUi(() => HandleProtocolCommand(command));
                         }
@@ -10133,7 +16462,22 @@ namespace EasyCPDLC
 
         private void HandleProtocolCommand(string command)
         {
-            if (string.Equals(command, "TOGGLE", StringComparison.OrdinalIgnoreCase))
+            string normalizedCommand = (command ?? string.Empty).Trim().ToUpperInvariant();
+            if (normalizedCommand != "SHOW" && normalizedCommand != "TOGGLE")
+            {
+                Logger.Debug("Ignored invalid EasyCPDLC protocol command.");
+                return;
+            }
+
+            DateTime nowUtc = DateTime.UtcNow;
+            if ((nowUtc - lastProtocolCommandUtc) < TimeSpan.FromMilliseconds(300))
+            {
+                return;
+            }
+
+            lastProtocolCommandUtc = nowUtc;
+
+            if (string.Equals(normalizedCommand, "TOGGLE", StringComparison.OrdinalIgnoreCase))
             {
                 if (Visible && WindowState != FormWindowState.Minimized && ContainsFocus)
                 {
@@ -10331,6 +16675,11 @@ namespace EasyCPDLC
         }
 
 
+private const string UpdateGithubOwner = "fresH229a";
+private const string UpdateGithubRepo = "EasyCPDLC-Modernized";
+private const string UpdateGithubApiAccept = "application/vnd.github+json";
+private static readonly Version MinimumSupportedRollbackVersion = new Version(1, 0, 0, 12);
+
 private static void ClearPendingLogonUpdateState()
 {
     pendingLogonUpdateRelease = null;
@@ -10353,11 +16702,8 @@ private static async void CheckNewVersion()
 {
     try
     {
-        const string githubOwner = "fresH229a";
-        const string githubRepo = "EasyCPDLC-Modernized";
-
         var client = new GitHubClient(new ProductHeaderValue("EasyCPDLC"));
-        var releases = await client.Repository.Release.GetAll(githubOwner, githubRepo);
+        var releases = await client.Repository.Release.GetAll(UpdateGithubOwner, UpdateGithubRepo);
 
         var latest = releases
             .Where(release => !release.Prerelease && !release.Draft)
@@ -10433,25 +16779,148 @@ private static ReleaseAsset FindUpdateZipAsset(Release release)
                 .FirstOrDefault();
         }
 
+        private static bool IsTrustedUpdateDownloadUri(Uri uri, string safeAssetName)
+        {
+            if (uri == null ||
+                uri.Scheme != Uri.UriSchemeHttps ||
+                !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(safeAssetName))
+            {
+                return false;
+            }
+
+            string expectedPathPrefix = "/" + UpdateGithubOwner + "/" + UpdateGithubRepo + "/releases/download/";
+            if (!uri.AbsolutePath.StartsWith(expectedPathPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string fileNameFromUri = Uri.UnescapeDataString(Path.GetFileName(uri.AbsolutePath) ?? string.Empty);
+            return string.Equals(fileNameFromUri, safeAssetName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static async Task<string> GetExpectedGithubAssetSha256Async(ReleaseAsset asset)
+        {
+            if (asset == null || asset.Id <= 0)
+            {
+                throw new InvalidOperationException("Update asset has no GitHub asset id for checksum verification.");
+            }
+
+            string assetApiUrl = "https://api.github.com/repos/" +
+                UpdateGithubOwner + "/" + UpdateGithubRepo + "/releases/assets/" +
+                asset.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            if (!Uri.TryCreate(assetApiUrl, UriKind.Absolute, out Uri assetApiUri) ||
+                assetApiUri.Scheme != Uri.UriSchemeHttps ||
+                !string.Equals(assetApiUri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Update checksum URL is not a trusted GitHub API URL.");
+            }
+
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, assetApiUri);
+            request.Headers.UserAgent.ParseAdd("EasyCPDLC-Updater");
+            request.Headers.Accept.ParseAdd(UpdateGithubApiAccept);
+
+            using HttpResponseMessage response = await webclient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            string jsonText = await response.Content.ReadAsStringAsync();
+            string digest = string.Empty;
+
+            try
+            {
+                JObject json = JObject.Parse(jsonText);
+                digest = json.Value<string>("digest") ?? string.Empty;
+            }
+            catch
+            {
+                digest = string.Empty;
+            }
+
+            string expectedSha256 = NormalizeGithubSha256Digest(digest);
+            if (string.IsNullOrWhiteSpace(expectedSha256))
+            {
+                throw new InvalidOperationException("GitHub did not provide a valid SHA-256 digest for the update asset. Automatic install was aborted.");
+            }
+
+            return expectedSha256;
+        }
+
+        private static string NormalizeGithubSha256Digest(string digest)
+        {
+            string cleaned = (digest ?? string.Empty).Trim();
+            const string prefix = "sha256:";
+
+            if (cleaned.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned.Substring(prefix.Length).Trim();
+            }
+
+            return Regex.IsMatch(cleaned, @"\A[0-9a-fA-F]{64}\z")
+                ? cleaned.ToLowerInvariant()
+                : string.Empty;
+        }
+
+        private static string ComputeFileSha256Hex(string filePath)
+        {
+            using FileStream stream = File.OpenRead(filePath);
+            using SHA256 sha256 = SHA256.Create();
+            byte[] hash = sha256.ComputeHash(stream);
+
+            StringBuilder builder = new StringBuilder(hash.Length * 2);
+            foreach (byte b in hash)
+            {
+                builder.Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            return builder.ToString();
+        }
+
         private static async Task DownloadAndInstallUpdateAsync(Release latest, ReleaseAsset asset)
         {
+            const long MaxUpdateDownloadBytes = 200L * 1024L * 1024L;
+
+            if (latest == null || asset == null)
+            {
+                return;
+            }
+
+            string safeAssetName = Path.GetFileName(asset.Name ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(safeAssetName) ||
+                !safeAssetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Update asset is not a valid ZIP file.");
+            }
+
+            if (!Uri.TryCreate(asset.BrowserDownloadUrl, UriKind.Absolute, out Uri downloadUri) ||
+                !IsTrustedUpdateDownloadUri(downloadUri, safeAssetName))
+            {
+                throw new InvalidOperationException("Update download URL is not the expected HTTPS GitHub release asset URL for this repository.");
+            }
+
             string tempDir = Path.Combine(Path.GetTempPath(), "EasyCPDLC_Update_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
 
-            string zipPath = Path.Combine(tempDir, asset.Name);
+            string zipPath = Path.Combine(tempDir, safeAssetName);
             string scriptPath = Path.Combine(tempDir, "InstallEasyCPDLCUpdate.ps1");
             string appDir = AppDomain.CurrentDomain.BaseDirectory;
             string exePath = System.Windows.Forms.Application.ExecutablePath;
             int currentPid = Process.GetCurrentProcess().Id;
+            string currentUserConfigPath = CurrentUserConfigFilePath();
 
             using UpdateProgressDialog progress = new UpdateProgressDialog("EasyCPDLC Update");
             progress.Show();
+            progress.SetStep("Preparing update", "Reading GitHub asset checksum...", -1);
+            progress.Refresh();
+
+            string expectedSha256 = await GetExpectedGithubAssetSha256Async(asset);
+
             progress.SetStep("Preparing update", "Connecting to GitHub release asset...", -1);
             progress.Refresh();
 
             try
             {
-                using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, asset.BrowserDownloadUrl))
+                using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, downloadUri))
                 {
                     request.Headers.UserAgent.ParseAdd("EasyCPDLC-Updater");
 
@@ -10460,6 +16929,11 @@ private static ReleaseAsset FindUpdateZipAsset(Release release)
                         response.EnsureSuccessStatusCode();
 
                         long? totalBytes = response.Content.Headers.ContentLength;
+                        if (totalBytes.HasValue && totalBytes.Value > MaxUpdateDownloadBytes)
+                        {
+                            throw new InvalidOperationException("Update package is unexpectedly large: " + FormatByteCount(totalBytes.Value));
+                        }
+
                         long downloadedBytes = 0;
                         byte[] buffer = new byte[128 * 1024];
 
@@ -10474,8 +16948,13 @@ private static ReleaseAsset FindUpdateZipAsset(Release release)
                                 break;
                             }
 
-                            await destination.WriteAsync(buffer, 0, read);
                             downloadedBytes += read;
+                            if (downloadedBytes > MaxUpdateDownloadBytes)
+                            {
+                                throw new InvalidOperationException("Update package exceeded the maximum allowed size of " + FormatByteCount(MaxUpdateDownloadBytes));
+                            }
+
+                            await destination.WriteAsync(buffer, 0, read);
 
                             if (totalBytes.HasValue && totalBytes.Value > 0)
                             {
@@ -10493,14 +16972,30 @@ private static ReleaseAsset FindUpdateZipAsset(Release release)
                                     -1);
                             }
                         }
+
+                        if (downloadedBytes <= 0)
+                        {
+                            throw new InvalidOperationException("Update package download was empty.");
+                        }
                     }
                 }
 
-                progress.SetStep("Preparing installer", "Update package downloaded. Preparing install animation...", 100);
+                progress.SetStep("Verifying update", "Checking SHA-256 checksum...", -1);
+                string actualSha256 = ComputeFileSha256Hex(zipPath);
+                if (!string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("Update package SHA-256 verification failed. Automatic install was aborted.");
+                }
+
+                progress.SetStep("Preparing installer", "Update package verified. Preparing install animation...", 100);
+
+                string userConfigSourcePath = PrepareUserConfigForVersionChange(latest, tempDir, currentUserConfigPath);
+
+                string targetReleaseVersionText = ParseReleaseVersion(latest?.TagName)?.ToString() ?? string.Empty;
 
                 File.WriteAllText(
                     scriptPath,
-                    BuildUpdaterPowerShellScript(currentPid, zipPath, appDir, Path.GetFileName(exePath)),
+                    BuildUpdaterPowerShellScript(currentPid, zipPath, appDir, Path.GetFileName(exePath), userConfigSourcePath, currentUserConfigPath, targetReleaseVersionText),
                     System.Text.Encoding.UTF8);
 
                 progress.SetStep("Starting installer", "EasyCPDLC will close and restart automatically.", 100);
@@ -10685,11 +17180,14 @@ private static ReleaseAsset FindUpdateZipAsset(Release release)
             return (value ?? string.Empty).Replace("'", "''");
         }
 
-        private static string BuildUpdaterPowerShellScript(int processId, string zipPath, string appDir, string exeName)
+        private static string BuildUpdaterPowerShellScript(int processId, string zipPath, string appDir, string exeName, string userConfigSourcePath, string currentUserConfigPath, string targetReleaseVersionText)
         {
             string psZip = EscapePowerShellSingleQuotedString(zipPath);
             string psAppDir = EscapePowerShellSingleQuotedString(appDir);
             string psExeName = EscapePowerShellSingleQuotedString(exeName);
+            string psUserConfigSourcePath = EscapePowerShellSingleQuotedString(userConfigSourcePath ?? string.Empty);
+            string psCurrentUserConfigPath = EscapePowerShellSingleQuotedString(currentUserConfigPath ?? string.Empty);
+            string psTargetReleaseVersionText = EscapePowerShellSingleQuotedString(targetReleaseVersionText ?? string.Empty);
 
             return
 @"$ErrorActionPreference = 'Stop'
@@ -10697,6 +17195,9 @@ $pidToWait = " + processId + @"
 $zipPath = '" + psZip + @"'
 $appDir = '" + psAppDir + @"'
 $exeName = '" + psExeName + @"'
+$userConfigSourcePath = '" + psUserConfigSourcePath + @"'
+$currentUserConfigPath = '" + psCurrentUserConfigPath + @"'
+$targetReleaseVersionText = '" + psTargetReleaseVersionText + @"'
 $configName = 'EasyCPDLC.dll.config'
 $workDir = Join-Path $env:TEMP ('EasyCPDLC_Update_Extract_' + [guid]::NewGuid().ToString('N'))
 $logPath = Join-Path $env:TEMP 'EasyCPDLC_Update.log'
@@ -10777,6 +17278,153 @@ function Write-UpdateLog($text) {
     Add-Content -LiteralPath $logPath -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $text)
 }
 
+function Get-VersionCandidatesForInstalledExe {
+    param(
+        [string] $installedExe,
+        [string] $releaseVersion
+    )
+
+    $versions = New-Object System.Collections.Generic.List[string]
+
+    function Add-VersionCandidate([string] $value) {
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            return
+        }
+
+        $match = [regex]::Match($value, '\d+(?:\.\d+){0,3}')
+        if (-not $match.Success) {
+            return
+        }
+
+        $parts = $match.Value.Split('.')
+        while ($parts.Count -lt 4) {
+            $parts += '0'
+        }
+
+        $candidate = ($parts[0..3] -join '.')
+        if (-not $versions.Contains($candidate)) {
+            $versions.Add($candidate)
+        }
+    }
+
+    Add-VersionCandidate $releaseVersion
+
+    try {
+        $assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($installedExe).Version.ToString()
+        Add-VersionCandidate $assemblyVersion
+    }
+    catch {
+        Write-UpdateLog ('Could not read target assembly version: ' + $_.Exception.Message)
+    }
+
+    try {
+        $fileInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installedExe)
+        Add-VersionCandidate $fileInfo.ProductVersion
+        Add-VersionCandidate $fileInfo.FileVersion
+    }
+    catch {
+        Write-UpdateLog ('Could not read target file version: ' + $_.Exception.Message)
+    }
+
+    return $versions.ToArray()
+}
+
+function Get-EasyCpdlcSettingsRoots {
+    param([string] $oldConfigPath)
+
+    $roots = New-Object System.Collections.Generic.List[string]
+
+    function Add-SettingsRoot([string] $rootPath) {
+        if ([string]::IsNullOrWhiteSpace($rootPath)) {
+            return
+        }
+
+        try {
+            $full = [System.IO.Path]::GetFullPath($rootPath)
+            if (-not $roots.Contains($full)) {
+                $roots.Add($full)
+            }
+        }
+        catch {}
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($oldConfigPath) -and (Test-Path -LiteralPath $oldConfigPath)) {
+        try {
+            $oldConfigItem = Get-Item -LiteralPath $oldConfigPath
+            $oldVersionDir = Split-Path -Parent $oldConfigItem.FullName
+            $settingsRoot = Split-Path -Parent $oldVersionDir
+            Add-SettingsRoot $settingsRoot
+        }
+        catch {
+            Write-UpdateLog ('Could not derive settings root from current config: ' + $_.Exception.Message)
+        }
+    }
+
+    try {
+        $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+        if (-not [string]::IsNullOrWhiteSpace($localAppData) -and (Test-Path -LiteralPath $localAppData)) {
+            Get-ChildItem -LiteralPath $localAppData -Filter user.config -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match 'EasyCPDLC' } |
+                ForEach-Object {
+                    try {
+                        $versionDir = Split-Path -Parent $_.FullName
+                        $root = Split-Path -Parent $versionDir
+                        Add-SettingsRoot $root
+                    }
+                    catch {}
+                }
+        }
+    }
+    catch {
+        Write-UpdateLog ('Could not enumerate EasyCPDLC settings roots: ' + $_.Exception.Message)
+    }
+
+    return $roots.ToArray()
+}
+
+function Copy-UserConfigForInstalledVersion {
+    param(
+        [string] $sourceConfigPath,
+        [string] $oldConfigPath,
+        [string] $installedExe,
+        [string] $releaseVersion
+    )
+
+    if ([string]::IsNullOrWhiteSpace($sourceConfigPath) -or -not (Test-Path -LiteralPath $sourceConfigPath)) {
+        Write-UpdateLog 'No user.config source available for version migration.'
+        return
+    }
+
+    $versionCandidates = Get-VersionCandidatesForInstalledExe -installedExe $installedExe -releaseVersion $releaseVersion
+    if (-not $versionCandidates -or $versionCandidates.Count -eq 0) {
+        Write-UpdateLog 'No version candidates available for user.config migration.'
+        return
+    }
+
+    $settingsRoots = Get-EasyCpdlcSettingsRoots -oldConfigPath $oldConfigPath
+    if (-not $settingsRoots -or $settingsRoots.Count -eq 0) {
+        Write-UpdateLog 'No EasyCPDLC settings roots found for user.config migration.'
+        return
+    }
+
+    foreach ($root in $settingsRoots) {
+        foreach ($version in $versionCandidates) {
+            try {
+                $targetConfigDir = Join-Path $root $version
+                $targetConfigPath = Join-Path $targetConfigDir 'user.config'
+
+                New-Item -ItemType Directory -Force -Path $targetConfigDir | Out-Null
+                Copy-Item -LiteralPath $sourceConfigPath -Destination $targetConfigPath -Force
+                Write-UpdateLog ('Copied rollback-compatible user.config to ' + $targetConfigPath)
+            }
+            catch {
+                Write-UpdateLog ('Could not copy user.config to root=' + $root + ' version=' + $version + ': ' + $_.Exception.Message)
+            }
+        }
+    }
+}
+
+
 try {
     $form.TopMost = $true
     $form.Activate()
@@ -10819,6 +17467,9 @@ try {
     } else {
         Write-UpdateLog 'No EasyCPDLC.dll.config in update ZIP; keeping existing config.'
     }
+
+    Set-UpdateStep 'Installing update' 'Preserving user settings...' 88
+    Copy-UserConfigForInstalledVersion -sourceConfigPath $userConfigSourcePath -oldConfigPath $currentUserConfigPath -installedExe $targetExe -releaseVersion $targetReleaseVersionText
 
     Set-UpdateStep 'Restarting EasyCPDLC' 'The updated client is opening now...' 100
     Write-UpdateLog 'Restarting EasyCPDLC.'
@@ -11102,21 +17753,9 @@ catch {
 
         public void ClearPreview()
         {
-            if (messageFormatPanel != null)
-            {
-                messageFormatPanel.Controls.Clear();
-                HidePreviewHorizontalScrollbar();
-                messageFormatPanel.Visible = false;
-            }
-
-            if (outputTable != null)
-            {
-                outputTable.Visible = true;
-            }
-
-            SetSmartWidgetsVisible(true);
-            UpdateSmartStatusLabelColors();
-            UpdateClearanceStatusLabel();
+            HideManualDeleteConfirmPopup();
+            previewMessage = null;
+            RestoreMainScreenFromEmbeddedPage();
         }
 
         private void HidePreviewHorizontalScrollbar()
@@ -11786,6 +18425,43 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             });
         }
 
+        private static string SafeLogValue(string value, int maxLength = 48)
+        {
+            string cleaned = (value ?? string.Empty)
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Trim();
+
+            if (cleaned.Length <= maxLength)
+            {
+                return cleaned;
+            }
+
+            return cleaned.Substring(0, Math.Max(0, maxLength - 1)) + "…";
+        }
+
+        private static string ClassifyHoppieResponseForLog(string responseString)
+        {
+            string cleaned = (responseString ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (cleaned == "OK")
+            {
+                return "OK";
+            }
+
+            if (cleaned.Contains("ERROR"))
+            {
+                return "ERROR";
+            }
+
+            if (cleaned.StartsWith("{") || cleaned.Contains("/DATA", StringComparison.OrdinalIgnoreCase))
+            {
+                return "DATA";
+            }
+
+            return "OTHER";
+        }
+
         public async Task SendCPDLCMessage(string recipient, string messageType, string packetData, bool _write = true)
         {
 
@@ -11798,6 +18474,22 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             };
 
             var content = new FormUrlEncodedContent(connectionValues);
+
+            if (DebugUiPreviewMode)
+            {
+                if (_write && messageType != "poll")
+                {
+                    string previewText = messageType == "CPDLC"
+                        ? (packetData ?? string.Empty).Split('/').LastOrDefault() ?? string.Empty
+                        : packetData ?? string.Empty;
+                    WriteMessage("UI PREVIEW - NOT SENT: " + previewText, messageType, recipient, true);
+                }
+
+                Logger.Debug(String.Format("DEBUG UI PREVIEW: suppressed outbound packet to={0} | type={1} | packetLen={2}", SafeLogValue(recipient), SafeLogValue(messageType), (packetData ?? string.Empty).Length));
+                UpdateSendingProgress(() => SendingProgress.Visible = false);
+                return;
+            }
+
             try
             {
 
@@ -11812,10 +18504,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
                 UpdateSendingProgress(() => SendingProgress.PerformStep());
 
-                Logger.Debug(String.Format("PACKET SENT: {0} | {1} | {2} | {3} | {4}", recipient, messageType, packetData, true, _write));
+                Logger.Debug(String.Format("PACKET SENT: to={0} | type={1} | packetLen={2} | write={3}", SafeLogValue(recipient), SafeLogValue(messageType), (packetData ?? string.Empty).Length, _write));
                 var responseString = await response.Content.ReadAsStringAsync();
                 string printString = responseString.ToString().ToUpper().Trim();
-                Logger.Debug("RECEIVED: " + responseString);
+                Logger.Debug(String.Format("HOPPIE RESPONSE: status={0} | length={1}", ClassifyHoppieResponseForLog(responseString), (responseString ?? string.Empty).Length));
 
                 if (printString.Contains("ERROR"))
                 {
@@ -12216,7 +18908,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             List<string> parts = new();
 
-            Match qnh = Regex.Match(upper, @"\bQNH\s*([0-9]{4})\b|\bQ([0-9]{4})\b");
+            Match qnh = Regex.Match(upper, @"\bQNH\s*([0-9]{3,4})\b|\bQ([0-9]{4})\b");
             if (qnh.Success)
             {
                 string qnhValue = qnh.Groups[1].Success ? qnh.Groups[1].Value : qnh.Groups[2].Value;
@@ -12250,20 +18942,21 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             Match arrRwy = Regex.Match(
                 upper,
-                @"\b(?:ARR(?:IVAL)?\s+RWYS?|ILS\s+APCH\s+RWY|ILS\s+APPROACH\s+RWY|RNP\s+RWY|RNAV\s+RWY|APPROACH\s+RWY|APCH\s+RWY)\s*([0-9]{2}[LCR]?)\b");
+                @"\b(?:ARR(?:IVAL)?\s+RWYS?|ILS\s+APCH\s+RWY|ILS\s+APPROACH\s+RWY|RNP\s+RWY|RNAV\s+RWY|APPROACH\s+RWY|APCH\s+RWY)\s*(?<rwy>[0-9]{2})(?:\s*(?<side>L|C|R|LEFT|RIGHT|CENTER|CENTRE))?\b");
             if (arrRwy.Success)
             {
-                parts.Add("ARR " + arrRwy.Groups[1].Value);
+                string arrValue = NormalizeRunwayDesignatorForOverview(arrRwy.Groups["rwy"].Value, arrRwy.Groups["side"].Value);
+                parts.Add("ARR " + arrValue);
             }
 
             // Departure runway must be explicit. Do not parse "DP15" from METAR
             // as DEP 15; DP is dew point, not departure runway.
             Match depRwy = Regex.Match(
                 upper,
-                @"\b(?:DEP(?:ARTURE)?\s+RWYS?|DEP(?:ARTURE)?\s*RWY)\s*([0-9]{2}[LCR]?)\b");
+                @"\b(?:DEP(?:ARTURE)?\s+RWYS?|DEP(?:ARTURE)?\s*RWY)\s*(?<rwy>[0-9]{2})(?:\s*(?<side>L|C|R|LEFT|RIGHT|CENTER|CENTRE))?\b");
             if (depRwy.Success)
             {
-                string depValue = depRwy.Groups[1].Value;
+                string depValue = NormalizeRunwayDesignatorForOverview(depRwy.Groups["rwy"].Value, depRwy.Groups["side"].Value);
                 if (!parts.Any(part => string.Equals(part, "DEP " + depValue, StringComparison.OrdinalIgnoreCase)))
                 {
                     parts.Add("DEP " + depValue);
@@ -12273,10 +18966,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             if (!parts.Any(part => part.StartsWith("ARR ", StringComparison.OrdinalIgnoreCase) ||
                                    part.StartsWith("DEP ", StringComparison.OrdinalIgnoreCase)))
             {
-                Match rwy = Regex.Match(upper, @"\b(?:RWYS?|RWY)\s+([0-9]{2}[LCR]?(?:\s*(?:AND|/|,)\s*[0-9]{2}[LCR]?)?)\b");
+                Match rwy = Regex.Match(
+                    upper,
+                    @"\b(?:RWYS?|RUNWAYS?)\s+(?:(?:IN\s+USE|USE|USED|ACTIVE|IN\s+OPERATION|AVAILABLE)(?:\s+(?:ARE|IS))?\s+)?(?<rwys>[0-9]{2}(?:\s*(?:L|C|R|LEFT|RIGHT|CENTER|CENTRE))?(?:\s*(?:AND|/|,)\s*[0-9]{2}(?:\s*(?:L|C|R|LEFT|RIGHT|CENTER|CENTRE))?)?)\b");
                 if (rwy.Success)
                 {
-                    string runwayValue = Regex.Replace(rwy.Groups[1].Value, @"\s+", " ");
+                    string runwayValue = NormalizeRunwayListForOverview(rwy.Groups["rwys"].Value);
                     if (targetIsArrivalAtis)
                     {
                         parts.Add("ARR " + runwayValue);
@@ -12297,7 +18992,66 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 return string.Empty;
             }
 
+            if (!includeWind)
+            {
+                parts = parts
+                    .OrderBy(part =>
+                        part.StartsWith("ARR ", StringComparison.OrdinalIgnoreCase) ? 0 :
+                        part.StartsWith("DEP ", StringComparison.OrdinalIgnoreCase) ? 1 :
+                        part.StartsWith("RWY ", StringComparison.OrdinalIgnoreCase) ? 2 :
+                        part.StartsWith("QNH ", StringComparison.OrdinalIgnoreCase) ? 3 :
+                        part.StartsWith("A", StringComparison.OrdinalIgnoreCase) ? 3 :
+                        4)
+                    .ToList();
+            }
+
             return string.Join(" ", parts.Take(4));
+        }
+
+        private static string NormalizeRunwayDesignatorForOverview(string runway, string side)
+        {
+            string cleanRunway = (runway ?? string.Empty).Trim().ToUpperInvariant();
+            string cleanSide = (side ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(cleanRunway))
+            {
+                return string.Empty;
+            }
+
+            string suffix = cleanSide switch
+            {
+                "LEFT" => "L",
+                "RIGHT" => "R",
+                "CENTER" => "C",
+                "CENTRE" => "C",
+                "L" => "L",
+                "R" => "R",
+                "C" => "C",
+                _ => string.Empty
+            };
+
+            return cleanRunway + suffix;
+        }
+
+        private static string NormalizeRunwayListForOverview(string runways)
+        {
+            if (string.IsNullOrWhiteSpace(runways))
+            {
+                return string.Empty;
+            }
+
+            string normalized = Regex.Replace(runways.Trim().ToUpperInvariant(), @"\s+", " ");
+
+            normalized = Regex.Replace(
+                normalized,
+                @"\b(?<rwy>[0-9]{2})\s*(?<side>L|C|R|LEFT|RIGHT|CENTER|CENTRE)?\b",
+                match => NormalizeRunwayDesignatorForOverview(match.Groups["rwy"].Value, match.Groups["side"].Value));
+
+            normalized = Regex.Replace(normalized, @"\s*,\s*", ", ");
+            normalized = Regex.Replace(normalized, @"\s*/\s*", "/");
+            normalized = Regex.Replace(normalized, @"\s+AND\s+", " AND ");
+
+            return normalized.Trim();
         }
 
         private static string NormalizeWindForOverview(string wind)
@@ -12571,9 +19325,32 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             string cleanTarget = FormatAtisTargetForList(target);
             string cleanStatus = (status ?? string.Empty).Trim().ToUpperInvariant();
 
-            return cleanTarget == "ATIS"
-                ? "ATIS " + cleanStatus
-                : cleanTarget + " ATIS " + cleanStatus;
+            string prefix = cleanTarget == "ATIS"
+                ? "ATIS "
+                : cleanTarget + " ATIS ";
+
+            string combined = prefix + cleanStatus;
+
+            // Keep the first line stable/readable and put the compact weather/runway summary
+            // on a second line. This prevents "ARR 30L DEP 30R QNH 998" from being cut off
+            // in the narrow DCDU message list.
+            Match received = Regex.Match(
+                combined,
+                @"^(?<head>.+?\b(?:INFO\s+[A-Z?]\s+RECEIVED|UPDATED\s+[A-Z?]->[A-Z?]|\?\s+RECEIVED))\s+(?<tail>.+)$",
+                RegexOptions.IgnoreCase);
+
+            if (received.Success)
+            {
+                string head = received.Groups["head"].Value.Trim().ToUpperInvariant();
+                string tail = received.Groups["tail"].Value.Trim().ToUpperInvariant();
+
+                if (!string.IsNullOrWhiteSpace(tail))
+                {
+                    return head + "\n" + tail;
+                }
+            }
+
+            return combined;
         }
 
         private string GetAtisOverviewLetter(string contents, string target)
@@ -12660,6 +19437,13 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             if (!match.Success)
             {
+                match = Regex.Match(
+                    upper,
+                    @"\b[A-Z0-9]{4}\s+(?:DEP\s+ARR|ARR\s+DEP|DEP|ARR)(?:\s+ATIS)?\s+(" + natoOrLetter + @")\b");
+            }
+
+            if (!match.Success)
+            {
                 return string.Empty;
             }
 
@@ -12683,6 +19467,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             string previewType = (_type ?? string.Empty).Trim().ToUpperInvariant();
             string listText = CreateMessageListText(_contents, _type, _recipient, _outbound);
             bool emphasizeAtisLetter = !_outbound &&
+                !listText.Contains("\n") &&
                 Regex.IsMatch(listText, @"\bATIS\s+[A-Z?]\s+RECEIVED\b");
 
             CPDLCMessage _message = emphasizeAtisLetter
@@ -12692,24 +19477,24 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             if (_message is AtisOverviewMessage atisMessage)
             {
                 atisMessage.BoldAtisLetter = true;
-                atisMessage.AtisLetterBoldFont = CreateDpiStablePixelFont(textFontBold.FontFamily, textFontBold.Size + 0.25f, FontStyle.Bold);
+                atisMessage.AtisLetterBoldFont = CreateDpiStablePixelFont(GetMessageTextFont(true).FontFamily, GetMessageTextFont(true).Size + 0.25f, FontStyle.Bold);
             }
 
             _message.AutoSize = true;
             _message.BackColor = Color.Transparent;
             _message.ForeColor = MainPrimaryTextColor();
-            _message.Font = textFont;
+            _message.Font = GetMessageTextFont(false);
             _message.Text = listText;
 
             if (IsCpdlcStationDetectedText(_contents))
             {
                 _message.ForeColor = DcduTheme.Amber;
-                _message.Font = textFontBold;
+                _message.Font = GetMessageTextFont(true);
             }
             else if (IsCallsignMismatchAlarmText(_contents))
             {
                 _message.ForeColor = CallsignMismatchAlarmColor();
-                _message.Font = textFontBold;
+                _message.Font = GetMessageTextFont(true);
             }
 
             _message.BorderStyle = BorderStyle.None;
@@ -12727,18 +19512,21 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 Width = 65
             };
 
+            bool isPreviewMessageText = !_useMaxSize;
+
             AccessibleLabel _message = new(MainPrimaryTextColor())
             {
                 Width = 65,
                 AutoSize = true,
                 BackColor = Color.Transparent,
                 ForeColor = MainPrimaryTextColor(),
-                Font = textFont,
+                Font = isPreviewMessageText ? GetMessageTextFont(false) : textFont,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
                 Margin = new Padding(5, 3, 0, 0),
                 TabStop = true,
-                TabIndex = 0
+                TabIndex = 0,
+                Tag = isPreviewMessageText ? MessagePreviewTextTag : null
             };
 
             if (_useMaxSize)
@@ -12747,7 +19535,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
             else
             {
-                int previewWidth = Math.Max(240, (messageFormatPanel?.ClientSize.Width ?? 430) - 54);
+                int previewWidth = Math.Max(220, (messageFormatPanel?.ClientSize.Width ?? 430) - 58);
                 _message.Width = previewWidth;
                 _message.MaximumSize = new Size(previewWidth, 0);
             }
@@ -12813,6 +19601,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             string cleaned = (text ?? string.Empty)
                 .Replace(">", string.Empty)
                 .Replace("<", string.Empty)
+                .Replace("*", string.Empty)
                 .Trim()
                 .ToUpperInvariant();
 
@@ -13064,7 +19853,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             menuLabel.Text = string.Empty;
             menuLabel.AutoSize = false;
-            menuLabel.Width = 65;
+            menuLabel.Width = OpenMessageActionsIndicatorWidth();
             menuLabel.Height = 18;
             menuLabel.TextAlign = ContentAlignment.MiddleRight;
             menuLabel.Paint -= AutoDeleteRequestIndicator_Paint;
@@ -13120,6 +19909,13 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
+        private static int OpenMessageActionsIndicatorWidth()
+        {
+            // Airbus uses a slightly wider action cell so the new delete icon is not clipped by
+            // the tighter message area/scrollbar artwork. Boeing keeps the previous tuned width.
+            return DcduStyleManager.IsBoeing ? 65 : 72;
+        }
+
         private void ConfigureOpenMessageIndicator(TimerLabel menuLabel)
         {
             if (menuLabel == null)
@@ -13128,9 +19924,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
 
             menuLabel.Text = string.Empty;
-            menuLabel.Tag = "OPEN";
+            menuLabel.Tag = OpenMessageActionsTag;
             menuLabel.AutoSize = false;
-            menuLabel.Width = 65;
+            menuLabel.Width = OpenMessageActionsIndicatorWidth();
             menuLabel.Height = 18;
             menuLabel.TextAlign = ContentAlignment.MiddleRight;
             menuLabel.Paint -= OpenMessageIndicator_Paint;
@@ -13140,9 +19936,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private void OpenMessageIndicator_Paint(object sender, PaintEventArgs e)
         {
-            if (sender is not TimerLabel label ||
-                label.Tag is not string tag ||
-                !string.Equals(tag, "OPEN", StringComparison.OrdinalIgnoreCase))
+            if (sender is not TimerLabel label || !IsOpenMessageActionsIndicator(label))
             {
                 return;
             }
@@ -13150,18 +19944,58 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
             Color accent = label.CanFlash ? DcduTheme.Amber : MainPrimaryTextColor();
-            Rectangle icon = new Rectangle(Math.Max(0, label.Width - 25), 3, 16, 12);
+            Rectangle trash = OpenMessageDeleteIconBounds(label);
+            Rectangle open = OpenMessageOpenIconBounds(label);
 
-            using Pen pen = new Pen(accent, 1.25f);
+            using Pen pen = new Pen(accent, DcduStyleManager.IsBoeing ? 1.25f : 1.35f);
+            using Pen separatorPen = new Pen(Color.FromArgb(DcduStyleManager.IsBoeing ? 70 : 92, accent), 1.0f);
 
-            // Small "open message" icon: an outlined page with a right-arrow.
-            e.Graphics.DrawRectangle(pen, icon.Left, icon.Top, icon.Width - 5, icon.Height - 1);
-            Point p1 = new Point(icon.Right - 8, icon.Top + 3);
-            Point p2 = new Point(icon.Right - 2, icon.Top + icon.Height / 2);
-            Point p3 = new Point(icon.Right - 8, icon.Bottom - 3);
+            int separatorX = Math.Max(0, open.Left - 5);
+            e.Graphics.DrawLine(separatorPen, separatorX, 3, separatorX, Math.Max(3, label.Height - 4));
+
+            // Left action: delete. This is shown only after the auto-delete timer is gone.
+            e.Graphics.DrawLine(pen, trash.Left + 2, trash.Top + 2, trash.Right - 2, trash.Top + 2);       // lid
+            e.Graphics.DrawLine(pen, trash.Left + 5, trash.Top, trash.Right - 5, trash.Top);             // handle
+            e.Graphics.DrawRectangle(pen, trash.Left + 3, trash.Top + 4, trash.Width - 6, trash.Height - 5);
+            e.Graphics.DrawLine(pen, trash.Left + 6, trash.Top + 6, trash.Left + 6, trash.Bottom - 2);
+            e.Graphics.DrawLine(pen, trash.Right - 6, trash.Top + 6, trash.Right - 6, trash.Bottom - 2);
+
+            // Right action: open message. Keep the existing visual language.
+            e.Graphics.DrawRectangle(pen, open.Left, open.Top, open.Width - 5, open.Height - 1);
+            Point p1 = new Point(open.Right - 8, open.Top + 3);
+            Point p2 = new Point(open.Right - 2, open.Top + open.Height / 2);
+            Point p3 = new Point(open.Right - 8, open.Bottom - 3);
             e.Graphics.DrawLine(pen, p1, p2);
             e.Graphics.DrawLine(pen, p2, p3);
-            e.Graphics.DrawLine(pen, icon.Left + 5, icon.Top + icon.Height / 2, icon.Right - 3, icon.Top + icon.Height / 2);
+            e.Graphics.DrawLine(pen, open.Left + 5, open.Top + open.Height / 2, open.Right - 3, open.Top + open.Height / 2);
+        }
+
+        private bool IsOpenMessageActionsIndicator(TimerLabel label)
+        {
+            return label != null &&
+                   label.Tag is string tag &&
+                   (string.Equals(tag, OpenMessageActionsTag, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(tag, "OPEN", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static Rectangle OpenMessageDeleteIconBounds(TimerLabel label)
+        {
+            return new Rectangle(Math.Max(0, label.Width - 43), 2, 13, 14);
+        }
+
+        private static Rectangle OpenMessageOpenIconBounds(TimerLabel label)
+        {
+            return new Rectangle(Math.Max(0, label.Width - 23), 3, 16, 12);
+        }
+
+        private bool IsOpenMessageDeleteActionHit(TimerLabel label, Point localPoint)
+        {
+            if (!IsOpenMessageActionsIndicator(label))
+            {
+                return false;
+            }
+
+            return Rectangle.Inflate(OpenMessageDeleteIconBounds(label), 5, 4).Contains(localPoint);
         }
 
         private bool IsAutoDeleteRequestTimerActive(CPDLCMessage message)
@@ -13218,6 +20052,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
 
             // User interaction means: keep it, stop the automatic countdown, then offer actions.
+            HideManualDeleteConfirmPopup();
             StopAutoDeleteRequestMessage(message, true);
 
             autoDeleteActionPopupMessage = message;
@@ -13291,6 +20126,98 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             autoDeleteActionPopupPanel.Visible = true;
             autoDeleteActionPopupPanel.BringToFront();
             autoDeleteActionPopupPanel.Invalidate();
+        }
+
+        private void HideManualDeleteConfirmPopup()
+        {
+            if (manualDeleteConfirmPopupPanel != null)
+            {
+                manualDeleteConfirmPopupPanel.Visible = false;
+            }
+
+            manualDeleteConfirmPopupMessage = null;
+        }
+
+        private void ShowManualDeleteConfirmPopup(CPDLCMessage message, TimerLabel menuLabel)
+        {
+            if (message == null || menuLabel == null || outputTable == null || outputTable.IsDisposed || screenPanel == null)
+            {
+                return;
+            }
+
+            HideAutoDeleteActionPopup();
+            manualDeleteConfirmPopupMessage = message;
+
+            if (manualDeleteConfirmPopupPanel == null)
+            {
+                manualDeleteConfirmPopupPanel = new Panel
+                {
+                    AutoSize = false,
+                    BackColor = Color.Transparent,
+                    Visible = false
+                };
+
+                manualDeleteConfirmPopupPanel.Paint += (_, e) =>
+                {
+                    PaintStyleAwarePopupPanel(manualDeleteConfirmPopupPanel, e, DcduTheme.Amber, false);
+                };
+
+                screenPanel.Controls.Add(manualDeleteConfirmPopupPanel);
+                manualDeleteConfirmPopupPanel.BringToFront();
+            }
+
+            manualDeleteConfirmPopupPanel.SuspendLayout();
+            manualDeleteConfirmPopupPanel.Controls.Clear();
+
+            System.Windows.Forms.Label titleLabel = new System.Windows.Forms.Label
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = DcduTheme.Amber,
+                Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(7.1f, textFontBold.Size - 2.2f), FontStyle.Bold),
+                Text = "DELETE?",
+                TextAlign = ContentAlignment.MiddleLeft,
+                Size = new Size(86, 18),
+                Location = new Point(8, 6),
+                Padding = new Padding(4, 0, 2, 0)
+            };
+
+            System.Windows.Forms.Label yesLabel = CreateAutoDeletePopupActionLabel("> YES", DcduTheme.Amber, (_, __) =>
+            {
+                CPDLCMessage target = manualDeleteConfirmPopupMessage;
+                HideManualDeleteConfirmPopup();
+
+                if (target != null && !target.IsDisposed)
+                {
+                    DeleteMessageRow(target);
+                }
+            });
+
+            System.Windows.Forms.Label noLabel = CreateAutoDeletePopupActionLabel("< NO", MainAccentColor(), (_, __) =>
+            {
+                HideManualDeleteConfirmPopup();
+            });
+
+            yesLabel.Location = new Point(8, 25);
+            noLabel.Location = new Point(8, 44);
+            manualDeleteConfirmPopupPanel.Controls.Add(titleLabel);
+            manualDeleteConfirmPopupPanel.Controls.Add(yesLabel);
+            manualDeleteConfirmPopupPanel.Controls.Add(noLabel);
+
+            Point screenPoint = menuLabel.PointToScreen(new Point(0, menuLabel.Bottom + 2));
+            Point localPoint = screenPanel.PointToClient(screenPoint);
+
+            int popupWidth = 104;
+            int popupHeight = 72;
+            manualDeleteConfirmPopupPanel.Size = new Size(popupWidth, popupHeight);
+            manualDeleteConfirmPopupPanel.Location = new Point(
+                Math.Max(4, Math.Min(localPoint.X - popupWidth + menuLabel.Width, screenPanel.Width - popupWidth - 4)),
+                Math.Max(4, Math.Min(localPoint.Y, screenPanel.Height - popupHeight - 4)));
+
+            manualDeleteConfirmPopupPanel.ResumeLayout();
+            manualDeleteConfirmPopupPanel.Visible = true;
+            manualDeleteConfirmPopupPanel.BringToFront();
+            manualDeleteConfirmPopupPanel.Invalidate();
         }
 
         private void ApplyAutoDeleteToExistingEligibleMessages()
@@ -13528,13 +20455,14 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private TimerLabel CreateTimerLabel(string _text, bool _useMaxSize = true)
         {
+            int actionWidth = OpenMessageActionsIndicatorWidth();
             Size maxSize = new()
             {
-                Width = 65
+                Width = actionWidth
             };
             TimerLabel _message = new()
             {
-                Width = 65,
+                Width = actionWidth,
                 Height = 18,
                 AutoSize = false,
                 BackColor = Color.Transparent,
@@ -13558,6 +20486,23 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             return _message;
         }
+        private void DeleteMessageRow(CPDLCMessage control)
+        {
+            if (control == null || outputTable == null || outputTable.IsDisposed)
+            {
+                return;
+            }
+
+            StopAutoDeleteRequestMessage(control, false);
+            HideManualDeleteConfirmPopup();
+            HideAutoDeleteActionPopup();
+            MarkMessageRead(control);
+            TableLayoutHelper.RemoveArbitraryRow(outputTable, outputTable.GetPositionFromControl(control).Row);
+            ClearPreview();
+            ApplyMessageFilter();
+            HideNativeOutputScrollbars();
+        }
+
         private void DeleteElement(EventArgs e, CPDLCMessage control)
         {
             try
@@ -13574,17 +20519,14 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
             catch
             {
-                StopAutoDeleteRequestMessage(control, false);
-                MarkMessageRead(control);
-                TableLayoutHelper.RemoveArbitraryRow(outputTable, outputTable.GetPositionFromControl(control).Row);
-                ClearPreview();
-                ApplyMessageFilter();
+                DeleteMessageRow(control);
             }
         }
 
         private void DeleteAllElement(object sender, EventArgs e)
         {
             HideAutoDeleteActionPopup();
+            HideManualDeleteConfirmPopup();
             StopAllAutoDeleteRequestTimers();
             ClearUnreadMessages();
             outputTable.Controls.Clear();
@@ -13677,8 +20619,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
 
             string text = message.message ?? string.Empty;
+            string normalizedType = (message.type ?? string.Empty).Trim().ToUpperInvariant();
+            string normalizedRecipient = (message.recipient ?? string.Empty).Trim().ToUpperInvariant();
 
-            if (string.Equals(message.type, "ATIS", StringComparison.OrdinalIgnoreCase) ||
+            if (ShouldUseAtisListText(text, normalizedType, normalizedRecipient) ||
+                MessageLooksAtis(message) ||
+                string.Equals(normalizedRecipient, "VATATIS", StringComparison.OrdinalIgnoreCase) ||
                 text.IndexOf(" ATIS ", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 Regex.IsMatch(text, @"\b[A-Z0-9]{4}_[AD](?:_ATIS)?\b", RegexOptions.IgnoreCase))
             {
@@ -13690,7 +20636,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private int GetPreviewWrapLength()
         {
-            return DcduStyleManager.IsBoeing ? 48 : 46;
+            return DcduStyleManager.IsBoeing ? 52 : 50;
         }
 
         private string FormatAtisPreviewText(string text)
@@ -13703,57 +20649,103 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             string normalized = text
                 .Replace("\r\n", "\n")
                 .Replace("\r", "\n")
-                .Replace("\t", " ");
+                .Replace("\t", " ")
+                .ToUpperInvariant();
 
             normalized = Regex.Replace(normalized, @"[ ]+", " ");
             normalized = Regex.Replace(normalized, @" *\n *", "\n").Trim();
 
-            // Split the common ATIS header away from the body.
-            normalized = Regex.Replace(
-                normalized,
-                @"^(.+?\bATIS\b\s+[A-Z]\s+\d{4}Z)\s+",
-                "$1\n",
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return string.Empty;
+            }
+
+            // If VATSIM/vPilot already gave us real ATIS lines, keep them.
+            // Only apply section splitting to single-line or obviously overlong lines.
+            List<string> sourceLines = normalized
+                .Split('\n')
+                .Select(line => Regex.Replace(line.Trim(), @"\s+", " "))
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            List<string> outputLines = new();
+
+            foreach (string sourceLine in sourceLines)
+            {
+                if (sourceLine.Length > GetAtisPreviewWrapLength() * 2 || !normalized.Contains("\n"))
+                {
+                    outputLines.AddRange(InsertAtisPreviewSectionBreaks(sourceLine)
+                        .Split('\n')
+                        .Select(line => Regex.Replace(line.Trim(), @"\s+", " "))
+                        .Where(line => !string.IsNullOrWhiteSpace(line)));
+                }
+                else
+                {
+                    outputLines.Add(sourceLine);
+                }
+            }
+
+            string formatted = string.Join("\n", outputLines);
+            formatted = Regex.Replace(
+                formatted,
+                @"\bAT\s*\n\s*TIME\b",
+                "AT TIME",
                 RegexOptions.IgnoreCase);
 
-            // Insert helpful avionics-style line breaks before common ATIS sections.
-            string[] sectionPatterns =
+            return WrapPreviewText(formatted, GetAtisPreviewWrapLength());
+        }
+
+        private int GetAtisPreviewWrapLength()
+        {
+            return DcduStyleManager.IsBoeing ? 50 : 48;
+        }
+
+        private static string InsertAtisPreviewSectionBreaks(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
             {
-                @"\bDEP RWYS?\b",
-                @"\bARR RWYS?\b",
-                @"\bARRIVALS?\b",
-                @"\bDEPARTURES?\b",
-                @"\bRWYS?\b",
-                @"\bWIND\b",
-                @"\bVIS\b",
-                @"\bCAVOK\b",
-                @"\bFEW\d",
-                @"\bSCT\d",
-                @"\bBKN\d",
-                @"\bOVC\d",
-                @"\bTRL\b",
-                @"\bTL\b",
-                @"\bTA\b",
-                @"\bTRANS(?:ITION)?\b",
-                @"\bT\s+[-+]?\d+",
-                @"\bQNH\b",
-                @"\bRECEIVE\b",
-                @"\bDATALINK\b",
-                @"\bENR\b",
-                @"\bEND OF\b"
+                return string.Empty;
+            }
+
+            string result = Regex.Replace(text.Trim(), @"\s+", " ");
+
+            string[] sectionStarts =
+            {
+                @"AT\s+TIME\b",
+                @"DEP\s+RWY\b",
+                @"DEP\s+RWYS\b",
+                @"ARR\s+RWY\b",
+                @"ARR\s+RWYS\b",
+                @"EXP\s+",
+                @"SFC\s+WIND\b",
+                @"CAVOK\b",
+                @"T\s+[-+]?[0-9]{1,2}\b",
+                @"DP\s+[-+]?[0-9]{1,2}\b",
+                @"QNH\s*[0-9]{3,4}\b",
+                @"NOSIG\b",
+                @"ADZ\s+",
+                @"DURING\s+",
+                @"MNM\s+",
+                @"ACFT\s+",
+                @"ENHANCE\s+",
+                @"SQUAWK\s+",
+                @"CAUTION\s+",
+                @"ADVS\s+",
+                @"CONFIRM\s+",
+                @"END\s+OF\s+ATIS\b"
             };
 
-            foreach (string pattern in sectionPatterns)
+            foreach (string sectionStart in sectionStarts)
             {
-                normalized = Regex.Replace(
-                    normalized,
-                    @"\s+(" + pattern + @")",
+                result = Regex.Replace(
+                    result,
+                    @"(?<!^)\s+(" + sectionStart + @")",
                     "\n$1",
                     RegexOptions.IgnoreCase);
             }
 
-            normalized = Regex.Replace(normalized, @"\n{2,}", "\n");
-
-            return WrapPreviewText(normalized, GetPreviewWrapLength());
+            result = Regex.Replace(result, @"\bAT\s*\n\s*TIME\b", "AT TIME", RegexOptions.IgnoreCase);
+            return Regex.Replace(result, @"\n{2,}", "\n").Trim();
         }
 
         private static string WrapPreviewText(string text, int maxChars)
@@ -14159,6 +21151,535 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             return MainPrimaryTextColor();
         }
 
+
+        private void HideMainScreenForStyledMessagePreview()
+        {
+            HideManualDeleteConfirmPopup();
+            HideClearanceTimelinePopup();
+            HideAtisAvailabilityPopup();
+            HideAtisAutoPopup();
+            HideQuickWxPopup();
+            HideQuickActionButtons();
+
+            Control[] controlsToHide =
+            {
+                statusCaptionLabel, statusValueLabel, atcUnitLabel, atcUnitDisplay,
+                nextAtcUnitLabel, nextAtcUnitDisplay, callsignCaptionLabel, callsignDisplayLabel,
+                routeCaptionLabel, callsignRouteLabel, flightPhaseCaptionLabel, flightPhaseLabel,
+                messageHeaderLabel, messageFilterLabel, clearanceStatusLabel, datalinkStatusLabel,
+                atisStatusLabel, atisAutoStatusLabel, quickWxStatusLabel, cpdlcDiscoveryLabel,
+                pdcActionDebugLabel, cpdlcActionDebugLabel, callsignUpdateLabel,
+                outputTable, outputScrollBar, SendingProgress
+            };
+
+            foreach (Control control in controlsToHide)
+            {
+                if (control != null && !control.IsDisposed)
+                {
+                    control.Visible = false;
+                    control.Enabled = false;
+                }
+            }
+        }
+
+        private string StyledPreviewHeaderText(CPDLCMessage message)
+        {
+            string station = (message?.recipient ?? string.Empty).Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(station))
+            {
+                station = "----";
+            }
+
+            string direction = message != null && message.outbound ? " TO " : " FROM ";
+            return DateTime.UtcNow.ToString("HHmm") + "Z" + direction + station;
+        }
+
+        private System.Windows.Forms.Label AddStyledPreviewText(Control parent, string text, int x, int y, int width, int height, Color color, Font font, ContentAlignment align = ContentAlignment.MiddleLeft)
+        {
+            System.Windows.Forms.Label label = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = color,
+                Font = font,
+                Text = text ?? string.Empty,
+                TextAlign = align,
+                Location = new Point(x, y),
+                Size = new Size(width, height),
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                UseCompatibleTextRendering = false
+            };
+
+            parent.Controls.Add(label);
+            label.BringToFront();
+            return label;
+        }
+
+        private void AddStyledPreviewBody(Control parent, string text, int x, int y, int width, int height, Font font)
+        {
+            if (parent == null || string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            Color baseColor = DcduStyleManager.IsBoeing ? MainPrimaryTextColor() : DcduTheme.CyanWhite;
+            Color highlightColor = DcduStyleManager.IsBoeing ? DcduTheme.Green : DcduTheme.Cyan;
+
+            Panel bodyHost = new()
+            {
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                Location = new Point(x, y),
+                Size = new Size(width, height)
+            };
+            parent.Controls.Add(bodyHost);
+            bodyHost.BringToFront();
+
+            string normalized = (text ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n");
+            string[] lines = normalized.Split('\n');
+            int lineHeight = DcduStyleManager.IsBoeing ? 23 : 24;
+
+            for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
+            {
+                string line = lines[lineIndex] ?? string.Empty;
+                int currentX = 0;
+                int currentY = lineIndex * lineHeight;
+                if (currentY + lineHeight > bodyHost.Height)
+                {
+                    break;
+                }
+
+                foreach (Match match in Regex.Matches(line, "@[^@]+@|[^@]+"))
+                {
+                    string rawSegment = match.Value;
+                    if (string.IsNullOrEmpty(rawSegment))
+                    {
+                        continue;
+                    }
+
+                    bool isHighlighted = rawSegment.Length >= 2 && rawSegment.StartsWith("@") && rawSegment.EndsWith("@");
+                    string visibleSegment = isHighlighted ? rawSegment.Substring(1, rawSegment.Length - 2) : rawSegment;
+                    if (visibleSegment.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    Size segmentSize = TextRenderer.MeasureText(
+                        visibleSegment,
+                        font,
+                        new Size(int.MaxValue, lineHeight),
+                        TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
+
+                    System.Windows.Forms.Label label = new()
+                    {
+                        AutoSize = false,
+                        BackColor = Color.Transparent,
+                        ForeColor = isHighlighted ? highlightColor : baseColor,
+                        Font = font,
+                        Text = visibleSegment,
+                        TextAlign = ContentAlignment.TopLeft,
+                        Location = new Point(currentX, currentY),
+                        Size = new Size(Math.Max(2, segmentSize.Width + 12), lineHeight),
+                        Margin = Padding.Empty,
+                        Padding = Padding.Empty,
+                        UseCompatibleTextRendering = false
+                    };
+
+                    bodyHost.Controls.Add(label);
+                    label.BringToFront();
+                    currentX += Math.Max(1, segmentSize.Width + 12);
+                    if (currentX >= bodyHost.Width)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        private System.Windows.Forms.Label AddStyledMessageAction(
+            Control parent,
+            string text,
+            int x,
+            int y,
+            int width,
+            int height,
+            ContentAlignment align,
+            Action action)
+        {
+            System.Windows.Forms.Label label = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = DcduStyleManager.IsBoeing ? MainPrimaryTextColor() : DcduTheme.Cyan,
+                Font = DcduStyleManager.IsBoeing
+                    ? CreateDpiStablePointFont("Consolas", 11.5f, FontStyle.Bold)
+                    : CreateDpiStablePointFont("Consolas", 12.0f, FontStyle.Bold),
+                Text = text ?? string.Empty,
+                TextAlign = align,
+                Location = new Point(x, y),
+                Size = new Size(width, height),
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                BorderStyle = BorderStyle.None,
+                Cursor = Cursors.Hand,
+                TabStop = true
+            };
+
+            // Display-only: the actual clickspot is the physical side button hotspot.
+            label.MouseEnter += (_, __) =>
+            {
+                label.ForeColor = DcduStyleManager.IsBoeing ? MainPrimaryTextColor() : DcduTheme.Cyan;
+                label.Invalidate();
+            };
+            label.MouseLeave += (_, __) =>
+            {
+                label.ForeColor = DcduStyleManager.IsBoeing ? MainPrimaryTextColor() : DcduTheme.Cyan;
+                label.Invalidate();
+            };
+
+            parent.Controls.Add(label);
+            label.BringToFront();
+            return label;
+        }
+
+
+        private bool TryGetStyledMessagePreviewLineSelect(Point location, out bool rightSide, out int index)
+        {
+            rightSide = false;
+            index = 0;
+
+            if (previewMessage == null ||
+                messageFormatPanel == null ||
+                messageFormatPanel.IsDisposed ||
+                !messageFormatPanel.Visible)
+            {
+                return false;
+            }
+
+            if (DcduStyleManager.IsBoeing)
+            {
+                // Boeing message page: lower right rows 5/6 for DELETE/CLOSE or STBY/WILCO.
+                if (BoeingTelexRightLskBounds(5).Contains(location))
+                {
+                    rightSide = true;
+                    index = 5;
+                    return true;
+                }
+
+                if (BoeingTelexRightLskBounds(6).Contains(location))
+                {
+                    rightSide = true;
+                    index = 6;
+                    return true;
+                }
+
+                if (BoeingTelexLeftLskBounds(5).Contains(location))
+                {
+                    rightSide = false;
+                    index = 5;
+                    return true;
+                }
+
+                if (BoeingTelexLeftLskBounds(6).Contains(location))
+                {
+                    rightSide = false;
+                    index = 6;
+                    return true;
+                }
+            }
+            else
+            {
+                // Airbus message page: lower right rows 4/5 for DELETE/CLOSE or STBY/WILCO.
+                if (AirbusAocRightLskBounds(4).Contains(location))
+                {
+                    rightSide = true;
+                    index = 4;
+                    return true;
+                }
+
+                if (AirbusAocRightLskBounds(5).Contains(location))
+                {
+                    rightSide = true;
+                    index = 5;
+                    return true;
+                }
+
+                if (AirbusAocLeftLskBounds(4).Contains(location))
+                {
+                    rightSide = false;
+                    index = 4;
+                    return true;
+                }
+
+                if (AirbusAocLeftLskBounds(5).Contains(location))
+                {
+                    rightSide = false;
+                    index = 5;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsStyledMessagePreviewLineSelectHit(Point location)
+        {
+            return TryGetStyledMessagePreviewLineSelect(location, out _, out _);
+        }
+
+        private bool HandleStyledMessagePreviewLineSelectClick(Point location)
+        {
+            if (!TryGetStyledMessagePreviewLineSelect(location, out bool rightSide, out int index))
+            {
+                return false;
+            }
+
+            HandleStyledMessagePreviewLineSelect(rightSide, index);
+            return true;
+        }
+
+        private void HandleStyledMessagePreviewLineSelect(bool rightSide, int index)
+        {
+            CPDLCMessage message = previewMessage;
+            if (message == null)
+            {
+                return;
+            }
+
+            string responseCode = (message.header?.Responses ?? "NE").Trim().ToUpperInvariant();
+            bool canReply =
+                string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase) &&
+                !message.outbound &&
+                !message.acknowledged &&
+                message.header != null &&
+                !string.IsNullOrWhiteSpace(responseCode) &&
+                !string.Equals(responseCode, "NE", StringComparison.OrdinalIgnoreCase);
+
+            bool row1 = DcduStyleManager.IsBoeing ? index == 5 : index == 4;
+            bool row2 = DcduStyleManager.IsBoeing ? index == 6 : index == 5;
+
+            if (canReply)
+            {
+                if (rightSide && row1)
+                {
+                    ReplyMessage(EventArgs.Empty, message, "STANDBY");
+                    return;
+                }
+
+                if (!rightSide && row2)
+                {
+                    ClearPreview();
+                    return;
+                }
+
+                switch (responseCode)
+                {
+                    case "WU":
+                        if (!rightSide && row1)
+                        {
+                            ReplyMessage(EventArgs.Empty, message, "UNABLE");
+                        }
+                        else if (rightSide && row2)
+                        {
+                            ReplyMessage(EventArgs.Empty, message, "WILCO");
+                        }
+                        return;
+
+                    case "AN":
+                        if (!rightSide && row1)
+                        {
+                            ReplyMessage(EventArgs.Empty, message, "NEGATIVE");
+                        }
+                        else if (rightSide && row2)
+                        {
+                            ReplyMessage(EventArgs.Empty, message, "AFFIRMATIVE");
+                        }
+                        return;
+
+                    case "R":
+                        if (rightSide && row2)
+                        {
+                            ReplyMessage(EventArgs.Empty, message, "ROGER");
+                        }
+                        return;
+                }
+
+                return;
+            }
+
+            if (rightSide && row1)
+            {
+                DeleteElement(EventArgs.Empty, message);
+                return;
+            }
+
+            if (rightSide && row2)
+            {
+                ClearPreview();
+            }
+        }
+
+        private void AddStyledPreviewActions(Control page, CPDLCMessage message, int separatorY)
+        {
+            int actionH = 26;
+            int leftX = DcduStyleManager.IsBoeing ? 8 : 10;
+            int leftW = DcduStyleManager.IsBoeing ? 128 : 132;
+            int rightW = DcduStyleManager.IsBoeing ? 104 : 96;
+            int rightX = Math.Max(8, page.Width - rightW - (DcduStyleManager.IsBoeing ? 6 : 6));
+
+            int leftRow1 = DcduStyleManager.IsBoeing
+                ? BoeingTelexLskTextY(page, 5)
+                : AirbusAocLskTextY(page, 4);
+            int leftRow2 = DcduStyleManager.IsBoeing
+                ? BoeingTelexLskTextY(page, 6)
+                : AirbusAocLskTextY(page, 5);
+
+            int rightRow1 = DcduStyleManager.IsBoeing
+                ? BoeingTelexLskTextY(page, 5)
+                : AirbusAocRightLskTextY(page, 4);
+            int rightRow2 = DcduStyleManager.IsBoeing
+                ? BoeingTelexLskTextY(page, 6)
+                : AirbusAocRightLskTextY(page, 5);
+
+            leftRow1 = Math.Min(page.Height - actionH - 6, Math.Max(separatorY + 2, leftRow1));
+            leftRow2 = Math.Min(page.Height - actionH - 6, Math.Max(leftRow1 + 30, leftRow2));
+            rightRow1 = Math.Min(page.Height - actionH - 6, Math.Max(separatorY + 2, rightRow1));
+            rightRow2 = Math.Min(page.Height - actionH - 6, Math.Max(rightRow1 + 30, rightRow2));
+
+            // Airbus artwork lower LSK text sits a touch below the generic menu table.
+            if (!DcduStyleManager.IsBoeing)
+            {
+                leftRow1 = Math.Min(page.Height - actionH - 6, leftRow1 + 3);
+                leftRow2 = Math.Min(page.Height - actionH - 6, leftRow2 + 8);
+                rightRow1 = Math.Min(page.Height - actionH - 6, rightRow1 + 8);
+                rightRow2 = Math.Min(page.Height - actionH - 6, rightRow2 + 18);
+            }
+
+            string responseCode = (message?.header?.Responses ?? "NE").Trim().ToUpperInvariant();
+            bool canReply = message != null &&
+                string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase) &&
+                !message.outbound &&
+                !message.acknowledged &&
+                message.header != null &&
+                !string.IsNullOrWhiteSpace(responseCode) &&
+                !string.Equals(responseCode, "NE", StringComparison.OrdinalIgnoreCase);
+
+            if (canReply)
+            {
+                switch (responseCode)
+                {
+                    case "WU":
+                        AddStyledMessageAction(page, "*UNABLE", leftX, leftRow1, leftW, actionH, ContentAlignment.MiddleLeft, () => ReplyMessage(EventArgs.Empty, message, "UNABLE"));
+                        AddStyledMessageAction(page, "*RETURN", leftX, leftRow2, leftW, actionH, ContentAlignment.MiddleLeft, () => ClearPreview());
+                        AddStyledMessageAction(page, "STBY*", rightX, rightRow1, rightW, actionH, ContentAlignment.MiddleRight, () => ReplyMessage(EventArgs.Empty, message, "STANDBY"));
+                        AddStyledMessageAction(page, "WILCO*", rightX, rightRow2, rightW, actionH, ContentAlignment.MiddleRight, () => ReplyMessage(EventArgs.Empty, message, "WILCO"));
+                        return;
+
+                    case "AN":
+                        AddStyledMessageAction(page, "*NEG", leftX, leftRow1, leftW, actionH, ContentAlignment.MiddleLeft, () => ReplyMessage(EventArgs.Empty, message, "NEGATIVE"));
+                        AddStyledMessageAction(page, "*RETURN", leftX, leftRow2, leftW, actionH, ContentAlignment.MiddleLeft, () => ClearPreview());
+                        AddStyledMessageAction(page, "STBY*", rightX, rightRow1, rightW, actionH, ContentAlignment.MiddleRight, () => ReplyMessage(EventArgs.Empty, message, "STANDBY"));
+                        AddStyledMessageAction(page, "AFFIRM*", rightX, rightRow2, rightW, actionH, ContentAlignment.MiddleRight, () => ReplyMessage(EventArgs.Empty, message, "AFFIRMATIVE"));
+                        return;
+
+                    case "R":
+                        AddStyledMessageAction(page, "*RETURN", leftX, leftRow2, leftW, actionH, ContentAlignment.MiddleLeft, () => ClearPreview());
+                        AddStyledMessageAction(page, "STBY*", rightX, rightRow1, rightW, actionH, ContentAlignment.MiddleRight, () => ReplyMessage(EventArgs.Empty, message, "STANDBY"));
+                        AddStyledMessageAction(page, "ROGER*", rightX, rightRow2, rightW, actionH, ContentAlignment.MiddleRight, () => ReplyMessage(EventArgs.Empty, message, "ROGER"));
+                        return;
+                }
+            }
+
+            AddStyledMessageAction(page, "DELETE*", rightX, rightRow1, rightW, actionH, ContentAlignment.MiddleRight, () => DeleteElement(EventArgs.Empty, message));
+            AddStyledMessageAction(page, "CLOSE*", rightX, rightRow2, rightW, actionH, ContentAlignment.MiddleRight, () => ClearPreview());
+        }
+
+        private void ShowStyledMessagePreview(CPDLCMessage message, List<System.Windows.Forms.Label> responses)
+        {
+            if (messageFormatPanel == null || messageFormatPanel.IsDisposed || screenPanel == null)
+            {
+                return;
+            }
+
+            HideMainScreenForStyledMessagePreview();
+
+            messageFormatPanel.SuspendLayout();
+            messageFormatPanel.Controls.Clear();
+            messageFormatPanel.Visible = true;
+            messageFormatPanel.Enabled = true;
+            messageFormatPanel.Location = new Point(0, 0);
+            messageFormatPanel.Size = screenPanel.ClientSize;
+            messageFormatPanel.BackColor = Color.Transparent;
+            messageFormatPanel.AutoScroll = false;
+            messageFormatPanel.AutoScrollMinSize = Size.Empty;
+            messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
+            messageFormatPanel.WrapContents = false;
+            messageFormatPanel.BringToFront();
+
+            Panel page = new()
+            {
+                BackColor = Color.Transparent,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                Size = messageFormatPanel.ClientSize
+            };
+
+            int separatorY = DcduStyleManager.IsBoeing
+                ? Math.Max(154, page.Height - 82)
+                : Math.Max(142, page.Height - 118);
+            int bottomTop = separatorY + 8;
+
+            page.Paint += (_, e) =>
+            {
+                using Pen linePen = new Pen(DcduStyleManager.IsBoeing ? Color.FromArgb(220, 220, 232, 236) : DcduTheme.CyanWhite, 1.0f);
+                e.Graphics.DrawLine(linePen, 20, separatorY, Math.Max(20, page.Width - 10), separatorY);
+
+                if (!DcduStyleManager.IsBoeing)
+                {
+                    int leftDivider = Math.Max(130, page.Width / 3);
+                    int rightDivider = Math.Max(leftDivider + 80, page.Width - page.Width / 3);
+                    e.Graphics.DrawLine(linePen, leftDivider, separatorY, leftDivider, Math.Max(separatorY, page.Height - 8));
+                    e.Graphics.DrawLine(linePen, rightDivider, separatorY, rightDivider, Math.Max(separatorY, page.Height - 8));
+                }
+            };
+
+            messageFormatPanel.Controls.Add(page);
+
+            Font headerFont = DcduStyleManager.IsBoeing
+                ? CreateDpiStablePointFont("Consolas", 10.8f, FontStyle.Bold)
+                : CreateDpiStablePointFont("Consolas", 11.2f, FontStyle.Bold);
+            Font bodyFont = DcduStyleManager.IsBoeing
+                ? CreateDpiStablePointFont("Consolas", 10.9f, FontStyle.Bold)
+                : CreateDpiStablePointFont("Consolas", 11.2f, FontStyle.Bold);
+
+            AddStyledPreviewText(page, StyledPreviewHeaderText(message), 20, 4, Math.Max(1, page.Width - 132), 24, DcduTheme.Green, headerFont);
+            AddStyledPreviewText(page, "OPEN", page.Width - 96, 4, 88, 24, DcduStyleManager.IsBoeing ? DcduTheme.Cyan : DcduTheme.Cyan, headerFont, ContentAlignment.MiddleRight);
+
+            string previewText = GetPreviewMessageText(message).ToUpperInvariant();
+            if (IsClearanceStatusText(message?.message ?? string.Empty))
+            {
+                previewText = previewText.Trim();
+            }
+
+            AddStyledPreviewBody(
+                page,
+                previewText,
+                20,
+                36,
+                Math.Max(1, page.Width - 40),
+                Math.Max(40, separatorY - 44),
+                bodyFont);
+
+            AddStyledPreviewActions(page, message, separatorY);
+
+            messageFormatPanel.ResumeLayout(false);
+            HidePreviewHorizontalScrollbar();
+            page.BringToFront();
+            page.Focus();
+        }
+
         private void MessageClicked(object sender, EventArgs e)
         {
             if (sender is not System.Windows.Forms.Label clickedLabel || outputTable == null)
@@ -14197,13 +21718,22 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 List<System.Windows.Forms.Label> responses = new();
 
 
-                if (_sender.type == "CPDLC" && !_sender.outbound && !_sender.acknowledged)
+                string responseCode = (_sender.header?.Responses ?? "NE").Trim().ToUpperInvariant();
+                bool hasReplyHeader = _sender.header != null &&
+                    !string.IsNullOrWhiteSpace(responseCode) &&
+                    !string.Equals(responseCode, "NE", StringComparison.OrdinalIgnoreCase);
+
+                if (string.Equals(_sender.type, "CPDLC", StringComparison.OrdinalIgnoreCase) &&
+                    !_sender.outbound &&
+                    !_sender.acknowledged &&
+                    hasReplyHeader)
                 {
-                    if (_sender.message.Contains("CLR TO") || _sender.message.Contains("CLRD TO") || _sender.message.Contains("CLEARED TO"))
+                    string messageText = _sender.message ?? string.Empty;
+                    if (messageText.Contains("CLR TO") || messageText.Contains("CLRD TO") || messageText.Contains("CLEARED TO"))
                     {
                         AccessibleLabel acceptLabel = CreateSpecialLabel("> ACCEPT", false);
                         AccessibleLabel rejectLabel = CreateSpecialLabel("> REJECT", false);
-                        switch (_sender.header.Responses)
+                        switch (responseCode)
                         {
                             case "WU":
                                 acceptLabel.Click += (lSender, le) => ReplyMessage(e, previewMessage, "WILCO");
@@ -14225,18 +21755,19 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                                 rejectLabel.Click += (lSender, le) => ReplyMessage(e, previewMessage, "UNABLE");
                                 rejectLabel.KeyDown += (lSender, le) => ReplyMessage(e, previewMessage, "UNABLE");
                                 break;
-
-
                         }
 
-                        responses.Add(acceptLabel);
-                        responses.Add(rejectLabel);
+                        if (!string.IsNullOrWhiteSpace(acceptLabel.Text) && !string.IsNullOrWhiteSpace(rejectLabel.Text))
+                        {
+                            responses.Add(acceptLabel);
+                            responses.Add(rejectLabel);
+                        }
+
                         responses.Add(standbyLabel);
                     }
-
                     else
                     {
-                        switch (_sender.header.Responses)
+                        switch (responseCode)
                         {
                             case "WU":
                                 responses.Add(wilcoLabel);
@@ -14259,7 +21790,15 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
                     responses.Add(freeTextLabel);
                 }
-                else if (_sender.type == "TELEX" && !_sender.outbound)
+                else if (string.Equals(_sender.type, "CPDLC", StringComparison.OrdinalIgnoreCase) &&
+                         !_sender.outbound &&
+                         !_sender.acknowledged)
+                {
+                    // Some locally generated/debug CPDLC messages have no CPDLCResponse header.
+                    // They must still open in the styled preview, but without reply action buttons.
+                    responses.Add(freeTextLabel);
+                }
+                else if (string.Equals(_sender.type, "TELEX", StringComparison.OrdinalIgnoreCase) && !_sender.outbound)
                 {
                     responses.Add(freeTextLabel);
                 }
@@ -14273,45 +21812,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     }
                 }
 
-                HideClearanceTimelinePopup();
-                HideAtisAvailabilityPopup();
-                HideAtisAutoPopup();
-                HideQuickWxPopup();
-                SetSmartWidgetsVisible(false);
-                messageFormatPanel.Size = outputTable.Size;
-                messageFormatPanel.Visible = true;
-                outputTable.Visible = false;
-                messageFormatPanel.Controls.Add(returnLabel);
-                messageFormatPanel.SetFlowBreak(returnLabel, true);
-
-                if (IsClearanceStatusText(_sender.message))
-                {
-                    System.Windows.Forms.Label timelineLabel = CreateClearanceTimelineLabel(_sender);
-                    messageFormatPanel.Controls.Add(timelineLabel);
-                    messageFormatPanel.SetFlowBreak(timelineLabel, true);
-                }
-
-                foreach (string line in GetPreviewMessageText(_sender).Split('\n'))
-                {
-                    messageFormatPanel.Controls.Add(CreateLabel(line, false));
-                    messageFormatPanel.SetFlowBreak(messageFormatPanel.Controls[messageFormatPanel.Controls.Count - 1], true);
-                }
-                bool firstActionButton = true;
-                foreach (System.Windows.Forms.Label _response in responses)
-                {
-                    if (firstActionButton)
-                    {
-                        _response.Margin = new Padding(_response.Margin.Left, 7, _response.Margin.Right, _response.Margin.Bottom);
-                        firstActionButton = false;
-                    }
-
-                    messageFormatPanel.Controls.Add(_response);
-                }
-                deleteLabel.Margin = new Padding(deleteLabel.Margin.Left, firstActionButton ? 7 : deleteLabel.Margin.Top, deleteLabel.Margin.Right, deleteLabel.Margin.Bottom);
-                messageFormatPanel.Controls.Add(deleteLabel);
-                messageFormatPanel.PerformLayout();
-                HidePreviewHorizontalScrollbar();
-                messageFormatPanel.Controls[1].Focus();
+                ShowStyledMessagePreview(_sender, responses);
             }
         }
         private Task ADSCParser(string _response, string _sender)
@@ -14665,16 +22166,42 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
 
             var responses = cpdlcHeaderParse.Matches(_response);
+            if (responses.Count < 4)
+            {
+                Logger.Debug("Malformed CPDLC packet ignored: header field count=" + responses.Count);
+                return;
+            }
+
+            if (!int.TryParse(responses[1].Value.Trim('/'), out int parsedMessageId))
+            {
+                Logger.Debug("Malformed CPDLC packet ignored: invalid message id.");
+                return;
+            }
+
+            string responseIdText = responses[2].Value.Trim('/');
+            int parsedResponseId = 0;
+            if (!string.IsNullOrWhiteSpace(responseIdText) && !int.TryParse(responseIdText, out parsedResponseId))
+            {
+                Logger.Debug("Malformed CPDLC packet ignored: invalid response id.");
+                return;
+            }
+
             CPDLCResponse header = new()
             {
                 DataType = responses[0].Value.Trim('/'),
-                MessageID = Convert.ToInt32(responses[1].Value.Trim('/')),
-                ResponseID = responses[2].Value.Trim('/').Length < 1 ? 0 : Convert.ToInt32(responses[2].Value.Trim('/')),
+                MessageID = parsedMessageId,
+                ResponseID = parsedResponseId,
                 Responses = responses[3].Value.Trim('/')
             };
 
             string[] messageContent = _response.Split(new string[] { header.Responses + "/" }, StringSplitOptions.None);
-            if (messageContent[1].Contains(callsign))
+            if (messageContent.Length < 2)
+            {
+                Logger.Debug("Malformed CPDLC packet ignored: missing message content.");
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(callsign) && messageContent[1].Contains(callsign))
             {
                 messageString = messageContent[1].Split(new string[] { callsign }, StringSplitOptions.None).Last();
             }
@@ -14725,7 +22252,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 _showUser = false;
             }
 
-            string message = callsign + " " + messageString.Replace("@@", "N/A").Replace("@", Environment.NewLine).Replace("_", "");
+            // Keep @...@ tokens intact: the styled DCDU preview uses them to highlight
+            // clearance values such as runway, SID, squawk, frequency and flight level.
+            string message = callsign + " " + messageString.Replace("@@", "N/A").Replace("_", "");
             message = Regex.Replace(message, @"\s+", " ");
 
             Logger.Debug(message);
@@ -14809,18 +22338,27 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             {
                 menuLabel.CanFlash = true;
             }
-            menuLabel.Click += (sender, e) =>
+            menuLabel.MouseClick += (sender, e) =>
             {
-                if (sender is TimerLabel clickedMenuLabel && IsAutoDeleteRequestTimerActive(message))
+                if (sender is not TimerLabel clickedMenuLabel)
+                {
+                    return;
+                }
+
+                if (IsAutoDeleteRequestTimerActive(message))
                 {
                     ShowAutoDeleteActionPopup(message, clickedMenuLabel);
                     return;
                 }
 
-                if (!StopAutoDeleteRequestMessage(message, true))
+                if (IsOpenMessageDeleteActionHit(clickedMenuLabel, e.Location))
                 {
-                    MessageClicked(sender, e);
+                    ShowManualDeleteConfirmPopup(message, clickedMenuLabel);
+                    return;
                 }
+
+                HideManualDeleteConfirmPopup();
+                MessageClicked(sender, e);
             };
             message.KeyDown += MessageClicked;
 
@@ -14902,12 +22440,19 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
         {
             string response = "";
 
+            if (DebugUiPreviewMode)
+            {
+                InitialiseDebugUiPreviewMode();
+                WriteMessage("UI PREVIEW: CONNECT/DISCONNECT IS DISABLED. BUTTONS STAY UNLOCKED AND NO NETWORK LOGON IS SENT.", "SYSTEM", "SYSTEM");
+                return;
+            }
+
             if (!Connected)
             {
 
                 try
                 {
-                    using (HttpClient wc = new())
+                    using (HttpClient wc = CreateShortTimeoutHttpClient())
                     {
                         vatsimData = JsonConvert.DeserializeObject<VATSIMRootobject>(wc.GetStringAsync("https://data.vatsim.net/v3/vatsim-data.json").Result);
                         lastVatsimOnlineRefreshUtc = DateTime.UtcNow;
@@ -14977,8 +22522,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 try
                 {
 
-                    using HttpClient wc = new();
-                    var simbriefjson = wc.GetStringAsync(String.Format("https://www.simbrief.com/api/xml.fetcher.php?userid={0}&json=1", SimbriefID)).Result;
+                    using HttpClient wc = CreateShortTimeoutHttpClient();
+                    var simbriefjson = wc.GetStringAsync($"https://www.simbrief.com/api/xml.fetcher.php?userid={Uri.EscapeDataString(SimbriefID)}&json=1").Result;
                     var simbriefNavlog = JObject.Parse(simbriefjson)["navlog"].ToString();
                     simbriefData = JsonConvert.DeserializeObject<Navlog>(simbriefNavlog);
 
@@ -15096,28 +22641,23 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
         }
         private void TelexButton_Click(object sender, EventArgs e)
         {
-            tForm = new TelexForm(this);
-            PrepareOverlayChildWindow(tForm);
-            tForm.Show(this);
-            tForm.BringToFront();
-            tForm.Activate();
-        }
-        private void RequestButton_Click(object sender, EventArgs e)
-        {
-            if (rForm != null && !rForm.IsDisposed)
+            if (!DcduStyleManager.IsBoeing)
             {
-                PrepareOverlayChildWindow(rForm);
-                rForm.Show(this);
-                rForm.BringToFront();
-                rForm.Activate();
+                ShowAirbusAocMainMenu();
                 return;
             }
 
-            rForm = new RequestForm(this);
-            PrepareOverlayChildWindow(rForm);
-            rForm.Show(this);
-            rForm.BringToFront();
-            rForm.Activate();
+            ShowBoeingTelexMenu();
+        }
+        private void RequestButton_Click(object sender, EventArgs e)
+        {
+            if (!DcduStyleManager.IsBoeing)
+            {
+                ShowAirbusAtcMainMenu();
+                return;
+            }
+
+            ShowBoeingAtcMainMenu();
         }
 
         private async void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -15136,7 +22676,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             Properties.Settings.Default.MainWindowSize = Size;
             Properties.Settings.Default.Save();
 
-            if (CurrentATCUnit is not null)
+            if (CurrentATCUnit is not null && !DebugUiPreviewMode)
             {
                 await SendCPDLCMessage(CurrentATCUnit, "CPDLC", String.Format("/data2/{0}//N/LOGOFF", messageOutCounter), false);
                 requestCancellationTokenSource?.Cancel();
@@ -15193,13 +22733,808 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             base.WndProc(ref m);
         }
 
+
+        private bool IsEmbeddedSetupActive()
+        {
+            return embeddedSetupPage != EmbeddedSetupPage.None;
+        }
+
+        private int EmbeddedSetupBottomIndex()
+        {
+            return DcduStyleManager.IsBoeing ? 6 : 5;
+        }
+
+        private Rectangle EmbeddedSetupLeftLskBounds(int index)
+        {
+            return DcduStyleManager.IsBoeing
+                ? BoeingTelexLeftLskBounds(index)
+                : AirbusAocLeftLskBounds(index);
+        }
+
+        private Rectangle EmbeddedSetupRightLskBounds(int index)
+        {
+            return DcduStyleManager.IsBoeing
+                ? BoeingTelexRightLskBounds(index)
+                : AirbusAocRightLskBounds(index);
+        }
+
+        private int EmbeddedSetupLskTextY(Control parent, int index)
+        {
+            return DcduStyleManager.IsBoeing
+                ? BoeingTelexLskTextY(parent, index)
+                : AirbusAocLskTextY(parent, index);
+        }
+
+        private int EmbeddedSetupRightLskTextY(Control parent, int index)
+        {
+            return DcduStyleManager.IsBoeing
+                ? BoeingTelexLskTextY(parent, index)
+                : AirbusAocRightLskTextY(parent, index);
+        }
+
+        private int EmbeddedSetupActionY(Control parent)
+        {
+            return EmbeddedSetupLskTextY(parent, EmbeddedSetupBottomIndex());
+        }
+
+        private Font EmbeddedSetupTitleFont()
+        {
+            return DcduStyleManager.IsBoeing ? BoeingTelexTitleFont() : AirbusAocTitleFont();
+        }
+
+        private Font EmbeddedSetupMenuFont()
+        {
+            return DcduStyleManager.IsBoeing ? BoeingTelexMenuFont() : AirbusAocMenuFont();
+        }
+
+        private Font EmbeddedSetupCaptionFont()
+        {
+            return DcduStyleManager.IsBoeing ? BoeingTelexCaptionFont() : AirbusAocCaptionFont();
+        }
+
+        private Font EmbeddedSetupValueFont()
+        {
+            return DcduStyleManager.IsBoeing ? BoeingTelexValueFont() : AirbusAocValueFont();
+        }
+
+        private bool TryGetEmbeddedSetupLineSelect(Point location, out bool rightSide, out int index)
+        {
+            rightSide = false;
+            index = 0;
+
+            if (!IsEmbeddedSetupActive())
+            {
+                return false;
+            }
+
+            int maxIndex = DcduStyleManager.IsBoeing ? 6 : 5;
+            for (int i = 1; i <= maxIndex; i++)
+            {
+                if (EmbeddedSetupLeftLskBounds(i).Contains(location) && IsEmbeddedSetupLineSelectActionAvailable(false, i))
+                {
+                    index = i;
+                    return true;
+                }
+
+                if (EmbeddedSetupRightLskBounds(i).Contains(location) && IsEmbeddedSetupLineSelectActionAvailable(true, i))
+                {
+                    rightSide = true;
+                    index = i;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsEmbeddedSetupLineSelectHit(Point location)
+        {
+            return TryGetEmbeddedSetupLineSelect(location, out _, out _);
+        }
+
+        private bool HandleEmbeddedSetupLineSelectClick(Point location)
+        {
+            if (!TryGetEmbeddedSetupLineSelect(location, out bool rightSide, out int index))
+            {
+                return false;
+            }
+
+            HandleEmbeddedSetupLineSelect(rightSide, index);
+            return true;
+        }
+
+        private bool IsEmbeddedSetupLineSelectActionAvailable(bool rightSide, int index)
+        {
+            int bottom = EmbeddedSetupBottomIndex();
+            switch (embeddedSetupPage)
+            {
+                case EmbeddedSetupPage.MainMenu:
+                    return !rightSide && (index == 1 || index == 2 || index == 3 || index == 4 || index == bottom);
+
+                case EmbeddedSetupPage.Account:
+                    return !rightSide && index == bottom;
+
+                case EmbeddedSetupPage.Options:
+                    return ((!rightSide || rightSide) && (index == 1 || index == 2 || index == 3 || index == 4)) ||
+                           (!rightSide && index == bottom);
+
+                case EmbeddedSetupPage.Style:
+                    return !rightSide && (index == 1 || index == 2 || index == bottom);
+
+                case EmbeddedSetupPage.UpdateRollback:
+                    if (!rightSide && index == bottom)
+                    {
+                        return true;
+                    }
+
+                    return !rightSide && index >= 1 && index <= 3 && index <= embeddedSetupRollbackReleases.Count;
+
+                case EmbeddedSetupPage.RollbackConfirm:
+                    return (!rightSide && index == bottom) || (rightSide && index == bottom);
+
+                default:
+                    return false;
+            }
+        }
+
+        private void HandleEmbeddedSetupLineSelect(bool rightSide, int index)
+        {
+            int bottom = EmbeddedSetupBottomIndex();
+            switch (embeddedSetupPage)
+            {
+                case EmbeddedSetupPage.MainMenu:
+                    if (!rightSide && index == 1)
+                    {
+                        ShowEmbeddedSetupAccountPage();
+                    }
+                    else if (!rightSide && index == 2)
+                    {
+                        ShowEmbeddedSetupOptionsPage();
+                    }
+                    else if (!rightSide && index == 3)
+                    {
+                        ShowEmbeddedSetupStylePage();
+                    }
+                    else if (!rightSide && index == 4)
+                    {
+                        ShowEmbeddedSetupUpdateRollbackPage(true);
+                    }
+                    else if (!rightSide && index == bottom)
+                    {
+                        CloseEmbeddedSetupPages();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.Account:
+                    if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupMainMenu();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.Options:
+                    if (index == 1)
+                    {
+                        ToggleEmbeddedSetupPlaySound();
+                    }
+                    else if (index == 2)
+                    {
+                        ToggleEmbeddedSetupAutoDelete();
+                    }
+                    else if (index == 3)
+                    {
+                        ToggleEmbeddedSetupFsuipc();
+                    }
+                    else if (index == 4)
+                    {
+                        CycleEmbeddedSetupMessageTextSize();
+                    }
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupMainMenu();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.Style:
+                    if (!rightSide && index == 1)
+                    {
+                        SetEmbeddedSetupDisplayStyle(DcduStyleManager.Airbus);
+                    }
+                    else if (!rightSide && index == 2)
+                    {
+                        SetEmbeddedSetupDisplayStyle(DcduStyleManager.Boeing);
+                    }
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupMainMenu();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.UpdateRollback:
+                    if (!rightSide && index >= 1 && index <= 3 && index <= embeddedSetupRollbackReleases.Count)
+                    {
+                        ShowEmbeddedSetupRollbackConfirmPage(embeddedSetupRollbackReleases[index - 1]);
+                    }
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupMainMenu();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.RollbackConfirm:
+                    if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupUpdateRollbackPage(false);
+                    }
+                    else if (rightSide && index == bottom)
+                    {
+                        _ = StartEmbeddedSetupRollbackAsync();
+                    }
+                    break;
+            }
+        }
+
+        private void PrepareEmbeddedSetupPage(EmbeddedSetupPage page)
+        {
+            embeddedSetupPage = page;
+            embeddedSetupInputs.Clear();
+
+            airbusAocPage = AirbusAocPage.None;
+            boeingTelexPage = BoeingTelexPage.None;
+            airbusAocInputs.Clear();
+            boeingTelexInputs.Clear();
+            airbusAocSendLabel = null;
+            boeingTelexSendLabel = null;
+            airbusAocSendReady = false;
+            boeingTelexSendReady = false;
+
+            HideQuickWxPopup();
+            HideClearanceTimelinePopup();
+            HideAtisAvailabilityPopup();
+            HideAtisAutoPopup();
+            HideQuickActionButtons();
+            HideCpdlcLogonPopup();
+            HidePdcQuickActionButton();
+
+            SetAirbusAocChromeVisible(false);
+            messageFormatPanel.SuspendLayout();
+            messageFormatPanel.Controls.Clear();
+            messageFormatPanel.Visible = true;
+            messageFormatPanel.Enabled = true;
+            messageFormatPanel.BringToFront();
+            messageFormatPanel.Location = new Point(12, 10);
+            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - 24), Math.Max(1, screenPanel.Height - 20));
+            messageFormatPanel.Padding = new Padding(0);
+            messageFormatPanel.Margin = new Padding(0);
+            messageFormatPanel.AutoScroll = false;
+            messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
+            messageFormatPanel.WrapContents = false;
+            messageFormatPanel.ResumeLayout(false);
+        }
+
+        private Panel CreateEmbeddedSetupCanvas()
+        {
+            Panel canvas = new()
+            {
+                BackColor = Color.Transparent,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Size = messageFormatPanel.ClientSize
+            };
+            messageFormatPanel.Controls.Add(canvas);
+            canvas.BringToFront();
+            return canvas;
+        }
+
+        private System.Windows.Forms.Label AddEmbeddedSetupLabel(Control parent, string text, int x, int y, int width, int height, ContentAlignment align = ContentAlignment.MiddleLeft, Color? color = null, Font font = null)
+        {
+            System.Windows.Forms.Label label = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = color ?? MainPrimaryTextColor(),
+                Font = font ?? EmbeddedSetupMenuFont(),
+                Text = text ?? string.Empty,
+                TextAlign = align,
+                Location = new Point(x, y),
+                Size = new Size(width, height),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+            parent.Controls.Add(label);
+            label.BringToFront();
+            return label;
+        }
+
+        private TextBox AddEmbeddedSetupTextBox(Control parent, string key, string value, int x, int y, int width, int maxLength, bool password = false)
+        {
+            TextBox box = new()
+            {
+                Name = "embeddedSetup_" + key,
+                BackColor = Color.FromArgb(3, 8, 15),
+                ForeColor = MainPrimaryTextColor(),
+                BorderStyle = BorderStyle.FixedSingle,
+                CharacterCasing = CharacterCasing.Normal,
+                Font = EmbeddedSetupValueFont(),
+                Location = new Point(x, y),
+                Size = new Size(width, 24),
+                MaxLength = maxLength,
+                Text = value ?? string.Empty,
+                UseSystemPasswordChar = password,
+                Multiline = false
+            };
+
+            box.TextChanged += (_, __) => SaveEmbeddedSetupTextValue(key, box.Text ?? string.Empty);
+            parent.Controls.Add(box);
+            box.BringToFront();
+            embeddedSetupInputs[key] = box;
+            return box;
+        }
+
+        private string EmbeddedSetupOnOff(bool value)
+        {
+            return value ? "ON" : "OFF";
+        }
+
+        private void SaveEmbeddedSetupTextValue(string key, string value)
+        {
+            try
+            {
+                switch (key)
+                {
+                    case SetupInputCid:
+                        if (string.IsNullOrWhiteSpace(value))
+                        {
+                            SavedCID = 0;
+                        }
+                        else if (int.TryParse(value.Trim(), out int cidValue) && cidValue > 0)
+                        {
+                            SavedCID = cidValue;
+                        }
+                        break;
+
+                    case SetupInputHoppie:
+                        SavedHoppieCode = value ?? string.Empty;
+                        break;
+
+                    case SetupInputSimbrief:
+                        SimbriefID = value ?? string.Empty;
+                        break;
+                }
+
+                Properties.Settings.Default.Save();
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Debug("Embedded setup save failed: " + ex.Message);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void ShowEmbeddedSetupMainMenu()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.MainMenu);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "SETUP MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "<ACCOUNT / LOGIN", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "<OPTIONS", 4, EmbeddedSetupLskTextY(page, 2), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "<DCDU STYLE", 4, EmbeddedSetupLskTextY(page, 3), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, DcduStyleManager.CurrentStyle.ToUpperInvariant(), page.Width - 180, EmbeddedSetupRightLskTextY(page, 3), 176, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "<UPDATE / ROLLBACK", 4, EmbeddedSetupLskTextY(page, 4), 310, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "<RETURN", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 190, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void ShowEmbeddedSetupAccountPage()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.Account);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            int leftX = 22;
+            int y = 44;
+            AddEmbeddedSetupLabel(page, "SETUP ACCOUNT", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+
+            AddEmbeddedSetupLabel(page, "VATSIM CID", leftX, y, 170, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddEmbeddedSetupTextBox(page, SetupInputCid, SavedCID > 0 ? SavedCID.ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty, leftX + 180, y - 2, 150, 8);
+            y += 44;
+
+            AddEmbeddedSetupLabel(page, "HOPPIE LOGON CODE", leftX, y, 190, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddEmbeddedSetupTextBox(page, SetupInputHoppie, SavedHoppieCode, leftX + 180, y - 2, 190, 64, true);
+            y += 44;
+
+            AddEmbeddedSetupLabel(page, "SIMBRIEF USERNAME", leftX, y, 190, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddEmbeddedSetupTextBox(page, SetupInputSimbrief, SimbriefID, leftX + 180, y - 2, 190, 64);
+            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, EmbeddedSetupMenuFont());
+        }
+
+        private void ShowEmbeddedSetupOptionsPage()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.Options);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "SETUP OPTIONS", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "<SOUND ALERT", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(PlaySound), page.Width - 130, EmbeddedSetupRightLskTextY(page, 1), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "<AUTO DELETE MSG", 4, EmbeddedSetupLskTextY(page, 2), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(AutoDeleteRequestMessages), page.Width - 130, EmbeddedSetupRightLskTextY(page, 2), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "<USE FSUIPC", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(UseFSUIPC), page.Width - 130, EmbeddedSetupRightLskTextY(page, 3), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "<MSG TEXT SIZE", 4, EmbeddedSetupLskTextY(page, 4), 280, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, MessageTextSize.ToUpperInvariant(), page.Width - 190, EmbeddedSetupRightLskTextY(page, 4), 186, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+
+
+        private void ShowEmbeddedSetupUpdateRollbackPage(bool refresh)
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.UpdateRollback);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "UPDATE / ROLLBACK", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "CURRENT VERSION", 4, 38, 180, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddEmbeddedSetupLabel(page, System.Windows.Forms.Application.ProductVersion, page.Width - 210, 38, 206, 18, ContentAlignment.MiddleRight, DcduTheme.Amber, captionFont);
+
+            if (embeddedSetupRollbackLoading)
+            {
+                AddEmbeddedSetupLabel(page, "LOADING RELEASES FROM GITHUB...", 4, EmbeddedSetupLskTextY(page, 2), page.Width - 8, 26, ContentAlignment.MiddleLeft, DcduTheme.Amber, menuFont);
+            }
+            else if (embeddedSetupRollbackReleases.Count == 0)
+            {
+                string status = string.IsNullOrWhiteSpace(embeddedSetupRollbackStatus)
+                    ? "NO SUPPORTED ROLLBACK RELEASES"
+                    : embeddedSetupRollbackStatus;
+
+                AddEmbeddedSetupLabel(page, status.ToUpperInvariant(), 4, 76, page.Width - 8, 28, ContentAlignment.MiddleLeft, DcduTheme.Amber, menuFont);
+
+                if (string.Equals(status, "NO SUPPORTED ROLLBACK RELEASES", StringComparison.OrdinalIgnoreCase))
+                {
+                    Version currentVersion = ParseReleaseVersion(System.Windows.Forms.Application.ProductVersion);
+                    string detail = currentVersion != null && currentVersion <= MinimumSupportedRollbackVersion
+                        ? "NO ROLLBACK BELOW 1.0.0.12"
+                        : "MINIMUM VERSION 1.0.0.12";
+                    AddEmbeddedSetupLabel(page, detail, 4, 108, page.Width - 8, 20, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+                }
+            }
+            else
+            {
+                int count = Math.Min(3, embeddedSetupRollbackReleases.Count);
+                for (int i = 0; i < count; i++)
+                {
+                    Release release = embeddedSetupRollbackReleases[i];
+                    string tag = string.IsNullOrWhiteSpace(release.TagName) ? release.Name : release.TagName;
+                    if (string.IsNullOrWhiteSpace(tag))
+                    {
+                        tag = "UNKNOWN";
+                    }
+
+                    AddEmbeddedSetupLabel(page, "<ROLLBACK " + tag.ToUpperInvariant(), 4, EmbeddedSetupLskTextY(page, i + 1), page.Width - 8, 30, ContentAlignment.MiddleLeft, color, menuFont);
+                }
+
+                if (!string.IsNullOrWhiteSpace(embeddedSetupRollbackStatus))
+                {
+                    AddEmbeddedSetupLabel(page, embeddedSetupRollbackStatus.ToUpperInvariant(), 4, EmbeddedSetupLskTextY(page, 4), page.Width - 8, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+                }
+            }
+
+            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+
+            if (refresh || (!embeddedSetupRollbackLoading && embeddedSetupRollbackReleases.Count == 0 && string.IsNullOrWhiteSpace(embeddedSetupRollbackStatus)))
+            {
+                _ = LoadEmbeddedSetupRollbackReleasesAsync();
+            }
+        }
+
+        private async Task LoadEmbeddedSetupRollbackReleasesAsync()
+        {
+            if (embeddedSetupRollbackLoading)
+            {
+                return;
+            }
+
+            embeddedSetupRollbackLoading = true;
+            embeddedSetupRollbackStatus = string.Empty;
+
+            if (embeddedSetupPage == EmbeddedSetupPage.UpdateRollback)
+            {
+                ShowEmbeddedSetupUpdateRollbackPage(false);
+            }
+
+            try
+            {
+                List<Release> releases = await GetEmbeddedSetupRollbackCandidatesAsync();
+                embeddedSetupRollbackReleases.Clear();
+                embeddedSetupRollbackReleases.AddRange(releases);
+                embeddedSetupRollbackStatus = embeddedSetupRollbackReleases.Count == 0
+                    ? "NO SUPPORTED ROLLBACK RELEASES"
+                    : "SELECT RELEASE TO INSTALL";
+            }
+            catch (Exception ex)
+            {
+                embeddedSetupRollbackReleases.Clear();
+                embeddedSetupRollbackStatus = ex.Message.IndexOf("rate limit", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? "GITHUB RATE LIMIT - TRY LATER"
+                    : "GITHUB RELEASE LOAD FAILED";
+                Logger.Debug("Rollback release load failed: " + ex.Message);
+            }
+            finally
+            {
+                embeddedSetupRollbackLoading = false;
+            }
+
+            if (embeddedSetupPage == EmbeddedSetupPage.UpdateRollback)
+            {
+                ShowEmbeddedSetupUpdateRollbackPage(false);
+            }
+        }
+
+        private async Task<List<Release>> GetEmbeddedSetupRollbackCandidatesAsync()
+        {
+            var client = new GitHubClient(new ProductHeaderValue("EasyCPDLC"));
+            IReadOnlyList<Release> releases = await client.Repository.Release.GetAll(UpdateGithubOwner, UpdateGithubRepo);
+            Version currentVersion = ParseReleaseVersion(System.Windows.Forms.Application.ProductVersion);
+
+            return releases
+                .Where(release => release != null && !release.Prerelease && !release.Draft)
+                .Select(release => new
+                {
+                    Release = release,
+                    Version = ParseReleaseVersion(release.TagName)
+                })
+                .Where(item =>
+                    item.Version != null &&
+                    currentVersion != null &&
+                    item.Version < currentVersion &&
+                    item.Version >= MinimumSupportedRollbackVersion &&
+                    FindUpdateZipAsset(item.Release) != null)
+                .OrderByDescending(item => item.Version)
+                .Take(3)
+                .Select(item => item.Release)
+                .ToList();
+        }
+
+        private void ShowEmbeddedSetupRollbackConfirmPage(Release release)
+        {
+            if (release == null)
+            {
+                ShowEmbeddedSetupUpdateRollbackPage(false);
+                return;
+            }
+
+            embeddedSetupSelectedRollbackRelease = release;
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.RollbackConfirm);
+
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            string tag = string.IsNullOrWhiteSpace(release.TagName) ? release.Name : release.TagName;
+            if (string.IsNullOrWhiteSpace(tag))
+            {
+                tag = "SELECTED VERSION";
+            }
+
+            AddEmbeddedSetupLabel(page, "ROLLBACK CONFIRM", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "ROLLBACK TO", 4, 52, 180, 20, ContentAlignment.MiddleLeft, color, captionFont);
+            AddEmbeddedSetupLabel(page, tag.ToUpperInvariant(), 4, 76, page.Width - 8, 32, ContentAlignment.MiddleLeft, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "THE APP WILL RESTART AFTER INSTALL.", 4, 128, page.Width - 8, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddEmbeddedSetupLabel(page, "<NO", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 120, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "YES>", page.Width - 120, EmbeddedSetupRightLskTextY(page, EmbeddedSetupBottomIndex()), 116, 30, ContentAlignment.MiddleRight, color, menuFont);
+        }
+
+        private async Task StartEmbeddedSetupRollbackAsync()
+        {
+            Release release = embeddedSetupSelectedRollbackRelease;
+            if (release == null)
+            {
+                ShowEmbeddedSetupUpdateRollbackPage(false);
+                return;
+            }
+
+            try
+            {
+                Version selectedVersion = ParseReleaseVersion(release.TagName);
+                if (selectedVersion == null || selectedVersion < MinimumSupportedRollbackVersion)
+                {
+                    MessageBox.Show(
+                        "Rollback is only supported down to version 1.0.0.12.",
+                        "EasyCPDLC Rollback",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    ShowEmbeddedSetupUpdateRollbackPage(true);
+                    return;
+                }
+
+                ReleaseAsset asset = FindUpdateZipAsset(release);
+                if (asset == null)
+                {
+                    MessageBox.Show(
+                        "Selected release does not contain a trusted ZIP asset.",
+                        "EasyCPDLC Rollback",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    ShowEmbeddedSetupUpdateRollbackPage(true);
+                    return;
+                }
+
+                await DownloadAndInstallUpdateAsync(release, asset);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("Rollback install failed: " + ex.Message);
+                MessageBox.Show(
+                    "Rollback failed:" + Environment.NewLine + ex.Message,
+                    "EasyCPDLC Rollback",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                ShowEmbeddedSetupUpdateRollbackPage(true);
+            }
+        }
+
+        private async Task RunEmbeddedSetupUpdateCheckAsync()
+        {
+            try
+            {
+                embeddedSetupRollbackStatus = "CHECKING FOR UPDATE...";
+                if (embeddedSetupPage == EmbeddedSetupPage.UpdateRollback)
+                {
+                    ShowEmbeddedSetupUpdateRollbackPage(false);
+                }
+
+                var client = new GitHubClient(new ProductHeaderValue("EasyCPDLC"));
+                IReadOnlyList<Release> releases = await client.Repository.Release.GetAll(UpdateGithubOwner, UpdateGithubRepo);
+
+                Release latest = releases
+                    .Where(release => release != null && !release.Prerelease && !release.Draft)
+                    .OrderByDescending(release => ParseReleaseVersion(release.TagName))
+                    .FirstOrDefault();
+
+                Version latestVersion = ParseReleaseVersion(latest?.TagName);
+                Version currentVersion = ParseReleaseVersion(System.Windows.Forms.Application.ProductVersion);
+
+                if (latest == null || latestVersion == null || currentVersion == null || latestVersion <= currentVersion)
+                {
+                    embeddedSetupRollbackStatus = "NO UPDATE AVAILABLE";
+                }
+                else
+                {
+                    ReleaseAsset asset = FindUpdateZipAsset(latest);
+                    if (asset == null)
+                    {
+                        embeddedSetupRollbackStatus = "UPDATE HAS NO ZIP ASSET";
+                    }
+                    else
+                    {
+                        embeddedSetupSelectedRollbackRelease = latest;
+                        await DownloadAndInstallUpdateAsync(latest, asset);
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                embeddedSetupRollbackStatus = "UPDATE CHECK FAILED";
+                Logger.Debug("Embedded update check failed: " + ex.Message);
+            }
+
+            if (embeddedSetupPage == EmbeddedSetupPage.UpdateRollback)
+            {
+                ShowEmbeddedSetupUpdateRollbackPage(false);
+            }
+        }
+
+        private void ShowEmbeddedSetupStylePage()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.Style);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "DCDU STYLE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "<AIRBUS", 4, EmbeddedSetupLskTextY(page, 1), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, string.Equals(DcduStyleManager.CurrentStyle, DcduStyleManager.Airbus, StringComparison.OrdinalIgnoreCase) ? "ACTIVE" : string.Empty,
+                page.Width - 160, EmbeddedSetupRightLskTextY(page, 1), 156, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "<BOEING", 4, EmbeddedSetupLskTextY(page, 2), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, string.Equals(DcduStyleManager.CurrentStyle, DcduStyleManager.Boeing, StringComparison.OrdinalIgnoreCase) ? "ACTIVE" : string.Empty,
+                page.Width - 160, EmbeddedSetupRightLskTextY(page, 2), 156, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "STYLE APPLIES IMMEDIATELY", 4, EmbeddedSetupLskTextY(page, 4), page.Width - 8, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void SetEmbeddedSetupDisplayStyle(string style)
+        {
+            string selected = string.Equals(style, DcduStyleManager.Boeing, StringComparison.OrdinalIgnoreCase)
+                ? DcduStyleManager.Boeing
+                : DcduStyleManager.Airbus;
+
+            DcduStyleManager.CurrentStyle = selected;
+            Properties.Settings.Default.Save();
+            ApplyDisplayStyle();
+            ShowEmbeddedSetupStylePage();
+        }
+
+        private void ToggleEmbeddedSetupPlaySound()
+        {
+            PlaySound = !PlaySound;
+            Properties.Settings.Default.Save();
+            ConfigureInboundMessageSound();
+            ShowEmbeddedSetupOptionsPage();
+        }
+
+        private void ToggleEmbeddedSetupAutoDelete()
+        {
+            AutoDeleteRequestMessages = !AutoDeleteRequestMessages;
+            Properties.Settings.Default.Save();
+            ShowEmbeddedSetupOptionsPage();
+        }
+
+        private void ToggleEmbeddedSetupFsuipc()
+        {
+            UseFSUIPC = !UseFSUIPC;
+            Properties.Settings.Default.Save();
+            ShowEmbeddedSetupOptionsPage();
+        }
+
+        private void CycleEmbeddedSetupMessageTextSize()
+        {
+            string current = MessageTextSize;
+            if (string.Equals(current, "Normal", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageTextSize = "Large";
+            }
+            else if (string.Equals(current, "Large", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageTextSize = "Extra Large";
+            }
+            else
+            {
+                MessageTextSize = "Normal";
+            }
+
+            Properties.Settings.Default.Save();
+            ApplyMessageTextSizeSetting();
+            ShowEmbeddedSetupOptionsPage();
+        }
+
+        private void CloseEmbeddedSetupPages()
+        {
+            embeddedSetupPage = EmbeddedSetupPage.None;
+            embeddedSetupInputs.Clear();
+            RestoreMainScreenFromEmbeddedPage();
+        }
+
         private void SettingsButton_Click(object sender, EventArgs e)
         {
-            sForm = new SettingsForm(this);
-            PrepareOverlayChildWindow(sForm);
-            sForm.Show(this);
-            sForm.BringToFront();
-            sForm.Activate();
+            ShowEmbeddedSetupMainMenu();
         }
 
         private void HelpButton_Click(object sender, EventArgs e)

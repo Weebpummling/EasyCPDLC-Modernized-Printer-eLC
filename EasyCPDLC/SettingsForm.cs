@@ -30,6 +30,7 @@ namespace EasyCPDLC
         DcduCheckBox useFSUIPCBox;
         UITextBox simbriefTextBox;
         ComboBox styleSelector;
+        ComboBox messageTextSizeSelector;
 
         private readonly MainForm parent;
 
@@ -65,7 +66,7 @@ namespace EasyCPDLC
         private void ApplyWindowLayout()
         {
             bool isBoeing = DcduStyleManager.IsBoeing;
-            Size targetSize = isBoeing ? new Size(600, 210) : new Size(670, 235);
+            Size targetSize = isBoeing ? new Size(600, 234) : new Size(670, 259);
             ClientSize = targetSize;
             Size = targetSize;
             MinimumSize = targetSize;
@@ -77,22 +78,22 @@ namespace EasyCPDLC
             if (isBoeing)
             {
                 settingsCard.Location = new Point(103, 22);
-                settingsCard.Size = new Size(380, 169);
+                settingsCard.Size = new Size(380, 193);
                 settingsFormatPanel.Location = new Point(10, 17);
-                settingsFormatPanel.Size = new Size(360, 146);
+                settingsFormatPanel.Size = new Size(360, 170);
                 exitButton.Bounds = new Rectangle(520, 39, 53, 29);
                 cancelButton.Bounds = new Rectangle(520, 74, 53, 29);
-                okButton.Bounds = new Rectangle(520, 108, 53, 29);
+                okButton.Bounds = new Rectangle(520, 132, 53, 29);
             }
             else
             {
                 settingsCard.Location = new Point(90, 32);
-                settingsCard.Size = new Size(434, 167);
+                settingsCard.Size = new Size(434, 191);
                 settingsFormatPanel.Location = new Point(22, 12);
-                settingsFormatPanel.Size = new Size(390, 148);
+                settingsFormatPanel.Size = new Size(390, 172);
                 exitButton.Bounds = new Rectangle(555, 43, 59, 31);
                 cancelButton.Bounds = new Rectangle(555, 83, 59, 31);
-                okButton.Bounds = new Rectangle(555, 123, 59, 31);
+                okButton.Bounds = new Rectangle(555, 147, 59, 31);
             }
 
             settingsFrame.Invalidate();
@@ -188,6 +189,10 @@ namespace EasyCPDLC
             settingsFormatPanel.Controls.Add(styleRow);
             settingsFormatPanel.SetFlowBreak(styleRow, true);
 
+            FlowLayoutPanel messageTextSizeRow = CreateMessageTextSizeSelectorRow();
+            settingsFormatPanel.Controls.Add(messageTextSizeRow);
+            settingsFormatPanel.SetFlowBreak(messageTextSizeRow, true);
+
             bool isBoeing = DcduStyleManager.IsBoeing;
             FlowLayoutPanel simbriefRow = new()
             {
@@ -250,6 +255,48 @@ namespace EasyCPDLC
             styleRow.Controls.Add(styleLabel);
             styleRow.Controls.Add(styleSelector);
             return styleRow;
+        }
+
+        private FlowLayoutPanel CreateMessageTextSizeSelectorRow()
+        {
+            bool isBoeing = DcduStyleManager.IsBoeing;
+            FlowLayoutPanel sizeRow = new()
+            {
+                BackColor = Color.Transparent,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = false,
+                Size = isBoeing ? new Size(350, 24) : new Size(390, 25),
+                Margin = isBoeing ? new Padding(0, 3, 0, 0) : new Padding(0, 3, 0, 0),
+                Padding = new Padding(0, 0, 0, 0)
+            };
+
+            Label sizeLabel = CreateTemplate("MESSAGE TEXT:");
+            sizeLabel.Width = isBoeing ? 148 : 156;
+            sizeLabel.AutoSize = false;
+            sizeLabel.Padding = new Padding(0, 2, 0, 0);
+            sizeLabel.Margin = new Padding(0, 0, 6, 0);
+
+            messageTextSizeSelector = new ComboBox()
+            {
+                BackColor = DcduTheme.ScreenAlt,
+                ForeColor = isBoeing ? Color.FromArgb(224, 232, 238) : DcduTheme.CyanWhite,
+                Font = MainForm.CreateDpiStablePointFont("Consolas", isBoeing ? 8.0f : 8.2f, FontStyle.Bold),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Popup,
+                Width = isBoeing ? 118 : 132,
+                Height = isBoeing ? 20 : 21,
+                Margin = isBoeing ? new Padding(0, 0, 0, 0) : new Padding(0, 1, 0, 0)
+            };
+
+            messageTextSizeSelector.Items.Add("Normal");
+            messageTextSizeSelector.Items.Add("Large");
+            messageTextSizeSelector.Items.Add("Extra Large");
+            messageTextSizeSelector.SelectedItem = MainForm.MessageTextSize;
+
+            sizeRow.Controls.Add(sizeLabel);
+            sizeRow.Controls.Add(messageTextSizeSelector);
+            return sizeRow;
         }
 
         private DcduCheckBox CreateCheckBox(string _text, string _group)
@@ -335,6 +382,7 @@ namespace EasyCPDLC
             bool autoDeleteReqMessages = autoDeleteReqMessagesBox?.Checked ?? parent.AutoDeleteRequestMessages;
             bool playSound = audiblePingBox?.Checked ?? MainForm.PlaySound;
             bool useFsuipc = useFSUIPCBox?.Checked ?? MainForm.UseFSUIPC;
+            string messageTextSize = messageTextSizeSelector?.SelectedItem?.ToString() ?? MainForm.MessageTextSize;
             string simbriefId = simbriefTextBox?.Text ?? MainForm.SimbriefID;
 
             string selectedStyle = styleSelector?.SelectedItem?.ToString() ?? DcduStyleManager.Airbus;
@@ -352,6 +400,10 @@ namespace EasyCPDLC
             autoDeleteReqMessagesBox.Checked = autoDeleteReqMessages;
             audiblePingBox.Checked = playSound;
             useFSUIPCBox.Checked = useFsuipc;
+            if (messageTextSizeSelector != null && messageTextSizeSelector.Items.Contains(messageTextSize))
+            {
+                messageTextSizeSelector.SelectedItem = messageTextSize;
+            }
             simbriefTextBox.Text = simbriefId;
 
             // Update the already open Main window immediately.
@@ -364,8 +416,10 @@ namespace EasyCPDLC
             MainForm.PlaySound = audiblePingBox.Checked;
             MainForm.UseFSUIPC = useFSUIPCBox.Checked;
             MainForm.SimbriefID = simbriefTextBox.Text;
+            MainForm.MessageTextSize = messageTextSizeSelector?.SelectedItem?.ToString() ?? "Normal";
             DcduStyleManager.CurrentStyle = styleSelector?.SelectedItem?.ToString() ?? DcduStyleManager.Airbus;
             parent.ApplyDisplayStyle();
+            parent.ApplyMessageTextSizeSetting();
 
             Properties.Settings.Default.Save();
             this.Close();

@@ -65,6 +65,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
         UITextBox fix3;
 
         private readonly MainForm MainForm;
+        private bool DebugUiPreview => MainForm != null && MainForm.DebugUiPreviewButtonsUnlocked;
         private readonly Pilot userVATSIMData;
         private readonly Color controlBackColor;
         private readonly Color controlFrontColor;
@@ -89,6 +90,14 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             set
             {
                 this._needsLogon = value;
+
+                if (DebugUiPreview)
+                {
+                    logonButton.Text = this._needsLogon ? "LOGON" : "LOGOFF";
+                    requestButton.Enabled = true;
+                    reportButton.Enabled = true;
+                    return;
+                }
 
                 if (this._needsLogon)
                 {
@@ -211,6 +220,18 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             messageFormatPanel.AutoScroll = false;
             KeepRequestPanelScrollClean();
             sendButton.Enabled = false;
+
+            if (DebugUiPreview)
+            {
+                NeedsLogon = false;
+                pdcButton.Enabled = true;
+                logonButton.Enabled = true;
+                requestButton.Enabled = true;
+                reportButton.Enabled = true;
+                clearButton.Enabled = true;
+                exitButton.Enabled = true;
+            }
+
             requestFrame.Invalidate();
         }
 
@@ -225,7 +246,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
             Control[] hotspots = { pdcButton, logonButton, requestButton, reportButton, clearButton, sendButton, exitButton };
             foreach (Control hotspot in hotspots)
             {
-                if (hotspot != null && hotspot.Enabled && hotspot.Bounds.Contains(location))
+                if (hotspot != null && (DebugUiPreview || hotspot.Enabled) && hotspot.Bounds.Contains(location))
                 {
                     return hotspot;
                 }
@@ -1168,7 +1189,7 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
                     if (NeedsLogon)
                     {
-                        bool? stationOnline = await IsHoppieStationOnlineAsync(_recipient);
+                        bool? stationOnline = DebugUiPreview ? true : await IsHoppieStationOnlineAsync(_recipient);
                         if (stationOnline == false)
                         {
                             MainForm.WriteMessage("STATION NOT ONLINE", "SYSTEM", "SYSTEM");
@@ -1249,6 +1270,11 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
             string _request = "";
 
+            if (radioBtn is null)
+            {
+                return string.Empty;
+            }
+
             switch (radioBtn.Name)
             {
                 case "levelRadioButton":
@@ -1290,7 +1316,13 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
 
                 case "speedRadioButton":
 
-                    if (messageFormatPanel.Controls[messageFormatPanel.Controls.IndexOf(unitBox) + 1].Text == "")
+                    if (unitBox is null)
+                    {
+                        return string.Empty;
+                    }
+
+                    int speedValueIndex = messageFormatPanel.Controls.IndexOf(unitBox) + 1;
+                    if (speedValueIndex <= 0 || speedValueIndex >= messageFormatPanel.Controls.Count || messageFormatPanel.Controls[speedValueIndex].Text == "")
                     {
                         return string.Empty;
                     }
@@ -1300,11 +1332,11 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                     {
                         if (unitBox.Text == "MACH: M0.")
                         {
-                            _request += "M" + messageFormatPanel.Controls[messageFormatPanel.Controls.IndexOf(unitBox) + 1].Text;
+                            _request += "M" + messageFormatPanel.Controls[speedValueIndex].Text;
                         }
                         else
                         {
-                            _request += messageFormatPanel.Controls[messageFormatPanel.Controls.IndexOf(unitBox) + 1].Text + "K";
+                            _request += messageFormatPanel.Controls[speedValueIndex].Text + "K";
                         }
                     }
                     else
@@ -1328,6 +1360,11 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                         return string.Empty;
                     }
 
+                    int wcwValueIndex = messageFormatPanel.Controls.IndexOf(wcwBox) + 1;
+                    string wcwValueText = wcwValueIndex > 0 && wcwValueIndex < messageFormatPanel.Controls.Count
+                        ? messageFormatPanel.Controls[wcwValueIndex].Text
+                        : string.Empty;
+
                     _request = "WHEN CAN WE EXPECT ";
 
                     switch (wcwBox.Text)
@@ -1345,19 +1382,35 @@ public const int WM_NCLBUTTONDOWN = 0xA1;
                             break;
 
                         case "CLIMB TO: FL":
-                            _request += "CLIMB TO FL" + messageFormatPanel.Controls[messageFormatPanel.Controls.IndexOf(wcwBox) + 1];
+                            if (string.IsNullOrWhiteSpace(wcwValueText))
+                            {
+                                return string.Empty;
+                            }
+                            _request += "CLIMB TO FL" + wcwValueText;
                             break;
 
                         case "DESCENT TO: FL":
-                            _request += "DESCENT TO FL" + messageFormatPanel.Controls[messageFormatPanel.Controls.IndexOf(wcwBox) + 1];
+                            if (string.IsNullOrWhiteSpace(wcwValueText))
+                            {
+                                return string.Empty;
+                            }
+                            _request += "DESCENT TO FL" + wcwValueText;
                             break;
 
                         case "MACH: M0.":
-                            _request += "M" + messageFormatPanel.Controls[messageFormatPanel.Controls.IndexOf(wcwBox) + 1];
+                            if (string.IsNullOrWhiteSpace(wcwValueText))
+                            {
+                                return string.Empty;
+                            }
+                            _request += "M" + wcwValueText;
                             break;
 
                         case "SPEED: ":
-                            _request += messageFormatPanel.Controls[messageFormatPanel.Controls.IndexOf(wcwBox) + 1] + "K";
+                            if (string.IsNullOrWhiteSpace(wcwValueText))
+                            {
+                                return string.Empty;
+                            }
+                            _request += wcwValueText + "K";
                             break;
 
                         default:
