@@ -154,7 +154,7 @@ namespace EasyCPDLC
                     isIndicatorBadge
                         ? Color.FromArgb((focused || hovered) ? 220 : 158, frameAccent)
                         : Color.FromArgb((focused || hovered) ? 180 : 112, accent),
-                    (focused || hovered) ? 1.35f : 1.0f);
+                    (focused || hovered) ? ScaleUi(1.35f) : ScaleUi(1.0f));
                 using Pen topLine = new Pen(Color.FromArgb(isIndicatorBadge ? 82 : 45, Color.White), 1.0f);
 
                 e.Graphics.FillPath(fill, path);
@@ -765,7 +765,234 @@ private TelexForm tForm;
         }
 
         private const string MessageTextSizeSettingName = "MessageTextSize";
+        private const string AutoDeleteRequestSecondsSettingName = "AutoDeleteRequestSeconds";
+        private const string WindowScalePercentSettingName = "WindowScalePercent";
         private const string MessagePreviewTextTag = "EASYCPDLC_MESSAGE_PREVIEW_TEXT";
+
+        public static int WindowScalePercent
+        {
+            get
+            {
+                return NormalizeWindowScalePercent(ReadFixedStringSetting(WindowScalePercentSettingName, "100"));
+            }
+            set
+            {
+                SaveFixedStringSetting(
+                    WindowScalePercentSettingName,
+                    NormalizeWindowScalePercent(value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+
+        private static int NormalizeWindowScalePercent(string value)
+        {
+            if (!int.TryParse((value ?? string.Empty).Trim().TrimEnd('%'), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int percent))
+            {
+                percent = 100;
+            }
+
+            int[] supported = { 100, 110, 120 };
+            return supported.OrderBy(item => Math.Abs(item - percent)).First();
+        }
+
+        private static float WindowScaleFactor()
+        {
+            return Math.Max(1.0f, Math.Min(1.20f, WindowScalePercent / 100.0f));
+        }
+
+        private static int ScaleUi(int value)
+        {
+            return (int)Math.Round(value * WindowScaleFactor(), MidpointRounding.AwayFromZero);
+        }
+
+        private static float ScaleUi(float value)
+        {
+            return value * WindowScaleFactor();
+        }
+
+        private static Size ScaleUiSize(Size value)
+        {
+            return new Size(ScaleUi(value.Width), ScaleUi(value.Height));
+        }
+
+        private int S(int value)
+        {
+            return ScaleUi(value);
+        }
+
+        private float SF(float value)
+        {
+            return ScaleUi(value);
+        }
+
+        private Point SP(Point value)
+        {
+            return new Point(S(value.X), S(value.Y));
+        }
+
+        private Size SS(Size value)
+        {
+            return ScaleUiSize(value);
+        }
+
+        private Padding SPad(Padding value)
+        {
+            return new Padding(S(value.Left), S(value.Top), S(value.Right), S(value.Bottom));
+        }
+
+        private Rectangle SR(Rectangle value)
+        {
+            return new Rectangle(S(value.X), S(value.Y), S(value.Width), S(value.Height));
+        }
+
+        private int BaseLogicalWidth(Control parent)
+        {
+            int parentWidth = parent?.ClientSize.Width ?? 0;
+            if (parentWidth <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Max(1, (int)Math.Round(parentWidth / WindowScaleFactor(), MidpointRounding.AwayFromZero));
+        }
+
+        private int BaseLogicalHeight(Control parent)
+        {
+            int parentHeight = parent?.ClientSize.Height ?? 0;
+            if (parentHeight <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Max(1, (int)Math.Round(parentHeight / WindowScaleFactor(), MidpointRounding.AwayFromZero));
+        }
+
+        private int BaseLogicalClientWidth(Control parent)
+        {
+            int baseWidth = BaseLogicalWidth(parent);
+            return baseWidth > 0 ? baseWidth : (parent?.ClientSize.Width ?? 0);
+        }
+
+        private int BaseLogicalClientHeight(Control parent)
+        {
+            int baseHeight = BaseLogicalHeight(parent);
+            return baseHeight > 0 ? baseHeight : (parent?.ClientSize.Height ?? 0);
+        }
+
+        private int ScaleChildX(Control parent, int x)
+        {
+            int parentWidth = parent?.ClientSize.Width ?? 0;
+            int baseWidth = BaseLogicalWidth(parent);
+
+            // Calls like page.Width - 160 are already based on the scaled parent
+            // width. Treat those as right-margin anchored. Normal fixed x values
+            // like 154/252 remain ordinary scaled coordinates.
+            if (parentWidth > 0 && baseWidth > 0 && x > baseWidth)
+            {
+                return Math.Max(0, parentWidth - S(parentWidth - x));
+            }
+
+            return S(x);
+        }
+
+        private int ScaleChildX(Control parent, int x, int width)
+        {
+            int parentWidth = parent?.ClientSize.Width ?? 0;
+            int baseWidth = BaseLogicalWidth(parent);
+
+            // Right-aligned calls usually look like x = page.Width - margin.
+            // They are below the current scaled width, but x+width exceeds the
+            // unscaled logical width. Keep the right margin stable.
+            if (parentWidth > 0 && baseWidth > 0 && x > baseWidth / 2 && x + width > baseWidth)
+            {
+                return Math.Max(0, parentWidth - S(parentWidth - x));
+            }
+
+            return ScaleChildX(parent, x);
+        }
+
+        private int ScaleChildY(Control parent, int y)
+        {
+            int parentHeight = parent?.ClientSize.Height ?? 0;
+            int baseHeight = BaseLogicalHeight(parent);
+
+            if (parentHeight > 0 && baseHeight > 0 && y > baseHeight)
+            {
+                return Math.Max(0, parentHeight - S(parentHeight - y));
+            }
+
+            return S(y);
+        }
+
+        private int ScaleChildY(Control parent, int y, int height)
+        {
+            int parentHeight = parent?.ClientSize.Height ?? 0;
+            int baseHeight = BaseLogicalHeight(parent);
+
+            if (parentHeight > 0 && baseHeight > 0 && y > baseHeight / 2 && y + height > baseHeight)
+            {
+                return Math.Max(0, parentHeight - S(parentHeight - y));
+            }
+
+            return ScaleChildY(parent, y);
+        }
+
+        private int ScaleChildWidth(Control parent, int x, int width)
+        {
+            int parentWidth = parent?.ClientSize.Width ?? 0;
+            int baseWidth = BaseLogicalWidth(parent);
+            int scaledX = ScaleChildX(parent, x, width);
+
+            // If the provided x/width combination extends beyond the unscaled
+            // logical page width, it came from page.Width/page.Width - margin.
+            // Keep the right margin stable and scale that margin, instead of
+            // compressing the field to 1px.
+            if (parentWidth > 0 && baseWidth > 0 && x + width > baseWidth)
+            {
+                int rightMargin = Math.Max(0, parentWidth - x - width);
+                return Math.Max(1, parentWidth - scaledX - S(rightMargin));
+            }
+
+            return S(width);
+        }
+
+        private int ScaleChildHeight(Control parent, int y, int height)
+        {
+            int parentHeight = parent?.ClientSize.Height ?? 0;
+            int baseHeight = BaseLogicalHeight(parent);
+            int scaledY = ScaleChildY(parent, y, height);
+
+            if (parentHeight > 0 && baseHeight > 0 && y + height > baseHeight)
+            {
+                int bottomMargin = Math.Max(0, parentHeight - y - height);
+                return Math.Max(1, parentHeight - scaledY - S(bottomMargin));
+            }
+
+            return S(height);
+        }
+
+        public static int AutoDeleteRequestMessageSeconds
+        {
+            get
+            {
+                return NormalizeAutoDeleteRequestSeconds(ReadFixedStringSetting(AutoDeleteRequestSecondsSettingName, "30"));
+            }
+            set
+            {
+                SaveFixedStringSetting(
+                    AutoDeleteRequestSecondsSettingName,
+                    NormalizeAutoDeleteRequestSeconds(value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+
+        private static int NormalizeAutoDeleteRequestSeconds(string value)
+        {
+            if (!int.TryParse((value ?? string.Empty).Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int seconds))
+            {
+                seconds = 30;
+            }
+
+            return Math.Max(5, Math.Min(99, seconds));
+        }
 
         public static string MessageTextSize
         {
@@ -1169,8 +1396,10 @@ private TelexForm tForm;
         private void RefreshMessageTextFonts()
         {
             float offset = MessageTextSizeOffsetPixels();
-            messageTextFont = CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(1.0f, textFont.Size + offset), FontStyle.Regular);
-            messageTextFontBold = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(1.0f, textFontBold.Size + offset), FontStyle.Bold);
+            float baseRegularPixels = 10.5f * 96.0f / 72.0f;
+            float baseBoldPixels = 11.5f * 96.0f / 72.0f;
+            messageTextFont = CreateDpiStablePixelFont(textFont.FontFamily, Math.Max(1.0f, baseRegularPixels + offset), FontStyle.Regular);
+            messageTextFontBold = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(1.0f, baseBoldPixels + offset), FontStyle.Bold);
         }
 
         private Font GetMessageTextFont(bool bold)
@@ -1183,6 +1412,24 @@ private TelexForm tForm;
             return bold ? messageTextFontBold : messageTextFont;
         }
 
+        private static IEnumerable<Control> EnumerateChildControls(Control parent)
+        {
+            if (parent == null)
+            {
+                yield break;
+            }
+
+            foreach (Control child in parent.Controls)
+            {
+                yield return child;
+
+                foreach (Control descendant in EnumerateChildControls(child))
+                {
+                    yield return descendant;
+                }
+            }
+        }
+
         public void ApplyMessageTextSizeSetting()
         {
             RefreshMessageTextFonts();
@@ -1190,12 +1437,11 @@ private TelexForm tForm;
 
             if (messageFormatPanel != null && !messageFormatPanel.IsDisposed)
             {
-                foreach (Control control in messageFormatPanel.Controls)
+                foreach (System.Windows.Forms.Label label in EnumerateChildControls(messageFormatPanel).OfType<System.Windows.Forms.Label>())
                 {
-                    if (control is System.Windows.Forms.Label label &&
-                        string.Equals(label.Tag as string, MessagePreviewTextTag, StringComparison.Ordinal))
+                    if (string.Equals(label.Tag as string, MessagePreviewTextTag, StringComparison.Ordinal))
                     {
-                        label.Font = GetMessageTextFont(false);
+                        label.Font = GetMessageTextFont(true);
                         label.Invalidate();
                     }
                 }
@@ -1475,9 +1721,9 @@ private TelexForm tForm;
                 new Size(300, callsignDisplayLabel.Height),
                 TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
 
-            int desiredLeft = callsignDisplayLabel.Left + Math.Max(0, textWidth) + 5;
+            int desiredLeft = callsignDisplayLabel.Left + Math.Max(0, textWidth) + S(5);
             int statusBlockLeft = clearanceStatusLabel?.Left ?? 242;
-            int maxLeft = Math.Max(callsignDisplayLabel.Left, statusBlockLeft - callsignUpdateLabel.Width - 6);
+            int maxLeft = Math.Max(callsignDisplayLabel.Left, statusBlockLeft - callsignUpdateLabel.Width - S(12));
 
             callsignUpdateLabel.Location = new Point(Math.Min(desiredLeft, maxLeft), callsignDisplayLabel.Top);
         }
@@ -1517,8 +1763,12 @@ private TelexForm tForm;
                 callsignUpdateLabel.Visible = showUpdate;
                 callsignUpdateLabel.Enabled = showUpdate && !callsignMismatchManualCheckInProgress;
                 callsignUpdateLabel.Cursor = showUpdate ? Cursors.Hand : Cursors.Default;
-                callsignUpdateLabel.Text = callsignMismatchManualCheckInProgress ? "…" : "↻";
+                callsignUpdateLabel.Text = callsignMismatchManualCheckInProgress ? "…" : "!";
                 callsignUpdateLabel.ForeColor = CallsignMismatchAlarmColor();
+                smartStatusToolTip.SetToolTip(callsignUpdateLabel,
+                    callsignMismatchManualCheckInProgress
+                        ? "Checking VATSIM callsign..."
+                        : "Callsign mismatch - click to recheck VATSIM callsign");
                 PositionCallsignUpdateIcon();
                 callsignUpdateLabel.BringToFront();
             }
@@ -1671,6 +1921,60 @@ private TelexForm tForm;
             string arrival = prefile.flight_plan?.arrival?.Trim().ToUpperInvariant() ?? "----";
 
             return (string.IsNullOrWhiteSpace(callsignValue) ? "UNKNOWN" : callsignValue) + " " + departure + "-" + arrival;
+        }
+
+        private static string NormalizeFlightPlanDisplayText(string displayText)
+        {
+            return Regex.Replace((displayText ?? string.Empty).Trim().ToUpperInvariant(), @"\s+", " ");
+        }
+
+        private static bool TryParseFlightPlanDisplayText(string displayText, out string callsignValue, out string departure, out string arrival)
+        {
+            callsignValue = string.Empty;
+            departure = string.Empty;
+            arrival = string.Empty;
+
+            string clean = NormalizeFlightPlanDisplayText(displayText);
+            Match match = Regex.Match(clean, @"^(?<callsign>[A-Z0-9]{2,12})\s+(?<dep>[A-Z0-9]{4})-(?<arr>[A-Z0-9]{4})$");
+
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            callsignValue = match.Groups["callsign"].Value.Trim().ToUpperInvariant();
+            departure = match.Groups["dep"].Value.Trim().ToUpperInvariant();
+            arrival = match.Groups["arr"].Value.Trim().ToUpperInvariant();
+            return true;
+        }
+
+        private bool IsSameAsCurrentLoadedFlightPlanDisplay(string displayText)
+        {
+            if (!TryParseFlightPlanDisplayText(displayText, out string detectedCallsign, out string detectedDeparture, out string detectedArrival))
+            {
+                return false;
+            }
+
+            string currentRoute = BuildActiveFlightRouteText();
+            if (string.IsNullOrWhiteSpace(currentRoute) ||
+                string.Equals(currentRoute, "----", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string expectedRoute = detectedDeparture + "-" + detectedArrival;
+            if (!string.Equals(currentRoute.Trim().ToUpperInvariant(), expectedRoute, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string activeHoppieCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string liveVatsimCallsign = (activeVatsimCallsign ?? userVATSIMData?.callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string displayedCurrent = GetConnectedPilotCallsign();
+
+            return string.Equals(detectedCallsign, activeHoppieCallsign, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(detectedCallsign, liveVatsimCallsign, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(detectedCallsign, displayedCurrent, StringComparison.OrdinalIgnoreCase);
         }
 
         private bool HasActiveVatsimCallsignMismatch()
@@ -2157,14 +2461,24 @@ private TelexForm tForm;
 
             // Restarted airborne below FL220 can be ARR only if position agrees:
             // closer to destination and already well past the departure part of the route.
-            if (arrivalDistanceNm <= 160.0 && arrivalDistanceNm + 30.0 < departureDistanceNm)
+            if (arrivalDistanceNm <= 180.0 && arrivalDistanceNm + 20.0 < departureDistanceNm)
+            {
+                return true;
+            }
+
+            // Low-altitude arrival-side restart/reconnect. This catches cases like
+            // being established in descent around 8000 ft without having seen FL220
+            // in this EasyCPDLC session.
+            if (pilot.altitude <= 12000 &&
+                arrivalDistanceNm <= 260.0 &&
+                arrivalDistanceNm + 5.0 < departureDistanceNm)
             {
                 return true;
             }
 
             if (routeDistanceNm > 120.0 &&
-                arrivalDistanceNm / routeDistanceNm <= 0.35 &&
-                arrivalDistanceNm + 20.0 < departureDistanceNm)
+                arrivalDistanceNm / routeDistanceNm <= 0.45 &&
+                arrivalDistanceNm + 10.0 < departureDistanceNm)
             {
                 return true;
             }
@@ -2172,12 +2486,93 @@ private TelexForm tForm;
             return false;
         }
 
+        private void ResetFlightPhaseTrendTracking()
+        {
+            flightPhaseStartedAirborneBelowEnroute = false;
+            flightPhaseDescentTrendSeen = false;
+            lastFlightPhaseObservedAltitude = int.MinValue;
+        }
+
+        private void TrackFlightPhaseAltitudeTrend(Pilot pilot)
+        {
+            if (pilot == null || pilot.altitude <= 0)
+            {
+                return;
+            }
+
+            if (lastFlightPhaseObservedAltitude != int.MinValue &&
+                pilot.altitude < 22000 &&
+                pilot.altitude + 400 < lastFlightPhaseObservedAltitude)
+            {
+                flightPhaseDescentTrendSeen = true;
+            }
+            else if (lastFlightPhaseObservedAltitude != int.MinValue &&
+                     pilot.altitude < 22000 &&
+                     pilot.altitude > lastFlightPhaseObservedAltitude + 400)
+            {
+                // Clear stale DESC state when the aircraft is clearly climbing.
+                flightPhaseDescentTrendSeen = false;
+                if (!flightPhaseEnrouteSeen)
+                {
+                    flightPhaseArrivalSeen = false;
+                    preferArrivalStationAfterAirborne = false;
+                }
+            }
+
+            lastFlightPhaseObservedAltitude = pilot.altitude;
+        }
+
+        private bool HasUsableFlightPhaseAirportDistances(Pilot pilot)
+        {
+            return TryGetFlightPhaseAirportDistances(
+                pilot,
+                out double departureDistanceNm,
+                out double arrivalDistanceNm,
+                out double routeDistanceNm) &&
+                departureDistanceNm < double.MaxValue &&
+                arrivalDistanceNm < double.MaxValue &&
+                routeDistanceNm > 20.0;
+        }
+
+        private bool IsLowAltitudeAirborneRestartLikelyDescent(Pilot pilot)
+        {
+            if (pilot?.flight_plan == null ||
+                pilot.altitude <= 3000 ||
+                pilot.altitude >= 22000 ||
+                flightPhaseGroundObservedThisSession)
+            {
+                return false;
+            }
+
+            if (IsPilotLikelyInDepartureClimbout(pilot))
+            {
+                return false;
+            }
+
+            if (IsPilotLikelyInArrivalDescent(pilot))
+            {
+                return true;
+            }
+
+            // If airport coordinates are available and did not support arrival-side
+            // descent, do not guess. Position-based logic has priority.
+            if (HasUsableFlightPhaseAirportDistances(pilot))
+            {
+                return false;
+            }
+
+            // Never guess DESC just from low altitude after restart. That breaks
+            // real climbouts. Without airport coordinates, require an actual observed
+            // descent trend from live VATSIM updates.
+            return flightPhaseDescentTrendSeen && pilot.altitude <= 18000;
+        }
+
         private void EnsureFlightPhaseSignature(Pilot pilot)
         {
             if (pilot != null && pilot.altitude <= 3000)
             {
                 // Session memory: if we really saw the aircraft on/near the ground, then
-                // an airborne state below FL220 later is a departure/climbout, not ARR.
+                // an airborne state below FL220 later is a departure/climbout, not DESC.
                 flightPhaseGroundObservedThisSession = true;
             }
 
@@ -2190,9 +2585,12 @@ private TelexForm tForm;
                 flightPhaseArrivalSeen = false;
                 flightPhaseDepartureSeen = false;
                 preferArrivalStationAfterAirborne = false;
+                ResetFlightPhaseTrendTracking();
 
                 if (pilot != null)
                 {
+                    flightPhaseStartedAirborneBelowEnroute = pilot.altitude > 3000 && pilot.altitude < 22000;
+
                     if (pilot.altitude <= 3000)
                     {
                         flightPhaseGroundObservedThisSession = true;
@@ -2223,10 +2621,10 @@ private TelexForm tForm;
                             flightPhaseArrivalSeen = false;
                             preferArrivalStationAfterAirborne = false;
                         }
-                        else if (IsPilotLikelyInArrivalDescent(pilot))
+                        else if (IsPilotLikelyInArrivalDescent(pilot) || IsLowAltitudeAirborneRestartLikelyDescent(pilot))
                         {
-                            // Program was started already airborne below FL220 and position is
-                            // clearly on/near arrival side of the route.
+                            // Program was started already airborne below FL220 and position,
+                            // low altitude, or descent trend supports the arrival/descent side.
                             flightPhaseEnrouteSeen = true;
                             flightPhaseArrivalSeen = true;
                             flightPhaseDepartureSeen = true;
@@ -2235,8 +2633,9 @@ private TelexForm tForm;
                         else
                         {
                             // Ambiguous restart below FL220:
-                            // show AIRBORN instead of incorrectly forcing ARR.
-                            flightPhaseDepartureSeen = true;
+                            // do not poison the state as DEP. Keep it neutral so later
+                            // SimBrief coordinates or descent trend can correct to DESC.
+                            flightPhaseDepartureSeen = false;
                             flightPhaseArrivalSeen = false;
                             preferArrivalStationAfterAirborne = false;
                         }
@@ -2249,6 +2648,8 @@ private TelexForm tForm;
                     }
                 }
             }
+
+            TrackFlightPhaseAltitudeTrend(pilot);
         }
 
         private bool HasReachedEnrouteForPhase(Pilot pilot)
@@ -2325,12 +2726,24 @@ private TelexForm tForm;
                 return false;
             }
 
+            // If the app was started/reconnected already in descent, SimBrief airport
+            // coordinates may only become available after the first phase calculation.
+            // Re-check position/low-altitude restart/trend so 8000 ft in descent does not stay AIRBORN.
+            if (IsPilotLikelyInArrivalDescent(pilot) || IsLowAltitudeAirborneRestartLikelyDescent(pilot))
+            {
+                flightPhaseEnrouteSeen = true;
+                flightPhaseArrivalSeen = true;
+                flightPhaseDepartureSeen = true;
+                preferArrivalStationAfterAirborne = true;
+                return true;
+            }
+
             // Required normal order:
-            // DEP -> AIRBORN -> ARR -> LND -> NEXT FP.
+            // DEP -> AIRBORN -> DESC -> LND -> NEXT FP.
             //
             // Normal climb case:
             // If we have seen the departure/ground phase in this app session, do not
-            // enter ARR before an altitude-only enroute marker was reached.
+            // enter DESC before an altitude-only enroute marker was reached.
             if (flightPhaseDepartureSeen && !flightPhaseEnrouteSeen)
             {
                 return false;
@@ -2367,7 +2780,7 @@ private TelexForm tForm;
             if (IsAirborneNowForPhase())
             {
                 return IsArrivalPhaseLikely()
-                    ? "🛬 ARR"
+                    ? "🛬 DESC"
                     : "✈ AIRBORN";
             }
 
@@ -2467,6 +2880,26 @@ private TelexForm tForm;
             }
 
             return normalized;
+        }
+
+        private static string FormatAtisInlineWarning(string warning)
+        {
+            string clean = (warning ?? string.Empty)
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Trim()
+                .ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return string.Empty;
+            }
+
+            clean = clean.Replace(". SELECT ", ".\nSELECT ");
+            clean = clean.Replace(". GENERIC ", ".\nGENERIC ");
+            clean = clean.Replace(". ", ".\n");
+
+            return clean;
         }
 
         public bool TryResolveAtisRequestTarget(string station, string selectedType, out string target, out string warning)
@@ -2620,6 +3053,8 @@ private TelexForm tForm;
         private Panel manualDeleteConfirmPopupPanel;
         private CPDLCMessage manualDeleteConfirmPopupMessage;
         private const string OpenMessageActionsTag = "OPEN_ACTIONS";
+        private const string WilcoMessageActionsTag = "WILCO_ACTIONS";
+        private const string DeleteOnlyMessageActionsTag = "DELETE_ONLY_ACTIONS";
         private readonly List<CpdlcDiscoveryResult> cpdlcDiscoveryCandidates = new();
         private readonly List<FirBoundaryFeature> firBoundaryFeatures = new();
         private DateTime firBoundaryLoadedUtc = DateTime.MinValue;
@@ -2740,6 +3175,7 @@ private TelexForm tForm;
         private AccessibleLabel[] replyOptionsList;
 
         private CPDLCMessage previewMessage;
+        private bool styledMessageReplySendInProgress;
 
         private readonly SoundPlayer startupPlayer = new();
         private readonly SoundPlayer messagePlayer = new();
@@ -2755,7 +3191,14 @@ private TelexForm tForm;
         private bool routeBlinkAmber = false;
         private readonly List<CPDLCMessage> unreadMessages = new();
         private readonly Dictionary<CPDLCMessage, System.Windows.Forms.Timer> autoDeleteRequestTimers = new();
-        private static readonly TimeSpan requestMessageAutoDeleteDelay = TimeSpan.FromSeconds(30);
+
+        private TimeSpan RequestMessageAutoDeleteDelay
+        {
+            get
+            {
+                return TimeSpan.FromSeconds(AutoDeleteRequestMessageSeconds);
+            }
+        }
 
         private sealed class AutoDeleteCountdownState
         {
@@ -2786,6 +3229,9 @@ private TelexForm tForm;
         private bool flightPhaseArrivalSeen = false;
         private bool flightPhaseDepartureSeen = false;
         private bool flightPhaseGroundObservedThisSession = false;
+        private bool flightPhaseStartedAirborneBelowEnroute = false;
+        private bool flightPhaseDescentTrendSeen = false;
+        private int lastFlightPhaseObservedAltitude = int.MinValue;
         private string lastFlightPhaseSignature = string.Empty;
         private string lastPdcAvailabilityHintStation = string.Empty;
 
@@ -2827,6 +3273,10 @@ private TelexForm tForm;
         private DateTime lastVatsimCallsignMismatchWarningUtc = DateTime.MinValue;
         private static readonly TimeSpan vatsimCallsignMismatchWarningInterval = TimeSpan.FromMinutes(2);
         private const string HoppieConnectUrl = "https://www.hoppie.nl/acars/system/connect.html";
+        private DateTime hoppiePollPausedUntilUtc = DateTime.MinValue;
+        private DateTime lastHoppieNetworkLoadWarningUtc = DateTime.MinValue;
+        private static readonly TimeSpan hoppieInitialPollDelay = TimeSpan.FromSeconds(8);
+        private static readonly TimeSpan hoppieNetworkLoadBackoff = TimeSpan.FromSeconds(45);
 
 
         private enum AirbusAocPage
@@ -2846,6 +3296,7 @@ private TelexForm tForm;
             AtcOtherRequestMenu,
             AtcReportsMenu,
             AtcConnectionMenu,
+            AtcLogonRequest,
             AtcEmergencyMenu,
             AtcTextRequest,
             AtcDirectRequest,
@@ -2880,6 +3331,8 @@ private TelexForm tForm;
             AtcLevelRequest,
             AtcSpeedRequest,
             AtcWhenCanWeRequest,
+            AtcConnectionMenu,
+            AtcLogonRequest,
             SendConfirm
         }
 
@@ -2900,6 +3353,7 @@ private TelexForm tForm;
             MainMenu,
             Account,
             Options,
+            AutoDeleteTimer,
             Style,
             UpdateRollback,
             RollbackConfirm
@@ -3195,12 +3649,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             // The DCDU UI is pixel-positioned over a fixed bitmap.
             // WinForms/Windows DPI text scaling would otherwise enlarge fonts at 125/150%
             // while the cockpit frame and control rectangles stay fixed.
-            return new Font(familyName, Math.Max(1.0f, pointSizeAt96Dpi * 96.0f / 72.0f), style, GraphicsUnit.Pixel);
+            return new Font(familyName, Math.Max(1.0f, pointSizeAt96Dpi * 96.0f / 72.0f * WindowScaleFactor()), style, GraphicsUnit.Pixel);
         }
 
         public static Font CreateDpiStablePixelFont(FontFamily family, float pixelSize, FontStyle style)
         {
-            return new Font(family, Math.Max(1.0f, pixelSize), style, GraphicsUnit.Pixel);
+            return new Font(family, Math.Max(1.0f, pixelSize * WindowScaleFactor()), style, GraphicsUnit.Pixel);
         }
 
 
@@ -3244,6 +3698,34 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             return Color.FromArgb(180, 188, 194);
         }
 
+        private Font PopupPixelFont(float pixelSize, FontStyle style = FontStyle.Bold)
+        {
+            FontFamily family = textFontBold?.FontFamily ?? Font.FontFamily;
+            return CreateDpiStablePixelFont(family, pixelSize, style);
+        }
+
+        private Font PopupHeaderFont()
+        {
+            // Match the original 100% popup readability, but scale exactly once.
+            return PopupPixelFont(DcduStyleManager.IsBoeing ? 12.6f : 13.2f, FontStyle.Bold);
+        }
+
+        private Font PopupRowFont()
+        {
+            return PopupPixelFont(DcduStyleManager.IsBoeing ? 11.4f : 12.0f, FontStyle.Bold);
+        }
+
+        private Font PopupActionFont()
+        {
+            return PopupPixelFont(DcduStyleManager.IsBoeing ? 12.2f : 12.8f, FontStyle.Bold);
+        }
+
+        private Font MessageActionPopupFont()
+        {
+            return PopupPixelFont(DcduStyleManager.IsBoeing ? 10.6f : 11.0f, FontStyle.Bold);
+        }
+
+
         private Color PopupHeaderTextColor(Color accent)
         {
             return DcduStyleManager.IsBoeing ? MainPrimaryTextColor() : accent;
@@ -3281,7 +3763,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-            using GraphicsPath path = RoundedButtonRect(bounds, DcduStyleManager.IsBoeing ? 4 : 6);
+            using GraphicsPath path = RoundedButtonRect(bounds, S(DcduStyleManager.IsBoeing ? 4 : 6));
 
             if (DcduStyleManager.IsBoeing)
             {
@@ -3293,13 +3775,13 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     Color.FromArgb(240, 7, 12, 16),
                     LinearGradientMode.Vertical);
                 using SolidBrush accentWash = new SolidBrush(Color.FromArgb(pinned ? 14 : 8, popupAccent));
-                using Pen border = new Pen(Color.FromArgb(pinned ? 196 : 142, popupAccent), pinned ? 1.25f : 1.0f);
+                using Pen border = new Pen(Color.FromArgb(pinned ? 196 : 142, popupAccent), pinned ? ScaleUi(1.25f) : ScaleUi(1.0f));
                 using Pen boeingTopLine = new Pen(Color.FromArgb(34, Color.White), 1.0f);
 
                 e.Graphics.FillPath(fill, path);
                 e.Graphics.FillPath(accentWash, path);
                 e.Graphics.DrawPath(border, path);
-                e.Graphics.DrawLine(boeingTopLine, bounds.Left + 6, bounds.Top + 1, bounds.Right - 6, bounds.Top + 1);
+                e.Graphics.DrawLine(boeingTopLine, bounds.Left + S(6), bounds.Top + S(1), bounds.Right - S(6), bounds.Top + S(1));
                 return;
             }
 
@@ -3309,12 +3791,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Color.FromArgb(236, 8, 17, 28),
                 Color.FromArgb(236, 3, 8, 16),
                 LinearGradientMode.Vertical);
-            using Pen borderAirbus = new Pen(Color.FromArgb(pinned ? 210 : 150, accent), pinned ? 1.35f : 1.0f);
+            using Pen borderAirbus = new Pen(Color.FromArgb(pinned ? 210 : 150, accent), pinned ? ScaleUi(1.35f) : ScaleUi(1.0f));
             using Pen topLine = new Pen(Color.FromArgb(38, Color.White), 1.0f);
 
             e.Graphics.FillPath(fillAirbus, path);
             e.Graphics.DrawPath(borderAirbus, path);
-            e.Graphics.DrawLine(topLine, bounds.Left + 6, bounds.Top + 1, bounds.Right - 6, bounds.Top + 1);
+            e.Graphics.DrawLine(topLine, bounds.Left + S(6), bounds.Top + S(1), bounds.Right - S(6), bounds.Top + S(1));
         }
 
         private void ApplyMainThemeColors()
@@ -3563,7 +4045,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Color.FromArgb(34, accent),
                 Color.FromArgb(12, accent),
                 LinearGradientMode.Vertical);
-            using Pen border = new Pen(Color.FromArgb((focused || hovered) ? 180 : 112, accent), (focused || hovered) ? 1.35f : 1.0f);
+            using Pen border = new Pen(Color.FromArgb((focused || hovered) ? 180 : 112, accent), (focused || hovered) ? ScaleUi(1.35f) : ScaleUi(1.0f));
             using Pen topLine = new Pen(Color.FromArgb(45, Color.White), 1.0f);
 
             e.Graphics.FillPath(fill, path);
@@ -3861,8 +4343,9 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             if (callsignUpdateLabel == null)
             {
-                callsignUpdateLabel = CreateMainStatusBadge("↻", Cursors.Hand);
+                callsignUpdateLabel = CreateMainStatusBadge("!", Cursors.Hand);
                 callsignUpdateLabel.Visible = false;
+                smartStatusToolTip.SetToolTip(callsignUpdateLabel, "Callsign mismatch - click to recheck VATSIM callsign");
                 callsignUpdateLabel.Click += async (_, __) => await CheckVatsimCallsignMismatchNowAsync();
                 screenPanel.Controls.Add(callsignUpdateLabel);
             }
@@ -4244,7 +4727,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 return;
             }
 
-            Size filterSize = DcduStyleManager.IsBoeing ? new Size(50, 18) : new Size(46, 18);
+            Size filterSize = SS(DcduStyleManager.IsBoeing ? new Size(50, 18) : new Size(46, 18));
             string headerText = string.IsNullOrWhiteSpace(messageHeaderLabel.Text)
                 ? "MESSAGES / DATA"
                 : messageHeaderLabel.Text;
@@ -4253,15 +4736,15 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             int headerWidth = TextRenderer.MeasureText(
                 headerText,
                 headerFont,
-                new Size(260, 24),
+                SS(new Size(260, 24)),
                 TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
 
-            int x = messageHeaderLabel.Left + headerWidth + (DcduStyleManager.IsBoeing ? 12 : 6);
-            int y = messageHeaderLabel.Top + 1;
+            int x = messageHeaderLabel.Left + headerWidth + S(DcduStyleManager.IsBoeing ? 12 : 6);
+            int y = messageHeaderLabel.Top + S(1);
 
             if (screenPanel != null)
             {
-                x = Math.Min(x, Math.Max(messageHeaderLabel.Left + 84, screenPanel.Width - filterSize.Width - 8));
+                x = Math.Min(x, Math.Max(messageHeaderLabel.Left + S(84), screenPanel.Width - filterSize.Width - S(8)));
             }
 
             messageFilterLabel.Size = filterSize;
@@ -4283,97 +4766,96 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 // Filter belongs inline to the MESSAGES / DATA header line.
                 PositionMessageFilterDropdownInline();
 
-                callsignCaptionLabel.Location = new Point(12, 37);
-                callsignCaptionLabel.Size = new Size(94, 18);
-                callsignDisplayLabel.Location = new Point(112, 37);
-                callsignDisplayLabel.Size = new Size(104, 18);
+                callsignCaptionLabel.Location = SP(new Point(12, 37));
+                callsignCaptionLabel.Size = SS(new Size(94, 18));
+                callsignDisplayLabel.Location = SP(new Point(112, 37));
+                callsignDisplayLabel.Size = SS(new Size(104, 18));
                 if (callsignUpdateLabel != null)
                 {
-                    callsignUpdateLabel.Location = new Point(186, 37);
-                    callsignUpdateLabel.Size = new Size(22, 18);
+                    callsignUpdateLabel.Location = SP(new Point(186, 37));
+                    callsignUpdateLabel.Size = SS(new Size(22, 18));
                 }
                 if (routeCaptionLabel != null)
                 {
-                    routeCaptionLabel.Location = new Point(12, 58);
-                    routeCaptionLabel.Size = new Size(94, 18);
+                    routeCaptionLabel.Location = SP(new Point(12, 58));
+                    routeCaptionLabel.Size = SS(new Size(94, 18));
                 }
                 if (callsignRouteLabel != null)
                 {
-                    callsignRouteLabel.Location = new Point(112, 58);
-                    callsignRouteLabel.Size = new Size(140, 18);
+                    callsignRouteLabel.Location = SP(new Point(112, 58));
+                    callsignRouteLabel.Size = SS(new Size(140, 18));
                 }
                 if (flightPhaseCaptionLabel != null)
                 {
-                    flightPhaseCaptionLabel.Location = new Point(12, 79);
-                    flightPhaseCaptionLabel.Size = new Size(94, 18);
+                    flightPhaseCaptionLabel.Location = SP(new Point(12, 79));
+                    flightPhaseCaptionLabel.Size = SS(new Size(94, 18));
                 }
-                flightPhaseLabel.Location = new Point(112, 79);
-                flightPhaseLabel.Size = new Size(140, 18);
-                cpdlcDiscoveryLabel.Location = new Point(412, 16);
-                cpdlcDiscoveryLabel.Size = new Size(18, 18);
+                flightPhaseLabel.Location = SP(new Point(112, 79));
+                flightPhaseLabel.Size = SS(new Size(140, 18));
+                cpdlcDiscoveryLabel.Location = SP(new Point(412, 16));
+                cpdlcDiscoveryLabel.Size = SS(new Size(18, 18));
                 int atsWidgetY = string.IsNullOrWhiteSpace(nextAtcUnitText) ? 37 : 60;
 
                 if (nextAtcUnitLabel != null)
                 {
-                    nextAtcUnitLabel.Location = new Point(258, 37);
-                    nextAtcUnitLabel.Size = new Size(172, 19);
+                    nextAtcUnitLabel.Location = SP(new Point(258, 37));
+                    nextAtcUnitLabel.Size = SS(new Size(172, 19));
                 }
                 if (nextAtcUnitDisplay != null)
                 {
-                    nextAtcUnitDisplay.Location = new Point(435, 37);
-                    nextAtcUnitDisplay.Size = new Size(58, 19);
+                    nextAtcUnitDisplay.Location = SP(new Point(435, 37));
+                    nextAtcUnitDisplay.Size = SS(new Size(58, 19));
                 }
 
                 // CLR / PDC / ATIS + compact auto-refresh icon belong under the CURRENT ATS UNIT block.
                 // During handover, this row moves down so NEXT ATS UNIT gets its own line.
-                clearanceStatusLabel.Location = new Point(250, atsWidgetY);
-                clearanceStatusLabel.Size = new Size(58, 19);
-                datalinkStatusLabel.Location = new Point(312, atsWidgetY);
-                datalinkStatusLabel.Size = new Size(58, 19);
+                clearanceStatusLabel.Location = SP(new Point(250, atsWidgetY));
+                clearanceStatusLabel.Size = SS(new Size(58, 19));
+                datalinkStatusLabel.Location = SP(new Point(312, atsWidgetY));
+                datalinkStatusLabel.Size = SS(new Size(58, 19));
                 if (atisAutoGroupPanel != null)
                 {
-                    atisAutoGroupPanel.Location = new Point(-1000, -1000);
-                    atisAutoGroupPanel.Size = new Size(1, 1);
+                    atisAutoGroupPanel.Location = SP(new Point(-1000, -1000));
+                    atisAutoGroupPanel.Size = SS(new Size(1, 1));
                     atisAutoGroupPanel.Visible = false;
                 }
-                atisStatusLabel.Location = new Point(372, atsWidgetY);
-                atisStatusLabel.Size = new Size(52, 19);
-                atisAutoStatusLabel.Location = new Point(428, atsWidgetY);
-                atisAutoStatusLabel.Size = new Size(24, 19);
+                atisStatusLabel.Location = SP(new Point(372, atsWidgetY));
+                atisStatusLabel.Size = SS(new Size(52, 19));
+                atisAutoStatusLabel.Location = SP(new Point(428, atsWidgetY));
+                atisAutoStatusLabel.Size = SS(new Size(24, 19));
                 if (quickWxStatusLabel != null)
                 {
-                    quickWxStatusLabel.Location = new Point(456, atsWidgetY);
-                    quickWxStatusLabel.Size = new Size(22, 19);
+                    quickWxStatusLabel.Location = SP(new Point(456, atsWidgetY));
+                    quickWxStatusLabel.Size = SS(new Size(22, 19));
                 }
 
-                pdcActionDebugLabel.Location = new Point(306, atsWidgetY + 25);
-                pdcActionDebugLabel.Size = new Size(78, 19);
-                cpdlcActionDebugLabel.Location = new Point(390, atsWidgetY + 25);
-                cpdlcActionDebugLabel.Size = new Size(76, 19);
+                pdcActionDebugLabel.Location = SP(new Point(306, atsWidgetY + 25));
+                pdcActionDebugLabel.Size = SS(new Size(78, 19));
+                cpdlcActionDebugLabel.Location = SP(new Point(390, atsWidgetY + 25));
+                cpdlcActionDebugLabel.Size = SS(new Size(76, 19));
 
                 if (clearanceTimelinePopupPanel != null)
                 {
                     // Same footprint as ATIS popup for a cleaner, consistent DCDU hover panel.
-                    clearanceTimelinePopupPanel.Location = new Point(194, 82);
-                    clearanceTimelinePopupPanel.Size = new Size(292, 118);
+                    clearanceTimelinePopupPanel.Location = SP(new Point(194, 82));
+                    clearanceTimelinePopupPanel.Size = SS(new Size(292, 118));
                 }
 
                 if (atisAvailabilityPopupPanel != null)
                 {
-                    atisAvailabilityPopupPanel.Location = new Point(194, 82);
-                    atisAvailabilityPopupPanel.Size = new Size(292, 118);
+                    atisAvailabilityPopupPanel.Location = SP(new Point(194, 82));
+                    atisAvailabilityPopupPanel.Size = SS(new Size(292, 118));
                 }
 
                 if (atisAutoPopupPanel != null)
                 {
-                    atisAutoPopupPanel.Location = new Point(320, 82);
-                    atisAutoPopupPanel.Size = new Size(166, 58);
+                    atisAutoPopupPanel.Location = SP(new Point(320, 82));
+                    atisAutoPopupPanel.Size = SS(new Size(166, 58));
                 }
 
                 if (quickWxPopupPanel != null)
                 {
-                    quickWxPopupPanel.Location = new Point(294, 82);
-                    quickWxPopupPanel.Size = new Size(182, 92);
+                    PositionQuickWxPopup();
                 }
             }
             else
@@ -4381,104 +4863,103 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 // Filter belongs inline to the MESSAGES / DATA header line.
                 PositionMessageFilterDropdownInline();
 
-                callsignCaptionLabel.Location = new Point(8, 38);
-                callsignCaptionLabel.Size = new Size(94, 18);
-                callsignDisplayLabel.Location = new Point(104, 38);
-                callsignDisplayLabel.Size = new Size(104, 18);
+                callsignCaptionLabel.Location = SP(new Point(8, 38));
+                callsignCaptionLabel.Size = SS(new Size(94, 18));
+                callsignDisplayLabel.Location = SP(new Point(104, 38));
+                callsignDisplayLabel.Size = SS(new Size(104, 18));
                 if (callsignUpdateLabel != null)
                 {
-                    callsignUpdateLabel.Location = new Point(174, 38);
-                    callsignUpdateLabel.Size = new Size(22, 18);
+                    callsignUpdateLabel.Location = SP(new Point(174, 38));
+                    callsignUpdateLabel.Size = SS(new Size(22, 18));
                 }
                 if (routeCaptionLabel != null)
                 {
-                    routeCaptionLabel.Location = new Point(8, 58);
-                    routeCaptionLabel.Size = new Size(94, 18);
+                    routeCaptionLabel.Location = SP(new Point(8, 58));
+                    routeCaptionLabel.Size = SS(new Size(94, 18));
                 }
                 if (callsignRouteLabel != null)
                 {
-                    callsignRouteLabel.Location = new Point(104, 58);
-                    callsignRouteLabel.Size = new Size(140, 18);
+                    callsignRouteLabel.Location = SP(new Point(104, 58));
+                    callsignRouteLabel.Size = SS(new Size(140, 18));
                 }
                 if (flightPhaseCaptionLabel != null)
                 {
-                    flightPhaseCaptionLabel.Location = new Point(8, 78);
-                    flightPhaseCaptionLabel.Size = new Size(94, 18);
+                    flightPhaseCaptionLabel.Location = SP(new Point(8, 78));
+                    flightPhaseCaptionLabel.Size = SS(new Size(94, 18));
                 }
-                flightPhaseLabel.Location = new Point(104, 78);
-                flightPhaseLabel.Size = new Size(140, 18);
-                cpdlcDiscoveryLabel.Location = new Point(391, 18);
-                cpdlcDiscoveryLabel.Size = new Size(18, 18);
+                flightPhaseLabel.Location = SP(new Point(104, 78));
+                flightPhaseLabel.Size = SS(new Size(140, 18));
+                cpdlcDiscoveryLabel.Location = SP(new Point(391, 18));
+                cpdlcDiscoveryLabel.Size = SS(new Size(18, 18));
                 int atsWidgetY = string.IsNullOrWhiteSpace(nextAtcUnitText) ? 37 : 59;
 
                 if (nextAtcUnitLabel != null)
                 {
-                    nextAtcUnitLabel.Location = new Point(232, 38);
-                    nextAtcUnitLabel.Size = new Size(176, 18);
+                    nextAtcUnitLabel.Location = SP(new Point(232, 38));
+                    nextAtcUnitLabel.Size = SS(new Size(176, 18));
                 }
                 if (nextAtcUnitDisplay != null)
                 {
-                    nextAtcUnitDisplay.Location = new Point(413, 38);
-                    nextAtcUnitDisplay.Size = new Size(68, 18);
+                    nextAtcUnitDisplay.Location = SP(new Point(413, 38));
+                    nextAtcUnitDisplay.Size = SS(new Size(68, 18));
                 }
 
                 // CLR / PDC / ATIS + compact auto-refresh icon belong under the CURRENT ATS UNIT block.
                 // During handover, this row moves down so NEXT ATS UNIT gets its own line.
-                clearanceStatusLabel.Location = new Point(250, atsWidgetY);
-                clearanceStatusLabel.Size = new Size(58, 19);
-                datalinkStatusLabel.Location = new Point(312, atsWidgetY);
-                datalinkStatusLabel.Size = new Size(58, 19);
+                clearanceStatusLabel.Location = SP(new Point(250, atsWidgetY));
+                clearanceStatusLabel.Size = SS(new Size(58, 19));
+                datalinkStatusLabel.Location = SP(new Point(312, atsWidgetY));
+                datalinkStatusLabel.Size = SS(new Size(58, 19));
                 if (atisAutoGroupPanel != null)
                 {
-                    atisAutoGroupPanel.Location = new Point(-1000, -1000);
-                    atisAutoGroupPanel.Size = new Size(1, 1);
+                    atisAutoGroupPanel.Location = SP(new Point(-1000, -1000));
+                    atisAutoGroupPanel.Size = SS(new Size(1, 1));
                     atisAutoGroupPanel.Visible = false;
                 }
-                atisStatusLabel.Location = new Point(372, atsWidgetY);
-                atisStatusLabel.Size = new Size(52, 19);
-                atisAutoStatusLabel.Location = new Point(428, atsWidgetY);
-                atisAutoStatusLabel.Size = new Size(24, 19);
+                atisStatusLabel.Location = SP(new Point(372, atsWidgetY));
+                atisStatusLabel.Size = SS(new Size(52, 19));
+                atisAutoStatusLabel.Location = SP(new Point(428, atsWidgetY));
+                atisAutoStatusLabel.Size = SS(new Size(24, 19));
                 if (quickWxStatusLabel != null)
                 {
-                    quickWxStatusLabel.Location = new Point(456, atsWidgetY);
-                    quickWxStatusLabel.Size = new Size(22, 19);
+                    quickWxStatusLabel.Location = SP(new Point(456, atsWidgetY));
+                    quickWxStatusLabel.Size = SS(new Size(22, 19));
                 }
 
-                pdcActionDebugLabel.Location = new Point(306, atsWidgetY + 23);
-                pdcActionDebugLabel.Size = new Size(78, 19);
-                cpdlcActionDebugLabel.Location = new Point(390, atsWidgetY + 23);
-                cpdlcActionDebugLabel.Size = new Size(76, 19);
+                pdcActionDebugLabel.Location = SP(new Point(306, atsWidgetY + 23));
+                pdcActionDebugLabel.Size = SS(new Size(78, 19));
+                cpdlcActionDebugLabel.Location = SP(new Point(390, atsWidgetY + 23));
+                cpdlcActionDebugLabel.Size = SS(new Size(76, 19));
 
                 if (clearanceTimelinePopupPanel != null)
                 {
                     // Same footprint as ATIS popup for a cleaner, consistent DCDU hover panel.
-                    clearanceTimelinePopupPanel.Location = new Point(182, 82);
-                    clearanceTimelinePopupPanel.Size = new Size(282, 118);
+                    clearanceTimelinePopupPanel.Location = SP(new Point(182, 82));
+                    clearanceTimelinePopupPanel.Size = SS(new Size(282, 118));
                 }
 
                 if (atisAvailabilityPopupPanel != null)
                 {
-                    atisAvailabilityPopupPanel.Location = new Point(182, 82);
-                    atisAvailabilityPopupPanel.Size = new Size(282, 118);
+                    atisAvailabilityPopupPanel.Location = SP(new Point(182, 82));
+                    atisAvailabilityPopupPanel.Size = SS(new Size(282, 118));
                 }
 
                 if (atisAutoPopupPanel != null)
                 {
-                    atisAutoPopupPanel.Location = new Point(298, 82);
-                    atisAutoPopupPanel.Size = new Size(166, 58);
+                    atisAutoPopupPanel.Location = SP(new Point(298, 82));
+                    atisAutoPopupPanel.Size = SS(new Size(166, 58));
                 }
 
                 if (quickWxPopupPanel != null)
                 {
-                    quickWxPopupPanel.Location = new Point(296, 82);
-                    quickWxPopupPanel.Size = new Size(182, 92);
+                    PositionQuickWxPopup();
                 }
             }
 
             if (onlineStatusLabel != null)
             {
                 onlineStatusLabel.Visible = false;
-                onlineStatusLabel.Size = new Size(1, 1);
+                onlineStatusLabel.Size = SS(new Size(1, 1));
             }
 
             if (quickWxStatusLabel != null)
@@ -5622,6 +6103,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             var response = await webclient.PostAsync(HoppieConnectUrl, content);
             string responseString = await response.Content.ReadAsStringAsync();
 
+            if (IsHoppieNetworkLoadResponse(responseString))
+            {
+                HandleHoppieNetworkLoadResponse(responseString);
+                return;
+            }
+
             hoppieOnlineStations.Clear();
 
             foreach (Match match in Regex.Matches(responseString.ToUpperInvariant(), @"\b[A-Z0-9]{3,10}(?:_[A-Z0-9]{1,10})?\b"))
@@ -5756,7 +6243,6 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     {
                         detectedSignature = pilotSignature;
                         detectedDisplayText = BuildFlightPlanDisplayText(detectedPilot);
-                        userVATSIMData = detectedPilot;
                     }
                 }
 
@@ -5784,6 +6270,18 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                         UpdateFlightPhaseBadge();
                     }
 
+                    return;
+                }
+
+                if (IsSameAsCurrentLoadedFlightPlanDisplay(detectedDisplayText))
+                {
+                    Logger.Debug("Ignored false NEW FP candidate because it matches the active flight plan display: " + detectedDisplayText);
+                    loadedFlightPlanSignature = detectedSignature;
+                    nextFlightPlanDetected = false;
+                    nextFlightPlanSignature = string.Empty;
+                    nextFlightPlanDisplayText = string.Empty;
+                    HideNextFlightPlanPrompt();
+                    UpdateFlightPhaseBadge();
                     return;
                 }
 
@@ -6239,6 +6737,22 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 };
             }
 
+            Controller regional = FindPossiblePdcRegionalAppController(station, out string regionalCode, out string regionalReason);
+            if (regional != null && !string.IsNullOrWhiteSpace(regionalCode) && IsHoppieLogonOnline(regionalCode))
+            {
+                return new PdcDiscoveryResult
+                {
+                    StatusText = "AVAIL",
+                    IsAvailable = true,
+                    IsFallbackCandidate = true,
+                    AllowReqClr = true,
+                    LogonCode = regionalCode,
+                    Controller = regional.callsign ?? string.Empty,
+                    Source = string.IsNullOrWhiteSpace(regionalReason) ? "REGIONAL APP DCL MATCH" : regionalReason,
+                    HoverText = "PDC/DCL available\nController: " + regional.callsign + "\nLogon: " + regionalCode + "\nSource: regional DCL info"
+                };
+            }
+
             if (localControllers.Count > 0)
             {
                 string localNames = string.Join(", ", localControllers.Select(controller => controller.callsign).Where(value => !string.IsNullOrWhiteSpace(value)));
@@ -6252,8 +6766,98 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             return new PdcDiscoveryResult
             {
                 StatusText = "NONE",
-                HoverText = "PDC not available\nNo DEP local DEL/GND/TWR/APP or DEP FIR center with usable online Hoppie logon found"
+                HoverText = "PDC not available\nNo DEP local DEL/GND/TWR/APP, regional APP, or DEP FIR center with usable online Hoppie logon found"
             };
+        }
+
+        private bool IsPilotLikelyOnGroundAtDepartureStation(string station)
+        {
+            string cleanStation = (station ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (userVATSIMData == null ||
+                cleanStation.Length != 4 ||
+                userVATSIMData.altitude > 3000 ||
+                !TryGetSimbriefAirportPosition(cleanStation, out double depLat, out double depLon))
+            {
+                return false;
+            }
+
+            double distanceNm = DistanceNm(userVATSIMData.latitude, userVATSIMData.longitude, depLat, depLon);
+            return distanceNm <= 12.0;
+        }
+
+        private static bool ControllerPrefixMatchesDclLogon(string callsign, string code)
+        {
+            string upperCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string cleanCode = (code ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(upperCallsign) || cleanCode.Length < 3)
+            {
+                return false;
+            }
+
+            string callsignPrefix = upperCallsign.Split('_').FirstOrDefault() ?? string.Empty;
+            if (callsignPrefix.Length < 3)
+            {
+                return false;
+            }
+
+            // Examples:
+            // DOH_R1_APP + DCL [DOHA] -> DOH matches DOHA
+            // EBBR_APP + DCL [EBBR]   -> EBBR matches EBBR
+            return cleanCode.StartsWith(callsignPrefix, StringComparison.OrdinalIgnoreCase) ||
+                   callsignPrefix.StartsWith(cleanCode, StringComparison.OrdinalIgnoreCase) ||
+                   cleanCode.StartsWith(callsignPrefix.Substring(0, 3), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private Controller FindPossiblePdcRegionalAppController(string station, out string code, out string matchReason)
+        {
+            code = string.Empty;
+            matchReason = string.Empty;
+
+            if (vatsimData?.controllers == null || string.IsNullOrWhiteSpace(station))
+            {
+                return null;
+            }
+
+            if (!IsPilotLikelyOnGroundAtDepartureStation(station))
+            {
+                matchReason = "not on ground at departure airport";
+                return null;
+            }
+
+            foreach (Controller controller in vatsimData.controllers
+                .Where(ctrl => IsAppLikeControllerCallsign(ctrl?.callsign))
+                .OrderBy(ctrl => ctrl?.callsign ?? string.Empty))
+            {
+                string callsign = (controller?.callsign ?? string.Empty).Trim().ToUpperInvariant();
+                string info = GetControllerInfoText(controller);
+
+                if (!IsPdcDclInfoText(info))
+                {
+                    continue;
+                }
+
+                string discoveredCode = ExtractPdcDclLogonCode(info, station);
+                if (string.IsNullOrWhiteSpace(discoveredCode) || !IsHoppieLogonOnline(discoveredCode))
+                {
+                    Logger.Debug("PDC/DCL regional APP skip " + callsign + ": no usable online Hoppie logon in DCL info.");
+                    continue;
+                }
+
+                if (!ControllerPrefixMatchesDclLogon(callsign, discoveredCode))
+                {
+                    Logger.Debug("PDC/DCL regional APP skip " + callsign + ": DCL code " + discoveredCode + " does not match controller prefix.");
+                    continue;
+                }
+
+                code = discoveredCode;
+                matchReason = "REGIONAL APP DCL MATCH";
+                Logger.Debug("PDC/DCL regional APP candidate " + callsign + " -> " + code + " for departure " + station);
+                return controller;
+            }
+
+            return null;
         }
 
         private IEnumerable<Controller> GetLocalPdcControllers(string station)
@@ -6535,6 +7139,26 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 return;
             }
 
+            Controller primaryController = vatsimData?.controllers?.FirstOrDefault(ctrl =>
+                string.Equals((ctrl.callsign ?? string.Empty).Trim().ToUpperInvariant(), controller, StringComparison.OrdinalIgnoreCase));
+
+            if (primaryController == null)
+            {
+                return;
+            }
+
+            bool primaryHasCpdlcKeyword = ContainsCpdlcDiscoveryKeyword(GetControllerInfoText(primaryController));
+            bool primaryIsCenterLike = IsCenterLikeControllerCallsign(primaryController.callsign);
+            bool primaryUsesOnlineCallsignCode =
+                primaryIsCenterLike &&
+                string.Equals(GetOnlineHoppieCodeFromControllerCallsign(primaryController.callsign), code, StringComparison.OrdinalIgnoreCase);
+
+            if (!primaryHasCpdlcKeyword && !primaryUsesOnlineCallsignCode)
+            {
+                Logger.Debug("CPDLC station notification suppressed for " + controller + " / " + code + ": no explicit CPDLC/Hoppie/logon keyword and no online center callsign Hoppie station.");
+                return;
+            }
+
             string key = string.Join(";", candidates.Select(candidate =>
                 (candidate.Code ?? string.Empty).Trim().ToUpperInvariant() + "|" +
                 (candidate.Controller ?? string.Empty).Trim().ToUpperInvariant()));
@@ -6813,30 +7437,13 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             string arrival = userVATSIMData?.flight_plan?.arrival?.Trim().ToUpperInvariant() ?? string.Empty;
             string activeStation = ShouldUseArrivalAtisForHover() ? arrival : departure;
 
-            bool firReady = AreFirBoundariesReady();
-            if (!firReady)
-            {
-                _ = EnsureFirBoundariesLoadedAsync(false);
-            }
+            List<FirBoundaryFeature> currentFirs = new();
+            currentFirDebugText = "VATGlasses sectors only";
 
-            List<FirBoundaryFeature> currentFirs = firReady
-                ? GetCurrentFirBoundaryMatches()
-                : new List<FirBoundaryFeature>();
-
-            currentFirDebugText = !firReady
-                ? "VATSpy boundaries loading"
-                : currentFirs.Count == 0
-                    ? "VATSpy boundaries: none/nearby not found for current position"
-                    : "VATSpy boundaries/nearby: " + string.Join(", ", currentFirs.Select(GetFirDisplayName));
-
-            Logger.Debug("CPDLC discovery " + currentFirDebugText +
+            Logger.Debug("CPDLC discovery using VATGlasses only" +
                 " position=" + (userVATSIMData?.latitude.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?") +
                 "," + (userVATSIMData?.longitude.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?") +
                 " nearbyRadiusNm=" + FirNearbyRadiusNm.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-            // Do not preload VATGlasses here.
-            // CPDLC discovery uses VATSpy boundaries first and only falls back to VATGlasses
-            // from the individual controller match path when the boundary result is uncertain.
 
             AddTunedFrequencyCpdlcCandidates();
             List<long> pilotTunedFrequencies = IsVatsimTransceiverDataStale()
@@ -6850,18 +7457,33 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 string callsign = (controller.callsign ?? string.Empty).Trim().ToUpperInvariant();
                 string info = GetControllerInfoText(controller);
                 bool hasCpdlcKeyword = ContainsCpdlcDiscoveryKeyword(info);
+                bool isCenterLike = IsCenterLikeControllerCallsign(callsign);
+                bool tunedFrequencyMatch = TryGetTunedFrequencyMatch(controller, pilotTunedFrequencies, out string tunedFrequencyText);
 
-                string code = ExtractCpdlcLogonCode(info, string.Empty);
-                if (string.IsNullOrWhiteSpace(code) || !IsHoppieLogonOnline(code))
+                string code = string.Empty;
+
+                if (hasCpdlcKeyword)
                 {
-                    // Geographic boundary/active-frequency matching can prove controller relevance.
-                    // Some VATSIM controller infos contain the raw Hoppie logon only, e.g. MWS2.
-                    code = ExtractAnyOnlineHoppieLogonCodeFromText(info);
+                    code = ExtractCpdlcLogonCode(info, string.Empty);
+                    if (string.IsNullOrWhiteSpace(code) || !IsHoppieLogonOnline(code))
+                    {
+                        code = ExtractAnyOnlineHoppieLogonCodeFromText(info);
+                    }
+                }
+
+                if ((string.IsNullOrWhiteSpace(code) || !IsHoppieLogonOnline(code)) &&
+                    tunedFrequencyMatch &&
+                    isCenterLike)
+                {
+                    // Callsign-prefix Hoppie fallback is safe only when the pilot is
+                    // actually tuned to this controller. It must not create "nearby"
+                    // candidates by itself.
+                    code = GetOnlineHoppieCodeFromControllerCallsign(callsign);
                 }
 
                 if (string.IsNullOrWhiteSpace(code))
                 {
-                    Logger.Debug("CPDLC discovery skip " + callsign + ": no usable logon code in controller info.");
+                    Logger.Debug("CPDLC discovery skip " + callsign + ": no usable explicit logon code" + (tunedFrequencyMatch ? " or tuned callsign-derived Hoppie station." : "."));
                     continue;
                 }
 
@@ -6871,30 +7493,17 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     continue;
                 }
 
-                if (!hasCpdlcKeyword)
-                {
-                    Logger.Debug("CPDLC discovery " + callsign + " has no explicit CPDLC keyword, using online Hoppie token " + code + ".");
-                }
-
-                // VATGlasses is intentionally not loaded for every candidate.
-                // It is requested lazily inside GetCpdlcControllerMatchReason only if VATSpy
-                // cannot produce a confident boundary match.
-
-                if (!IsControllerCoverageCompatibleWithLiveAltitude(controller, out string coverageAltitudeText))
-                {
-                    Logger.Debug("CPDLC discovery skip " + callsign + " / " + code + ": " + coverageAltitudeText + ".");
-                    continue;
-                }
+                string coverageAltitudeText = string.Empty;
+                IsControllerCoverageCompatibleWithLiveAltitude(controller, out coverageAltitudeText);
 
                 string matchReason = GetCpdlcControllerMatchReason(controller, code, activeStation, departure, arrival, currentFirs);
-                bool tunedFrequencyMatch = TryGetTunedFrequencyMatch(controller, pilotTunedFrequencies, out string tunedFrequencyText);
 
                 if (string.IsNullOrWhiteSpace(matchReason) && !tunedFrequencyMatch)
                 {
                     string onlineV2Text = vatsimAtcOnlineCallsigns.Count == 0
                         ? "v2 not loaded"
                         : (vatsimAtcOnlineCallsigns.Contains(callsign) ? "seen in v2 online ATC" : "not seen in v2 online ATC");
-                    Logger.Debug("CPDLC discovery skip " + callsign + " / " + code + ": no active frequency, VATSpy boundary, or VATGlasses fallback sector match (" + onlineV2Text + ").");
+                    Logger.Debug("CPDLC discovery skip " + callsign + " / " + code + ": no active frequency or VATGlasses sector match (" + onlineV2Text + ").");
                     continue;
                 }
 
@@ -7263,14 +7872,31 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
                 string info = GetControllerInfoText(controller);
                 bool hasCpdlcKeyword = ContainsCpdlcDiscoveryKeyword(info);
+                bool isCenterLike = IsCenterLikeControllerCallsign(callsign);
 
-                string code = ExtractCpdlcLogonCode(info, string.Empty);
-                if (string.IsNullOrWhiteSpace(code) || !IsHoppieLogonOnline(code))
+                string code = string.Empty;
+
+                if (hasCpdlcKeyword)
                 {
-                    // Active frequency is strong proof that this ATC is relevant.
-                    // Some sectors publish only a raw online Hoppie code such as MWS2,
-                    // without a clean CPDLC/LOGON label.
-                    code = ExtractAnyOnlineHoppieLogonCodeFromText(info);
+                    code = ExtractCpdlcLogonCode(info, string.Empty);
+                    if (string.IsNullOrWhiteSpace(code) || !IsHoppieLogonOnline(code))
+                    {
+                        // Active frequency is strong proof that this ATC is relevant.
+                        // Some sectors publish only a raw online Hoppie code such as MWS2,
+                        // without a clean CPDLC/LOGON label.
+                        code = ExtractAnyOnlineHoppieLogonCodeFromText(info);
+                    }
+                }
+
+                if ((string.IsNullOrWhiteSpace(code) || !IsHoppieLogonOnline(code)) && isCenterLike)
+                {
+                    code = GetOnlineHoppieCodeFromControllerCallsign(callsign);
+                }
+
+                if (string.IsNullOrWhiteSpace(code) && !hasCpdlcKeyword)
+                {
+                    Logger.Debug("CPDLC tuned-frequency match " + callsign + " ignored: no explicit CPDLC/Hoppie/logon keyword and no online callsign-derived Hoppie station.");
+                    continue;
                 }
 
                 if (string.IsNullOrWhiteSpace(code) || !IsHoppieLogonOnline(code))
@@ -7279,20 +7905,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     continue;
                 }
 
-                if (!hasCpdlcKeyword)
-                {
-                    Logger.Debug("CPDLC tuned-frequency match " + callsign + " accepted by online Hoppie token " + code + " without explicit CPDLC keyword.");
-                }
-
-                if (!IsControllerCoverageCompatibleWithLiveAltitude(controller, out string coverageAltitudeText))
-                {
-                    Logger.Debug("CPDLC tuned-frequency match " + callsign + " ignored: " + coverageAltitudeText + ".");
-                    continue;
-                }
-
-                string tunedMatchReason = string.IsNullOrWhiteSpace(coverageAltitudeText)
-                    ? "TUNED FREQ MATCH"
-                    : "TUNED FREQ MATCH / " + coverageAltitudeText;
+                string tunedMatchReason = "TUNED FREQ MATCH";
 
                 cpdlcDiscoveryCandidates.Add(new CpdlcDiscoveryResult
                 {
@@ -7310,32 +7923,16 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
         private bool IsControllerCoverageCompatibleWithLiveAltitude(Controller controller, out string coverageAltitudeText)
         {
+            // Deliberately disabled for helper discovery.
+            //
+            // Controller ATIS often contains altitude text for separate services
+            // (FIS/Information/ATIS, sector notes, briefing text, etc.). Using that
+            // text as a hard filter is too unreliable and can hide valid nearby/active
+            // CPDLC centers such as LHCC_W_CTR with "(CPDLC LHCW)".
+            //
+            // Helper visibility is now based on active frequency / current-nearby FIR /
+            // route relevance / online Hoppie station, never on altitude restrictions.
             coverageAltitudeText = string.Empty;
-
-            string info = GetControllerInfoText(controller);
-            if (!TryParseControllerAltitudeCoverage(info, out int? minAltitudeFeet, out int? maxAltitudeFeet, out string coverageText))
-            {
-                return true;
-            }
-
-            if (!TryGetLivePilotAltitudeFeet(out int liveAltitudeFeet, out string altitudeSource))
-            {
-                coverageAltitudeText = "coverage " + coverageText + " not altitude-verified (live altitude unavailable)";
-                return true;
-            }
-
-            const int altitudeToleranceFeet = 200;
-            bool belowMinimum = minAltitudeFeet.HasValue && liveAltitudeFeet < minAltitudeFeet.Value - altitudeToleranceFeet;
-            bool aboveMaximum = maxAltitudeFeet.HasValue && liveAltitudeFeet > maxAltitudeFeet.Value + altitudeToleranceFeet;
-
-            string liveText = FormatAltitudeForCoverage(liveAltitudeFeet);
-            if (belowMinimum || aboveMaximum)
-            {
-                coverageAltitudeText = "ALT " + liveText + " outside coverage " + coverageText + " (" + altitudeSource + ")";
-                return false;
-            }
-
-            coverageAltitudeText = "ALT " + liveText + " within coverage " + coverageText + " (" + altitudeSource + ")";
             return true;
         }
 
@@ -7380,6 +7977,30 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             return false;
         }
 
+        private static bool LooksLikeNonSectorInformationAltitudeText(string upper)
+        {
+            if (string.IsNullOrWhiteSpace(upper))
+            {
+                return false;
+            }
+
+            // Example LHCC_W_CTR:
+            // "(Budapest West Information 125.500 below 9500 feet)"
+            // This describes the FIS/Information frequency, not the CTR sector coverage.
+            // Do not use it to reject CPDLC on the active LHCC_W_CTR frequency.
+            if (Regex.IsMatch(upper, @"\b(?:INFORMATION|FIS|ATIS)\b.{0,80}\b(?:BELOW|UNDER|UP\s+TO|UNTIL|AT\s+OR\s+BELOW)\b.{0,30}\b\d{3,5}\s*(?:FT|FEET)?\b"))
+            {
+                return true;
+            }
+
+            if (Regex.IsMatch(upper, @"\b\d{3}\.\d{3}\b.{0,60}\b(?:BELOW|UNDER|UP\s+TO|UNTIL|AT\s+OR\s+BELOW)\b.{0,30}\b\d{3,5}\s*(?:FT|FEET)?\b"))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
         private static bool TryParseControllerAltitudeCoverage(string text, out int? minAltitudeFeet, out int? maxAltitudeFeet, out string coverageText)
         {
             minAltitudeFeet = null;
@@ -7388,6 +8009,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             string upper = Regex.Replace(text ?? string.Empty, @"\s+", " ").Trim().ToUpperInvariant();
             if (string.IsNullOrWhiteSpace(upper))
+            {
+                return false;
+            }
+
+            if (LooksLikeNonSectorInformationAltitudeText(upper))
             {
                 return false;
             }
@@ -7518,10 +8144,41 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             return altitudeFeet.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ft";
         }
 
+        private const double CpdlcRouteUpcomingVatglassesRadiusNm = 450.0;
+
+        private bool TryGetExplicitFlightPlanRouteFirCandidate(string callsign, string info, string code, out string routeFir)
+        {
+            routeFir = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(callsign) || string.IsNullOrWhiteSpace(code))
+            {
+                return false;
+            }
+
+            if (userVATSIMData?.flight_plan == null)
+            {
+                return false;
+            }
+
+            List<string> routeFirs = GetFlightPlanRouteFirCodesForCpdlc();
+
+            foreach (string fir in routeFirs)
+            {
+                if (!ControllerMatchesRouteFirCode(callsign, info, code, fir))
+                {
+                    continue;
+                }
+
+                routeFir = fir;
+                return true;
+            }
+
+            return false;
+        }
+
         private string GetCpdlcControllerMatchReason(Controller controller, string code, string activeStation, string departure, string arrival, List<FirBoundaryFeature> currentFirs)
         {
             string callsign = (controller?.callsign ?? string.Empty).Trim().ToUpperInvariant();
-            string info = GetControllerInfoText(controller).Trim().ToUpperInvariant();
             code = (code ?? string.Empty).Trim().ToUpperInvariant();
             activeStation = (activeStation ?? string.Empty).Trim().ToUpperInvariant();
             departure = (departure ?? string.Empty).Trim().ToUpperInvariant();
@@ -7529,15 +8186,9 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             bool isApp = IsAppLikeControllerCallsign(callsign);
 
-            // APP handling:
-            // Only show APP stations for the actual departure or arrival airport.
-            // Do not offer regional/FIR/nearby APP stations as CPDLC LOGON candidates.
+            // APP remains conservative and does not use generic nearby matching.
             if (isApp)
             {
-                // Do not advertise destination/departure APP stations just because they are in the flight plan.
-                // Otherwise the CPDLC helper can suggest LOWA/LOWW APP hundreds of miles away.
-                // APP is only relevant while still on the ground/DEP side, in actual arrival phase,
-                // or through the separate tuned-frequency match path.
                 if (!IsAirborneNowForPhase() && AppCallsignMatchesAirport(callsign, departure))
                 {
                     return "APP matches DEP " + departure;
@@ -7560,65 +8211,42 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 return string.Empty;
             }
 
-            // CTR/FSS handling:
-            // - VATSpy Boundaries.geojson is the primary source.
-            // - Controller callsign/info must match the current/nearby VATSpy boundary first.
-            // - VATGlasses is queried lazily only when the VATSpy result is uncertain
-            //   (no exact boundary hit, only a nearby/pre-alert boundary, or ambiguous sector ownership).
-            // - Active-frequency matches still bypass this path.
             if (IsCenterLikeControllerCallsign(callsign))
             {
-                FirBoundaryFeature exactVatspyBoundary = null;
-                FirBoundaryFeature nearbyVatspyBoundary = null;
+                VatglassesSectorMatch sectorMatch = TryGetVatglassesSectorMatch(controller, code, Enumerable.Empty<FirBoundaryFeature>());
+                string routeFir = string.Empty;
+                bool explicitRouteFirCandidate = TryGetExplicitFlightPlanRouteFirCandidate(callsign, GetControllerInfoText(controller), code, out routeFir);
 
-                foreach (FirBoundaryFeature fir in currentFirs ?? Enumerable.Empty<FirBoundaryFeature>())
+                if (sectorMatch == null && explicitRouteFirCandidate)
                 {
-                    if (!ControllerMatchesFirStrict(callsign, info, fir))
-                    {
-                        continue;
-                    }
-
-                    if (fir.IsNearbyCandidate)
-                    {
-                        if (nearbyVatspyBoundary == null ||
-                            fir.DistanceNmFromAircraft < nearbyVatspyBoundary.DistanceNmFromAircraft)
-                        {
-                            nearbyVatspyBoundary = fir;
-                        }
-
-                        continue;
-                    }
-
-                    exactVatspyBoundary = fir;
-                    break;
+                    // Route FIR pre-alert: only for controllers explicitly present in the
+                    // filed route/EET and still backed by VATGlasses geometry. This keeps
+                    // far-away online centers out while allowing near-upcoming FIRs such
+                    // as EPWW before the standard 200 NM helper radius.
+                    sectorMatch = TryGetVatglassesSectorMatch(
+                        controller,
+                        code,
+                        Enumerable.Empty<FirBoundaryFeature>(),
+                        CpdlcRouteUpcomingVatglassesRadiusNm);
                 }
 
-                if (exactVatspyBoundary != null)
+                if (sectorMatch == null)
                 {
-                    return "VATSpy boundary position match " + GetFirDisplayName(exactVatspyBoundary);
+                    return string.Empty;
                 }
 
-                // At this point VATSpy did not give us a confident exact match.
-                // Now, and only now, use VATGlasses as a sector-level fallback/validator.
-                VatglassesSectorMatch sectorMatch = TryGetVatglassesSectorMatch(controller, code, currentFirs);
-                if (sectorMatch != null)
-                {
-                    string sectorText = string.IsNullOrWhiteSpace(sectorMatch.AirspaceId)
-                        ? sectorMatch.PositionId
-                        : sectorMatch.AirspaceId + "/" + sectorMatch.PositionId;
+                string sectorText = string.IsNullOrWhiteSpace(sectorMatch.AirspaceId)
+                    ? sectorMatch.PositionId
+                    : sectorMatch.AirspaceId + "/" + sectorMatch.PositionId;
 
-                    return sectorMatch.IsNearbyCandidate
-                        ? "VATGlasses fallback sector nearby " + sectorText + " (" + Math.Round(sectorMatch.DistanceNmFromAircraft) + " NM)"
-                        : "VATGlasses fallback sector match " + sectorText;
+                if (explicitRouteFirCandidate && sectorMatch.IsNearbyCandidate && sectorMatch.DistanceNmFromAircraft > FirNearbyRadiusNm)
+                {
+                    return "VATGlasses upcoming route FIR " + routeFir + " " + sectorText + " (" + Math.Round(sectorMatch.DistanceNmFromAircraft) + " NM)";
                 }
 
-                if (nearbyVatspyBoundary != null)
-                {
-                    string firId = GetFirDisplayName(nearbyVatspyBoundary);
-                    return "upcoming VATSpy boundary match " + firId + " (" + Math.Round(nearbyVatspyBoundary.DistanceNmFromAircraft) + " NM)";
-                }
-
-                return string.Empty;
+                return sectorMatch.IsNearbyCandidate
+                    ? "VATGlasses nearby sector " + sectorText + " (" + Math.Round(sectorMatch.DistanceNmFromAircraft) + " NM)"
+                    : "VATGlasses current sector " + sectorText;
             }
 
             return string.Empty;
@@ -7707,6 +8335,14 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
                 // Normal country/region files: LTAA/LT78 -> lt, LOVV -> lo, ENOR -> en.
                 AddKey(clean.Substring(0, 2).ToLowerInvariant());
+
+                // Some VATGlasses datasets/position packs use a more specific key.
+                // Keep this as an additional non-blocking lookup for explicit CPDLC
+                // codes such as EPWW, so upcoming FIRs are loaded before crossing.
+                if (clean.Length == 4)
+                {
+                    AddKey(clean.ToLowerInvariant());
+                }
             }
 
             foreach (FirBoundaryFeature fir in currentFirs ?? Enumerable.Empty<FirBoundaryFeature>())
@@ -7724,6 +8360,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             AddKeysFromIcaoOrFirId(arrival);
             AddKeysFromIcaoOrFirId(code);
 
+            foreach (string routeFir in GetFlightPlanRouteFirCodesForCpdlc())
+            {
+                AddKeysFromIcaoOrFirId(routeFir);
+            }
+
             // No vats.im/... front-end URL parsing here on purpose:
             // dataset selection is driven by current/nearby FIR ids, FP ICAOs and Hoppie code.
             // The controller itself is matched later against owner ids inside the selected data.
@@ -7736,22 +8377,17 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
         private void RefreshCpdlcHelperAfterVatglassesLoad()
         {
+            // Do not run full CPDLC discovery immediately from every VATGlasses
+            // background load completion. Several datasets can finish within seconds
+            // after startup and recursively trigger expensive discovery/UI refreshes.
+            // The normal VATSIM/helper timer will pick up the loaded data shortly.
             try
             {
-                if (!Connected)
-                {
-                    return;
-                }
-
-                SafeUi(() =>
-                {
-                    UpdateCpdlcDiscoveryFromVatsim();
-                    UpdateCpdlcDiscoveryLabel();
-                });
+                SafeUi(UpdateCpdlcDiscoveryLabel);
             }
             catch (Exception ex)
             {
-                Logger.Debug("VATGlasses post-load CPDLC refresh failed: " + ex.Message);
+                Logger.Debug("VATGlasses post-load label refresh failed: " + ex.Message);
             }
         }
 
@@ -8150,7 +8786,30 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             return Math.Abs(degrees) <= 180.0;
         }
 
-        private VatglassesSectorMatch TryGetVatglassesSectorMatch(Controller controller, string code, IEnumerable<FirBoundaryFeature> currentFirs)
+        private static bool VatglassesAirspaceIdMatchesExplicitCode(string airspaceId, string code, string callsign, string info)
+        {
+            string cleanCode = Regex.Replace((code ?? string.Empty).Trim().ToUpperInvariant(), @"[^A-Z0-9]", string.Empty);
+            if (cleanCode.Length != 4)
+            {
+                return false;
+            }
+
+            string cleanAirspace = Regex.Replace((airspaceId ?? string.Empty).Trim().ToUpperInvariant(), @"[^A-Z0-9]", string.Empty);
+            string cleanCallsign = Regex.Replace((callsign ?? string.Empty).Trim().ToUpperInvariant(), @"[^A-Z0-9]", string.Empty);
+            string upperInfo = (info ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(cleanAirspace))
+            {
+                return false;
+            }
+
+            return cleanAirspace.Contains(cleanCode, StringComparison.OrdinalIgnoreCase) ||
+                   cleanAirspace.Contains(cleanCode.Substring(2), StringComparison.OrdinalIgnoreCase) ||
+                   cleanCallsign.StartsWith(cleanCode, StringComparison.OrdinalIgnoreCase) ||
+                   Regex.IsMatch(upperInfo, @"\[" + Regex.Escape(cleanCode) + @"\]");
+        }
+
+        private VatglassesSectorMatch TryGetVatglassesSectorMatch(Controller controller, string code, IEnumerable<FirBoundaryFeature> currentFirs, double radiusNm = FirNearbyRadiusNm)
         {
             Pilot pilot = userVATSIMData;
             if (pilot == null || controller == null)
@@ -8206,7 +8865,6 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 }
 
                 bool ownerFoundInDataset = false;
-                bool altitudeCandidateFound = false;
                 double nearestRejectedDistance = double.MaxValue;
                 string nearestRejectedOwner = string.Empty;
                 string nearestRejectedAirspace = string.Empty;
@@ -8217,6 +8875,15 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                         .Select(NormalizeVatglassesOwnerId)
                         .FirstOrDefault(owner => VatglassesOwnerMatchesCandidate(owner, allCandidateOwners));
 
+                    bool explicitCodeAirspaceMatch = false;
+                    if (string.IsNullOrWhiteSpace(matchingOwner) &&
+                        radiusNm > FirNearbyRadiusNm &&
+                        VatglassesAirspaceIdMatchesExplicitCode(airspace.Id, code, callsign, GetControllerInfoText(controller)))
+                    {
+                        matchingOwner = NormalizeVatglassesOwnerId(code);
+                        explicitCodeAirspaceMatch = true;
+                    }
+
                     if (string.IsNullOrWhiteSpace(matchingOwner))
                     {
                         continue;
@@ -8226,17 +8893,13 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
                     foreach (VatglassesAirspaceSector sector in airspace.Sectors)
                     {
-                        if (!VatglassesAltitudeMatchesSector(sector, pilot.altitude))
-                        {
-                            continue;
-                        }
-
-                        altitudeCandidateFound = true;
-
+                        // Helper discovery intentionally ignores sector altitude filters.
+                        // Controller data often contains layered/conditional sectors and
+                        // altitude filtering has hidden valid nearby CPDLC controllers.
                         bool inside = PointInGeoPolygon(pilot.latitude, pilot.longitude, sector.Polygon);
-                        double distanceNm = inside ? 0 : DistanceNmToGeoPolygon(pilot.latitude, pilot.longitude, sector.Polygon);
+                        double distanceNm = inside ? 0 : DistanceNmToGeoPolygon(pilot.latitude, pilot.longitude, sector.Polygon, radiusNm);
 
-                        if (!inside && distanceNm > FirNearbyRadiusNm)
+                        if (!inside && distanceNm > radiusNm)
                         {
                             if (distanceNm < nearestRejectedDistance)
                             {
@@ -8251,7 +8914,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                         VatglassesSectorMatch match = new()
                         {
                             DataKey = dataset.Key,
-                            PositionId = matchingOwner,
+                            PositionId = explicitCodeAirspaceMatch ? matchingOwner + "-EXPLICIT" : matchingOwner,
                             AirspaceId = airspace.Id,
                             IsNearbyCandidate = !inside,
                             DistanceNmFromAircraft = distanceNm
@@ -8270,13 +8933,9 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 {
                     debugBestReject = "VATGlasses " + key + " loaded: owner not found for " + callsign + " / " + code + " tokens " + string.Join(",", allCandidateOwners.Take(8));
                 }
-                else if (!altitudeCandidateFound)
-                {
-                    debugBestReject = "VATGlasses " + key + " owner found, but no sector at altitude " + pilot.altitude;
-                }
                 else if (nearestRejectedDistance < double.MaxValue)
                 {
-                    debugBestReject = "VATGlasses " + key + " nearest " + nearestRejectedAirspace + "/" + nearestRejectedOwner + " " + Math.Round(nearestRejectedDistance) + " NM > " + FirNearbyRadiusNm + " NM";
+                    debugBestReject = "VATGlasses " + key + " nearest " + nearestRejectedAirspace + "/" + nearestRejectedOwner + " " + Math.Round(nearestRejectedDistance) + " NM > " + Math.Round(radiusNm) + " NM";
                 }
             }
 
@@ -8328,6 +8987,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 if (!string.IsNullOrWhiteSpace(clean))
                 {
                     owners.Add(clean);
+
+                    string compact = Regex.Replace(clean, @"[^A-Z0-9]", string.Empty);
+                    if (!string.IsNullOrWhiteSpace(compact))
+                    {
+                        owners.Add(compact);
+                    }
                 }
             }
 
@@ -8350,9 +9015,15 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
                     AddOwner(part);
 
+                    if (string.Equals(part, "ALL", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddOwner("ALLFIR");
+                    }
+
                     if (i > 0)
                     {
                         AddOwner(parts[0] + part);
+                        AddOwner(parts[0] + "_" + part);
                     }
                 }
             }
@@ -8360,6 +9031,23 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             if (!string.IsNullOrWhiteSpace(advertisedCode))
             {
                 AddOwner(advertisedCode);
+
+                if (advertisedCode.Length == 4)
+                {
+                    string shortCode = advertisedCode.Substring(2);
+                    AddOwner(shortCode);
+
+                    if (callsign.Contains("_ALL_", StringComparison.OrdinalIgnoreCase) ||
+                        callsign.Contains("_ALL", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddOwner("ALL");
+                        AddOwner("ALLFIR");
+                        AddOwner(advertisedCode + "ALL");
+                        AddOwner(advertisedCode + "_ALL");
+                        AddOwner(shortCode + "ALL");
+                        AddOwner(shortCode + "_ALL");
+                    }
+                }
 
                 string digits = Regex.Replace(advertisedCode, @"\D", string.Empty);
                 if (!string.IsNullOrWhiteSpace(digits))
@@ -8394,6 +9082,34 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 }
 
                 if (string.Equals(cleanOwner, cleanCandidate, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                string compactOwner = Regex.Replace(cleanOwner, @"[^A-Z0-9]", string.Empty);
+                string compactCandidate = Regex.Replace(cleanCandidate, @"[^A-Z0-9]", string.Empty);
+
+                if (!string.IsNullOrWhiteSpace(compactOwner) &&
+                    string.Equals(compactOwner, compactCandidate, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (string.Equals(compactOwner, "ALLFIR", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(compactCandidate, "ALL", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (string.Equals(compactOwner, "ALL", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(compactCandidate, "ALLFIR", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (compactCandidate.Length == 4 &&
+                    compactOwner.Length == 2 &&
+                    string.Equals(compactOwner, compactCandidate.Substring(2), StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
@@ -8815,6 +9531,161 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             return false;
         }
+        private List<string> GetFlightPlanRouteFirCodesForCpdlc()
+        {
+            List<string> firs = new();
+            string remarks = userVATSIMData?.flight_plan?.remarks ?? string.Empty;
+
+            void AddFir(string value)
+            {
+                string clean = (value ?? string.Empty).Trim().ToUpperInvariant();
+                if (Regex.IsMatch(clean, @"^[A-Z]{4}$") && !firs.Contains(clean, StringComparer.OrdinalIgnoreCase))
+                {
+                    firs.Add(clean);
+                }
+            }
+
+            string upperRemarks = remarks.ToUpperInvariant();
+            Match eetMatch = Regex.Match(upperRemarks, @"\bEET/(?<tail>.*)$");
+            if (eetMatch.Success)
+            {
+                string tail = eetMatch.Groups["tail"].Value;
+
+                // Stop at the next ICAO flight-plan field, e.g. SEL/, OPR/, RMK/, REG/.
+                Match nextField = Regex.Match(tail, @"\s\b[A-Z]{2,5}/");
+                if (nextField.Success)
+                {
+                    tail = tail.Substring(0, nextField.Index);
+                }
+
+                foreach (Match firToken in Regex.Matches(tail, @"\b(?<fir>[A-Z]{4})(?:\d{4})?\b"))
+                {
+                    AddFir(firToken.Groups["fir"].Value);
+                }
+            }
+
+            // Also accept clearly filed FIR codes in the route string. This is not used
+            // by itself to scan random ATC; the controller still has to match the code
+            // and the Hoppie station must be online.
+            string route = userVATSIMData?.flight_plan?.route ?? string.Empty;
+            foreach (Match firToken in Regex.Matches(route.ToUpperInvariant(), @"\b(?<fir>[A-Z]{4})(?:\d{4})?\b"))
+            {
+                AddFir(firToken.Groups["fir"].Value);
+            }
+
+            return firs;
+        }
+
+        private static bool ControllerMatchesRouteFirCode(string callsign, string info, string code, string routeFir)
+        {
+            string fir = (routeFir ?? string.Empty).Trim().ToUpperInvariant();
+            if (!Regex.IsMatch(fir, @"^[A-Z]{4}$"))
+            {
+                return false;
+            }
+
+            string upperCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string upperInfo = (info ?? string.Empty).Trim().ToUpperInvariant();
+            string upperCode = (code ?? string.Empty).Trim().ToUpperInvariant();
+
+            return string.Equals(upperCode, fir, StringComparison.OrdinalIgnoreCase) ||
+                   CallsignStartsWithFirPrefix(upperCallsign, fir) ||
+                   Regex.IsMatch(upperInfo, @"\b" + Regex.Escape(fir) + @"\b");
+        }
+
+        private static bool FirBoundaryMatchesRouteFirCode(FirBoundaryFeature fir, string routeFir)
+        {
+            if (fir == null)
+            {
+                return false;
+            }
+
+            string target = (routeFir ?? string.Empty).Trim().ToUpperInvariant();
+            if (!Regex.IsMatch(target, @"^[A-Z]{4}$"))
+            {
+                return false;
+            }
+
+            string haystack = ((fir.Id ?? string.Empty) + " " + (fir.Name ?? string.Empty) + " " + (fir.SearchText ?? string.Empty)).ToUpperInvariant();
+            return Regex.IsMatch(haystack, @"\b" + Regex.Escape(target) + @"\b") ||
+                   string.Equals((fir.Id ?? string.Empty).Trim(), target, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsRouteFirCandidateRelevant(string routeFir, List<string> routeFirs, IEnumerable<FirBoundaryFeature> currentFirs)
+        {
+            if (routeFirs == null || routeFirs.Count == 0)
+            {
+                return false;
+            }
+
+            int candidateIndex = routeFirs.FindIndex(fir => string.Equals(fir, routeFir, StringComparison.OrdinalIgnoreCase));
+            if (candidateIndex < 0)
+            {
+                return false;
+            }
+
+            int currentIndex = -1;
+            foreach (FirBoundaryFeature fir in currentFirs ?? Enumerable.Empty<FirBoundaryFeature>())
+            {
+                for (int index = 0; index < routeFirs.Count; index++)
+                {
+                    if (FirBoundaryMatchesRouteFirCode(fir, routeFirs[index]))
+                    {
+                        currentIndex = currentIndex < 0 ? index : Math.Min(currentIndex, index);
+                    }
+                }
+            }
+
+            if (currentIndex >= 0)
+            {
+                // Show the current route FIR and the next two route FIRs. This catches
+                // LSZH-LHBP around Salzburg: after/near LOVV, LHCC is the next planned FIR.
+                return candidateIndex >= currentIndex && candidateIndex <= currentIndex + 2;
+            }
+
+            string arrival = userVATSIMData?.flight_plan?.arrival?.Trim().ToUpperInvariant() ?? string.Empty;
+            if (arrival.Length == 4 && routeFir.StartsWith(arrival.Substring(0, 2), StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Short regional routes often only contain a few FIRs in EET. Showing those
+            // filed-route centers is still safer than scanning arbitrary online ATC.
+            return routeFirs.Count <= 4;
+        }
+
+        private bool TryGetRouteFirCpdlcMatch(string callsign, string info, string code, IEnumerable<FirBoundaryFeature> currentFirs, out string matchReason)
+        {
+            matchReason = string.Empty;
+            List<string> routeFirs = GetFlightPlanRouteFirCodesForCpdlc();
+
+            foreach (string routeFir in routeFirs)
+            {
+                if (!ControllerMatchesRouteFirCode(callsign, info, code, routeFir))
+                {
+                    continue;
+                }
+
+                if (!IsRouteFirCandidateRelevant(routeFir, routeFirs, currentFirs))
+                {
+                    Logger.Debug("CPDLC route FIR candidate " + callsign + " / " + code + " ignored: " + routeFir + " is filed but not current/upcoming enough.");
+                    continue;
+                }
+
+                matchReason = "flight plan route FIR " + routeFir;
+                return true;
+            }
+
+            if (TryGetDestinationCountryCenterCpdlcMatch(callsign, code, out string destinationReason))
+            {
+                matchReason = destinationReason;
+                return true;
+            }
+
+            return false;
+        }
+
+
 
         private static bool IsCenterLikeController(Controller controller)
         {
@@ -8849,34 +9720,109 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             }
 
             string upper = text.ToUpperInvariant();
-            return upper.Contains("PDC") ||
-                   upper.Contains("DCL") ||
-                   upper.Contains("CPDLC") ||
-                   upper.Contains("HOPPIE") ||
-                   upper.Contains("LOGON") ||
-                   upper.Contains("DATALINK") ||
-                   upper.Contains("DATA LINK") ||
-                   upper.Contains("ACARS") ||
-                   upper.Contains("FANS");
+
+            // CPDLC WATCH is only for real CPDLC/FANS/Hoppie logon capability.
+            // Do not treat normal controller ATIS text, PDC/DCL clearance text, or
+            // "Estimated Logoff Time" as a CPDLC logon advertisement.
+            return Regex.IsMatch(upper, @"\bCPDLC\b") ||
+                   Regex.IsMatch(upper, @"\bHOPPIE\b") ||
+                   Regex.IsMatch(upper, @"\bLOGON\b") ||
+                   Regex.IsMatch(upper, @"\bDATALINK\b") ||
+                   Regex.IsMatch(upper, @"\bDATA\s+LINK\b") ||
+                   Regex.IsMatch(upper, @"\bACARS\b") ||
+                   Regex.IsMatch(upper, @"\bFANS\b");
+        }
+
+        private string GetOnlineHoppieCodeFromControllerCallsign(string callsign)
+        {
+            string upper = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(upper))
+            {
+                return string.Empty;
+            }
+
+            string prefix = upper.Split('_').FirstOrDefault() ?? string.Empty;
+            prefix = Regex.Replace(prefix, @"[^A-Z0-9]", string.Empty);
+
+            if (IsPossibleHoppieLogonCode(prefix) && IsHoppieLogonOnline(prefix))
+            {
+                return prefix;
+            }
+
+            return string.Empty;
+        }
+
+        private bool TryGetDestinationCountryCenterCpdlcMatch(string callsign, string code, out string matchReason)
+        {
+            matchReason = string.Empty;
+
+            string arrival = userVATSIMData?.flight_plan?.arrival?.Trim().ToUpperInvariant() ?? string.Empty;
+            if (arrival.Length != 4 || userVATSIMData == null || !IsAirborneNowForPhase())
+            {
+                return false;
+            }
+
+            // Do not show far-ahead destination ACC while still in obvious departure climbout.
+            if (IsPilotLikelyInDepartureClimbout(userVATSIMData))
+            {
+                return false;
+            }
+
+            string countryPrefix = arrival.Substring(0, 2);
+            string upperCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+            string upperCode = (code ?? string.Empty).Trim().ToUpperInvariant();
+            string callsignPrefix = upperCallsign.Split('_').FirstOrDefault() ?? string.Empty;
+
+            bool matchesDestinationCountry =
+                upperCode.StartsWith(countryPrefix, StringComparison.OrdinalIgnoreCase) ||
+                callsignPrefix.StartsWith(countryPrefix, StringComparison.OrdinalIgnoreCase);
+
+            if (!matchesDestinationCountry)
+            {
+                return false;
+            }
+
+            // This is only a CTR/FSS fallback and still requires the derived/parsed
+            // Hoppie code to be online. It does not apply to APP ATIS text.
+            if (string.IsNullOrWhiteSpace(upperCode) || !IsHoppieLogonOnline(upperCode))
+            {
+                return false;
+            }
+
+            matchReason = "destination FIR/country " + countryPrefix + " for " + arrival;
+            return true;
         }
 
         private string ExtractAnyOnlineHoppieLogonCodeFromText(string text)
         {
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(text) || !ContainsCpdlcDiscoveryKeyword(text))
             {
                 return string.Empty;
             }
 
             string upper = text.ToUpperInvariant();
 
-            foreach (Match tokenMatch in Regex.Matches(upper, @"\b[A-Z0-9]{4}\b"))
+            // Safety first: never scan arbitrary ATIS text or URLs for any 4-letter
+            // online Hoppie token. The token must be explicitly tied to CPDLC/Hoppie/
+            // ACARS/FANS/logon wording.
+            string[] labelledPatterns =
             {
-                string token = tokenMatch.Value.Trim().ToUpperInvariant();
+                @"\b(?:CPDLC|HOPPIE|LOGON|DATALINK|DATA\s+LINK|ACARS|FANS)\b[^A-Z0-9]{0,12}([A-Z0-9]{4})\b",
+                @"\b(?:CPDLC|HOPPIE|LOGON|DATALINK|DATA\s+LINK|ACARS|FANS)\b[^\[]*\[([A-Z0-9]{4})\]",
+                @"\[([A-Z0-9]{4})\][^\[]*\b(?:CPDLC|HOPPIE|LOGON|DATALINK|DATA\s+LINK|ACARS|FANS)\b"
+            };
 
-                if (IsPossibleHoppieLogonCode(token) && IsHoppieLogonOnline(token))
+            foreach (string pattern in labelledPatterns)
+            {
+                foreach (Match match in Regex.Matches(upper, pattern))
                 {
-                    Logger.Debug("CPDLC active-frequency online-token fallback parsed: " + token);
-                    return token;
+                    string token = match.Groups[1].Value.Trim().ToUpperInvariant();
+
+                    if (IsPossibleHoppieLogonCode(token) && IsHoppieLogonOnline(token))
+                    {
+                        Logger.Debug("CPDLC labelled online-token fallback parsed: " + token);
+                        return token;
+                    }
                 }
             }
 
@@ -8898,8 +9844,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             // DCL LOGON CODE LOGA
             // PDC/DCL: LOGA
             // LOGA DCL
+            // DCL [DOHA]
+            // "Doha Radar" - DCL [DOHA]
             string[] pdcDclPatterns =
             {
+                @"\b(?:PDC|DCL)\b[^\[]*\[([A-Z0-9]{4})\]",
+                @"\[([A-Z0-9]{4})\][^\[]*\b(?:PDC|DCL)\b",
                 @"\b(?:PDC|DCL)\b(?:[\s:/=\-]+(?:PDC|DCL|LOGON|CODE|HOPPIE|ACARS|VIA|USE|STATION|CALLSIGN|IS|AVAILABLE|AVBL))*[\s:/=\-]+([A-Z0-9]{4})\b",
                 @"\b(?:PREDEP(?:ARTURE)?\s*CLEARANCE|DEPARTURE\s*CLEARANCE|DATALINK\s*CLEARANCE)\b(?:[\s:/=\-]+(?:LOGON|CODE|HOPPIE|ACARS|VIA|USE|STATION|CALLSIGN))*[\s:/=\-]+([A-Z0-9]{4})\b",
                 @"\b([A-Z0-9]{4})\b[\s:/=\-]+(?:PDC|DCL)\b"
@@ -8970,8 +9920,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             // verify stations such as EDMM_ZUG_CTR -> EDMZ.
             string[] bracketPatterns =
             {
-                @"\b(?:CPDLC|HOPPIE|LOGON|ACARS)\b[^\[]*\[([A-Z0-9]{4})\]",
-                @"\[([A-Z0-9]{4})\][^\[]*\b(?:CPDLC|HOPPIE|LOGON|ACARS)\b"
+                @"\b(?:CPDLC|HOPPIE|LOGON|ACARS|PDC|DCL)\b[^\[]*\[([A-Z0-9]{4})\]",
+                @"\[([A-Z0-9]{4})\][^\[]*\b(?:CPDLC|HOPPIE|LOGON|ACARS|PDC|DCL)\b"
             };
 
             foreach (string pattern in bracketPatterns)
@@ -9545,13 +10495,18 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
         private static double DistanceNmToGeoPolygon(double lat, double lon, GeoPolygon polygon)
         {
+            return DistanceNmToGeoPolygon(lat, lon, polygon, FirNearbyRadiusNm);
+        }
+
+        private static double DistanceNmToGeoPolygon(double lat, double lon, GeoPolygon polygon, double paddingRadiusNm)
+        {
             if (polygon == null || polygon.Rings.Count == 0)
             {
                 return double.MaxValue;
             }
 
             // Quick bounding-box skip with a generous degree conversion.
-            double paddingDeg = FirNearbyRadiusNm / 60.0 + 0.3;
+            double paddingDeg = Math.Max(FirNearbyRadiusNm, paddingRadiusNm) / 60.0 + 0.3;
             if (lat < polygon.MinLat - paddingDeg ||
                 lat > polygon.MaxLat + paddingDeg ||
                 lon < polygon.MinLon - paddingDeg ||
@@ -9644,6 +10599,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 return 3;
             }
 
+            if (reason.Contains("FLIGHT PLAN ROUTE FIR"))
+            {
+                return 4;
+            }
+
             if (reason.Contains("INFO MENTIONS"))
             {
                 return 4;
@@ -9668,7 +10628,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             {
                 BackColor = Color.Transparent,
                 Visible = false,
-                Size = new Size(300, 120)
+                Size = SS(new Size(300, 120))
             };
 
             cpdlcLogonPopupPanel.Paint += (_, e) =>
@@ -9679,6 +10639,24 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             cpdlcLogonPopupPanel.MouseLeave += (_, __) => { };
             screenPanel.Controls.Add(cpdlcLogonPopupPanel);
             cpdlcLogonPopupPanel.BringToFront();
+        }
+
+        private void LayoutCpdlcLogonPopup(int popupWidth, int logicalHeight)
+        {
+            if (cpdlcLogonPopupPanel == null || screenPanel == null || cpdlcDiscoveryLabel == null)
+            {
+                return;
+            }
+
+            int popupHeight = S(Math.Max(40, logicalHeight));
+            cpdlcLogonPopupPanel.Size = new Size(popupWidth, popupHeight);
+
+            int left = cpdlcDiscoveryLabel.Left - S(120);
+            int top = cpdlcDiscoveryLabel.Bottom + S(2);
+
+            cpdlcLogonPopupPanel.Location = new Point(
+                Math.Max(S(4), Math.Min(left, screenPanel.Width - cpdlcLogonPopupPanel.Width - S(4))),
+                Math.Max(S(4), Math.Min(top, screenPanel.Height - cpdlcLogonPopupPanel.Height - S(4))));
         }
 
         private void ToggleCpdlcLogonPopup()
@@ -9708,8 +10686,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Font = font,
                 Text = text,
                 TextAlign = align,
-                Location = new Point(x, y),
-                Size = new Size(width, height)
+                Location = new Point(ScaleChildX(cpdlcLogonPopupPanel, x, width), ScaleChildY(cpdlcLogonPopupPanel, y, height)),
+                Size = new Size(ScaleChildWidth(cpdlcLogonPopupPanel, x, width), ScaleChildHeight(cpdlcLogonPopupPanel, y, height)),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0))
             };
 
             cpdlcLogonPopupPanel.Controls.Add(label);
@@ -9725,11 +10705,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             string normalCaption = (caption ?? string.Empty).Trim();
             string cleanCode = (code ?? string.Empty).Trim().ToUpperInvariant();
             string cleanController = (controller ?? string.Empty).Trim().ToUpperInvariant();
-            Font actionFont = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(6.8f, textFontBold.Size - 2.1f), FontStyle.Bold);
+            Font actionFont = PopupRowFont();
 
             int actionWidth = Math.Min(
-                Math.Max(72, TextRenderer.MeasureText(normalCaption, actionFont).Width + 8),
-                Math.Max(76, cpdlcLogonPopupPanel.Width - 18));
+                Math.Max(S(72), TextRenderer.MeasureText(normalCaption, actionFont).Width + S(8)),
+                Math.Max(S(76), cpdlcLogonPopupPanel.Width - S(18)));
 
             System.Windows.Forms.Label actionLabel = new System.Windows.Forms.Label
             {
@@ -9739,8 +10719,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Font = actionFont,
                 Text = normalCaption,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(8, y),
-                Size = new Size(actionWidth, 18),
+                Location = new Point(ScaleChildX(cpdlcLogonPopupPanel, 8, actionWidth), ScaleChildY(cpdlcLogonPopupPanel, y, 18)),
+                Size = new Size(actionWidth, ScaleChildHeight(cpdlcLogonPopupPanel, y, 18)),
                 Cursor = Cursors.Hand,
                 Tag = cleanCode
             };
@@ -9768,8 +10748,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             if (!string.IsNullOrWhiteSpace(cleanController) &&
                 !string.Equals(cleanController, cleanCode, StringComparison.OrdinalIgnoreCase))
             {
-                int controllerX = actionLabel.Right + 6;
-                int controllerWidth = Math.Max(20, cpdlcLogonPopupPanel.Width - controllerX - 8);
+                int controllerX = actionLabel.Right + S(6);
+                int controllerWidth = Math.Max(S(20), cpdlcLogonPopupPanel.Width - controllerX - S(8));
 
                 System.Windows.Forms.Label controllerLabel = new System.Windows.Forms.Label
                 {
@@ -9779,14 +10759,53 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     Font = actionFont,
                     Text = cleanController,
                     TextAlign = ContentAlignment.MiddleLeft,
-                    Location = new Point(controllerX, y),
-                    Size = new Size(controllerWidth, 18),
+                    Location = new Point(controllerX, ScaleChildY(cpdlcLogonPopupPanel, y, 18)),
+                    Size = new Size(controllerWidth, ScaleChildHeight(cpdlcLogonPopupPanel, y, 18)),
                     Cursor = Cursors.Default
                 };
 
                 smartStatusToolTip.SetToolTip(controllerLabel, tooltip);
                 cpdlcLogonPopupPanel.Controls.Add(controllerLabel);
             }
+        }
+
+        private void AddCpdlcPopupLogoffAction(string unit, int y)
+        {
+            if (cpdlcLogonPopupPanel == null)
+            {
+                return;
+            }
+
+            string cleanUnit = (unit ?? string.Empty).Trim().ToUpperInvariant();
+            string caption = string.IsNullOrWhiteSpace(cleanUnit) ? "> LOGOFF" : "> LOGOFF " + cleanUnit;
+            Font actionFont = PopupRowFont();
+
+            System.Windows.Forms.Label actionLabel = new System.Windows.Forms.Label
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = MainPrimaryTextColor(),
+                Font = actionFont,
+                Text = caption,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(ScaleChildX(cpdlcLogonPopupPanel, 8, cpdlcLogonPopupPanel.Width - S(16)), ScaleChildY(cpdlcLogonPopupPanel, y, 18)),
+                Size = new Size(Math.Max(1, cpdlcLogonPopupPanel.Width - S(16)), ScaleChildHeight(cpdlcLogonPopupPanel, y, 18)),
+                Cursor = Cursors.Hand
+            };
+
+            smartStatusToolTip.SetToolTip(actionLabel, string.IsNullOrWhiteSpace(cleanUnit)
+                ? "Send CPDLC LOGOFF"
+                : "Send CPDLC LOGOFF to " + cleanUnit);
+
+            actionLabel.MouseEnter += (_, __) => actionLabel.ForeColor = DcduTheme.Amber;
+            actionLabel.MouseLeave += (_, __) => actionLabel.ForeColor = MainPrimaryTextColor();
+            actionLabel.Click += async (_, __) =>
+            {
+                HideCpdlcLogonPopup();
+                await QuickCpdlcLogoffAsync();
+            };
+
+            cpdlcLogonPopupPanel.Controls.Add(actionLabel);
         }
 
         private void AddCpdlcHelperHeaderToggle(int popupWidth)
@@ -9801,11 +10820,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = cpdlcHelperEnabled ? DcduTheme.Green : CallsignMismatchAlarmColor(),
-                Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(10.8f, textFontBold.Size + 0.8f), FontStyle.Bold),
+                Font = PopupPixelFont(11.5f, FontStyle.Bold),
                 Text = "⟳",
                 TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(151, 3),
-                Size = new Size(24, 22),
+                Location = new Point(ScaleChildX(cpdlcLogonPopupPanel, 151, 24), ScaleChildY(cpdlcLogonPopupPanel, 3, 22)),
+                Size = new Size(ScaleChildWidth(cpdlcLogonPopupPanel, 151, 24), ScaleChildHeight(cpdlcLogonPopupPanel, 3, 22)),
                 Cursor = Cursors.Hand
             };
 
@@ -9853,26 +10872,39 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             cpdlcLogonPopupPanel.SuspendLayout();
             cpdlcLogonPopupPanel.Controls.Clear();
 
-            int popupWidth = 300;
+            int popupWidth = S(326);
             int y = 6;
-            Font headerFont = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(7.3f, textFontBold.Size - 1.8f), FontStyle.Bold);
-            Font rowFont = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(6.8f, textFontBold.Size - 2.1f), FontStyle.Bold);
+            Font headerFont = PopupHeaderFont();
+            Font rowFont = PopupRowFont();
 
             AddCpdlcPopupLabel("CPDLC LOGON HELPER", 8, y, 142, 18, PopupHeaderTextColor(MainAccentColor()), headerFont);
             AddCpdlcHelperHeaderToggle(popupWidth);
-            y += 24;
+            y += 26;
 
             if (CpdlcHelperPopupDebugPreview)
             {
                 AddCpdlcPopupLabel("DEBUG PREVIEW", 8, y, popupWidth - 16, 16, PopupContentTextColor(DcduTheme.Amber), rowFont);
-                y += 20;
+                y += 26;
                 AddCpdlcPopupLabel("CONNECTED TO LOVV", 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-                y += 18;
+                y += 21;
 
-                cpdlcLogonPopupPanel.Size = new Size(popupWidth, Math.Max(64, y + 5));
-                cpdlcLogonPopupPanel.Location = new Point(
-                    Math.Max(4, Math.Min(cpdlcDiscoveryLabel.Left - 120, screenPanel.Width - cpdlcLogonPopupPanel.Width - 4)),
-                    cpdlcDiscoveryLabel.Bottom + 2);
+                LayoutCpdlcLogonPopup(popupWidth, Math.Max(64, y + 5));
+                cpdlcLogonPopupPanel.ResumeLayout();
+                cpdlcLogonPopupPanel.Visible = true;
+                cpdlcLogonPopupPanel.BringToFront();
+                cpdlcLogonPopupPanel.Invalidate();
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_currentATCUnit))
+            {
+                string state = "CONNECTED TO " + _currentATCUnit.Trim().ToUpperInvariant();
+                AddCpdlcPopupLabel(state, 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
+                y += 26;
+                AddCpdlcPopupLogoffAction(_currentATCUnit, y);
+                y += 26;
+
+                LayoutCpdlcLogonPopup(popupWidth, Math.Max(82, y + 5));
                 cpdlcLogonPopupPanel.ResumeLayout();
                 cpdlcLogonPopupPanel.Visible = true;
                 cpdlcLogonPopupPanel.BringToFront();
@@ -9883,13 +10915,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             if (!cpdlcHelperEnabled)
             {
                 AddCpdlcPopupLabel("HELPER DISABLED", 8, y, popupWidth - 16, 16, NeutralStatusBadgeColor(), rowFont);
-                y += 20;
+                y += 26;
                 AddCpdlcPopupLabel("NO STATION SUGGESTIONS WILL BE SHOWN", 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-                y += 20;
-                cpdlcLogonPopupPanel.Size = new Size(popupWidth, Math.Max(72, y + 5));
-                cpdlcLogonPopupPanel.Location = new Point(
-                    Math.Max(4, Math.Min(cpdlcDiscoveryLabel.Left - 120, screenPanel.Width - cpdlcLogonPopupPanel.Width - 4)),
-                    cpdlcDiscoveryLabel.Bottom + 2);
+                y += 26;
+                LayoutCpdlcLogonPopup(popupWidth, Math.Max(72, y + 5));
                 cpdlcLogonPopupPanel.ResumeLayout();
                 cpdlcLogonPopupPanel.Visible = true;
                 cpdlcLogonPopupPanel.BringToFront();
@@ -9899,16 +10928,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             if (IsCpdlcHelperSuppressedByConnection())
             {
-                string state = !string.IsNullOrWhiteSpace(_currentATCUnit)
-                    ? "CONNECTED TO " + _currentATCUnit
-                    : "HANDOVER / LOGON PENDING";
+                string state = "HANDOVER / LOGON PENDING";
 
                 AddCpdlcPopupLabel(state, 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-                y += 20;
-                cpdlcLogonPopupPanel.Size = new Size(popupWidth, Math.Max(58, y + 5));
-                cpdlcLogonPopupPanel.Location = new Point(
-                    Math.Max(4, Math.Min(cpdlcDiscoveryLabel.Left - 120, screenPanel.Width - cpdlcLogonPopupPanel.Width - 4)),
-                    cpdlcDiscoveryLabel.Bottom + 2);
+                y += 26;
+                LayoutCpdlcLogonPopup(popupWidth, Math.Max(58, y + 5));
                 cpdlcLogonPopupPanel.ResumeLayout();
                 cpdlcLogonPopupPanel.Visible = true;
                 cpdlcLogonPopupPanel.BringToFront();
@@ -9947,13 +10971,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             if (candidates.Count == 0)
             {
                 AddCpdlcPopupLabel("NO CPDLC CANDIDATE", 8, y, popupWidth - 16, 16, NeutralStatusBadgeColor(), rowFont);
-                y += 20;
+                y += 26;
                 AddCpdlcPopupLabel("HELPER ACTIVE / STANDBY", 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-                y += 20;
-                cpdlcLogonPopupPanel.Size = new Size(popupWidth, Math.Max(72, y + 5));
-                cpdlcLogonPopupPanel.Location = new Point(
-                    Math.Max(4, Math.Min(cpdlcDiscoveryLabel.Left - 120, screenPanel.Width - cpdlcLogonPopupPanel.Width - 4)),
-                    cpdlcDiscoveryLabel.Bottom + 2);
+                y += 26;
+                LayoutCpdlcLogonPopup(popupWidth, Math.Max(72, y + 5));
                 cpdlcLogonPopupPanel.ResumeLayout();
                 cpdlcLogonPopupPanel.Visible = true;
                 cpdlcLogonPopupPanel.BringToFront();
@@ -9974,13 +10995,13 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 string frequency = string.IsNullOrWhiteSpace(tuned.FrequencyText) ? "ACTIVE FREQ" : tuned.FrequencyText;
 
                 AddCpdlcPopupLabel("VERIFIED ACTIVE FREQ CPDLC", 8, y, popupWidth - 16, 16, PopupHeaderTextColor(MainAccentColor()), rowFont);
-                y += 17;
+                y += 26;
                 AddCpdlcPopupLabel((string.IsNullOrWhiteSpace(controller) ? "UNKNOWN" : controller) + "   " + frequency, 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-                y += 17;
+                y += 26;
                 AddCpdlcPopupLabel("LOGON: " + code, 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-                y += 22;
+                y += 26;
                 AddCpdlcPopupAction("> LOGON TO " + code, code, controller, "Verified on your active VATSIM frequency\nController: " + controller + "\nLogon: " + code, y);
-                y += 25;
+                y += 27;
             }
 
             if (others.Count > 0)
@@ -9988,11 +11009,15 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 if (tuned != null)
                 {
                     AddCpdlcPopupLabel("──────────────────────────────", 8, y, popupWidth - 16, 16, Color.FromArgb(150, MainPrimaryTextColor()), rowFont);
-                    y += 17;
+                    y += 26;
                 }
 
-                AddCpdlcPopupLabel(tuned == null ? "POSSIBLE CPDLC ATC NEARBY" : "OTHER CPDLC CANDIDATES", 8, y, popupWidth - 16, 16, PopupHeaderTextColor(MainAccentColor()), rowFont);
-                y += 19;
+                bool hasRouteCandidate = others.Any(candidate => (candidate.MatchReason ?? string.Empty).ToUpperInvariant().Contains("FLIGHT PLAN ROUTE FIR"));
+                string candidatesTitle = tuned == null
+                    ? (hasRouteCandidate ? "POSSIBLE CPDLC ATC / ROUTE" : "POSSIBLE CPDLC ATC NEARBY")
+                    : "OTHER CPDLC CANDIDATES";
+                AddCpdlcPopupLabel(candidatesTitle, 8, y, popupWidth - 16, 16, PopupHeaderTextColor(MainAccentColor()), rowFont);
+                y += 26;
 
                 foreach (CpdlcDiscoveryResult candidate in others)
                 {
@@ -10005,21 +11030,18 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                         : "\nFrequency: " + candidate.FrequencyText.Trim();
 
                     AddCpdlcPopupAction(caption, code, controller, "Controller: " + controller + frequency + "\nLogon: " + code + "\n" + (candidate.MatchReason ?? string.Empty), y);
-                    y += 19;
+                    y += 26;
                 }
             }
             else if (tuned != null)
             {
                 AddCpdlcPopupLabel("──────────────────────────────", 8, y, popupWidth - 16, 16, Color.FromArgb(120, MainPrimaryTextColor()), rowFont);
-                y += 17;
+                y += 26;
                 AddCpdlcPopupLabel("NO OTHER CPDLC ATC ONLINE", 8, y, popupWidth - 16, 16, Color.FromArgb(170, MainPrimaryTextColor()), rowFont);
-                y += 18;
+                y += 21;
             }
 
-            cpdlcLogonPopupPanel.Size = new Size(popupWidth, Math.Max(58, y + 5));
-            cpdlcLogonPopupPanel.Location = new Point(
-                Math.Max(4, Math.Min(cpdlcDiscoveryLabel.Left - 120, screenPanel.Width - cpdlcLogonPopupPanel.Width - 4)),
-                cpdlcDiscoveryLabel.Bottom + 2);
+            LayoutCpdlcLogonPopup(popupWidth, Math.Max(58, y + 5));
 
             cpdlcLogonPopupPanel.ResumeLayout();
             cpdlcLogonPopupPanel.Visible = true;
@@ -10119,7 +11141,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             {
                 BackColor = Color.Transparent,
                 Visible = false,
-                Size = new Size(260, 105)
+                Size = SS(new Size(260, 105))
             };
 
             pdcActionPopupPanel.Paint += (_, e) =>
@@ -10148,8 +11170,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Font = font,
                 Text = text,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(x, y),
-                Size = new Size(width, height)
+                Location = new Point(ScaleChildX(pdcActionPopupPanel, x, width), ScaleChildY(pdcActionPopupPanel, y, height)),
+                Size = new Size(ScaleChildWidth(pdcActionPopupPanel, x, width), ScaleChildHeight(pdcActionPopupPanel, y, height)),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0))
             });
         }
 
@@ -10166,11 +11190,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = MainPrimaryTextColor(),
-                Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(6.9f, textFontBold.Size - 2.0f), FontStyle.Bold),
+                Font = PopupRowFont(),
                 Text = caption,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(8, y),
-                Size = new Size(pdcActionPopupPanel.Width - 16, 18),
+                Location = new Point(ScaleChildX(pdcActionPopupPanel, 8, pdcActionPopupPanel.Width - S(16)), ScaleChildY(pdcActionPopupPanel, y, 18)),
+                Size = new Size(Math.Max(1, pdcActionPopupPanel.Width - S(16)), ScaleChildHeight(pdcActionPopupPanel, y, 18)),
                 Cursor = Cursors.Hand
             };
 
@@ -10211,39 +11235,39 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             bool amberCandidate = pdcDiscoveryIsFallbackCandidate || (datalinkStatusText ?? string.Empty).ToUpperInvariant().Contains("MAYBE");
 
-            int popupWidth = 274;
+            int popupWidth = S(306);
             int y = 6;
-            Font headerFont = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(7.4f, textFontBold.Size - 1.7f), FontStyle.Bold);
-            Font rowFont = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(6.9f, textFontBold.Size - 2.0f), FontStyle.Bold);
+            Font headerFont = PopupHeaderFont();
+            Font rowFont = PopupRowFont();
 
             AddPdcPopupLabel(amberCandidate ? "PDC / DCL CANDIDATE" : "PDC / DCL AVAILABLE", 8, y, popupWidth - 16, 18, PopupHeaderTextColor(MainAccentColor()), headerFont);
-            y += 24;
+            y += 26;
 
             AddPdcPopupLabel(source, 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-            y += 17;
+            y += 26;
 
             if (!string.IsNullOrWhiteSpace(controller))
             {
                 AddPdcPopupLabel(controller, 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-                y += 17;
+                y += 26;
             }
 
             AddPdcPopupLabel("LOGON: " + code, 8, y, popupWidth - 16, 16, MainPrimaryTextColor(), rowFont);
-            y += 21;
+            y += 26;
 
             if (amberCandidate)
             {
                 AddPdcPopupLabel("DOUBLE CHECK ON VATSIM RADAR", 8, y, popupWidth - 16, 16, PopupContentTextColor(DcduTheme.Amber), rowFont);
-                y += 20;
+                y += 26;
             }
 
             AddPdcPopupAction(code, y);
-            y += 22;
+            y += 26;
 
-            pdcActionPopupPanel.Size = new Size(popupWidth, Math.Max(92, y + 5));
+            pdcActionPopupPanel.Size = new Size(popupWidth, S(Math.Max(92, y + 5)));
             pdcActionPopupPanel.Location = new Point(
-                Math.Max(4, Math.Min(datalinkStatusLabel.Left - 64, screenPanel.Width - pdcActionPopupPanel.Width - 4)),
-                datalinkStatusLabel.Bottom + 2);
+                Math.Max(S(4), Math.Min(datalinkStatusLabel.Left - S(64), screenPanel.Width - pdcActionPopupPanel.Width - S(4))),
+                Math.Max(S(4), Math.Min(datalinkStatusLabel.Bottom + S(2), screenPanel.Height - pdcActionPopupPanel.Height - S(4))));
 
             pdcActionPopupPanel.ResumeLayout();
             pdcActionPopupPanel.Visible = true;
@@ -10412,9 +11436,91 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             await SendCPDLCMessage(recipient, "TELEX", message.Trim());
         }
 
+        private async Task QuickCpdlcLogoffAsync()
+        {
+            string target = (CurrentATCUnit ?? pendingLogon ?? cpdlcHandoverTargetCode ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                WriteMessage("CPDLC LOGOFF NOT AVAILABLE", "SYSTEM", "SYSTEM");
+                HideQuickActionButtons();
+                return;
+            }
+
+            HideCpdlcLogonPopup();
+            HideQuickActionButtons();
+
+            string packet = string.Format("/data2/{0}//N/LOGOFF", messageOutCounter);
+            messageOutCounter += 1;
+
+            await SendCPDLCMessage(target, "CPDLC", packet.Trim());
+
+            CurrentATCUnit = null;
+            pendingLogon = null;
+            ClearNextAtcUnitDisplay();
+            StopCpdlcHandoverFrequencyWatch();
+            UpdateCpdlcDiscoveryLabel();
+            UpdateOnlineStatusLabel();
+            UpdateCurrentAtcUnitDisplay();
+        }
+
+        private Task ExecuteCpdlcLogonFromEmbeddedMenuAsync()
+        {
+            if (DcduStyleManager.IsBoeing)
+            {
+                ShowBoeingAtcLogonRequest();
+            }
+            else
+            {
+                ShowAirbusAtcLogonRequest();
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private async Task ExecuteCpdlcLogoffFromEmbeddedMenuAsync()
+        {
+            if (DcduStyleManager.IsBoeing)
+            {
+                CloseBoeingTelexPages();
+            }
+            else
+            {
+                CloseAirbusAocPages();
+            }
+
+            await QuickCpdlcLogoffAsync();
+        }
+
         private Task QuickCpdlcLogonAsync()
         {
             return QuickCpdlcLogonAsync(cpdlcDiscoveryLogonCode);
+        }
+
+        private async Task SendCpdlcLogonRequestAsync(string logonCode, bool requireHoppieOnline)
+        {
+            string recipient = (logonCode ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (recipient.Length < 3)
+            {
+                WriteMessage("CPDLC LOGON NOT READY: ENTER STATION CODE", "SYSTEM", "SYSTEM");
+                HideQuickActionButtons();
+                return;
+            }
+
+            if (requireHoppieOnline && !IsHoppieLogonOnline(recipient))
+            {
+                WriteMessage("CPDLC LOGON NOT AVAILABLE: " + recipient + " NOT ONLINE", "SYSTEM", "SYSTEM");
+                HideQuickActionButtons();
+                return;
+            }
+
+            string packet = string.Format("/data2/{0}//Y/REQUEST LOGON", messageOutCounter);
+            messageOutCounter += 1;
+            pendingLogon = recipient;
+
+            HideQuickActionButtons();
+            await SendCPDLCMessage(recipient, "CPDLC", packet.Trim());
         }
 
         private async Task QuickCpdlcLogonAsync(string logonCode)
@@ -10428,12 +11534,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 return;
             }
 
-            string packet = string.Format("/data2/{0}//Y/REQUEST LOGON", messageOutCounter);
-            messageOutCounter += 1;
-            pendingLogon = recipient;
-
-            HideQuickActionButtons();
-            await SendCPDLCMessage(recipient, "CPDLC", packet.Trim());
+            await SendCpdlcLogonRequestAsync(recipient, true);
         }
 
         private string GetBestDepartureAtisLetter(string departure)
@@ -11102,11 +12203,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 {
                     AutoSize = true,
                     BackColor = Color.Transparent,
-                    Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(6.8f, textFontBold.Size - 2.15f), FontStyle.Bold),
+                    Font = PopupRowFont(),
                     TextAlign = ContentAlignment.TopLeft,
-                    Location = new Point(7, 2),
-                    MaximumSize = new Size(278, 0),
-                    Padding = new Padding(0, 0, 4, 2),
+                    Location = SP(new Point(7, 2)),
+                    MaximumSize = new Size(S(278), 0),
+                    Padding = SPad(new Padding(0, 0, 4, 2)),
                     Cursor = Cursors.Hand
                 };
                 atisAvailabilityPopupLabel.Click += (_, __) => ToggleAtisAvailabilityPopup();
@@ -11141,12 +12242,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Color.FromArgb(42, accent),
                 Color.FromArgb(13, accent),
                 LinearGradientMode.Vertical);
-            using Pen border = new Pen(Color.FromArgb(atisAvailabilityPopupPinned ? 190 : 118, accent), atisAvailabilityPopupPinned ? 1.35f : 1.0f);
+            using Pen border = new Pen(Color.FromArgb(atisAvailabilityPopupPinned ? 190 : 118, accent), atisAvailabilityPopupPinned ? ScaleUi(1.35f) : ScaleUi(1.0f));
             using Pen topLine = new Pen(Color.FromArgb(55, Color.White), 1.0f);
 
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(border, path);
-            e.Graphics.DrawLine(topLine, bounds.Left + 6, bounds.Top + 1, bounds.Right - 6, bounds.Top + 1);
+            e.Graphics.DrawLine(topLine, bounds.Left + S(6), bounds.Top + S(1), bounds.Right - S(6), bounds.Top + S(1));
         }
 
         private void UpdateAtisAvailabilityPopupText()
@@ -11282,10 +12383,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 {
                     AutoSize = false,
                     BackColor = Color.Transparent,
-                    Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(6.8f, textFontBold.Size - 2.1f), FontStyle.Bold),
+                    Font = PopupRowFont(),
                     TextAlign = ContentAlignment.MiddleLeft,
                     Dock = DockStyle.Fill,
-                    Padding = new Padding(7, 2, 6, 2),
+                    Padding = SPad(new Padding(7, 2, 6, 2)),
                     Cursor = Cursors.Hand
                 };
                 atisAutoPopupLabel.Click += (_, __) =>
@@ -11327,12 +12428,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Color.FromArgb(42, accent),
                 Color.FromArgb(13, accent),
                 LinearGradientMode.Vertical);
-            using Pen border = new Pen(Color.FromArgb(atisAutoPopupPinned ? 190 : 118, accent), atisAutoPopupPinned ? 1.35f : 1.0f);
+            using Pen border = new Pen(Color.FromArgb(atisAutoPopupPinned ? 190 : 118, accent), atisAutoPopupPinned ? ScaleUi(1.35f) : ScaleUi(1.0f));
             using Pen topLine = new Pen(Color.FromArgb(55, Color.White), 1.0f);
 
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(border, path);
-            e.Graphics.DrawLine(topLine, bounds.Left + 6, bounds.Top + 1, bounds.Right - 6, bounds.Top + 1);
+            e.Graphics.DrawLine(topLine, bounds.Left + S(6), bounds.Top + S(1), bounds.Right - S(6), bounds.Top + S(1));
         }
 
         private string BuildAtisAutoPopupText()
@@ -11413,18 +12514,20 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             ShowAtisAutoPopup(true);
         }
 
-        private System.Windows.Forms.Label CreateQuickWxPopupActionLabel(string text, int top, Action clickAction)
+                private System.Windows.Forms.Label CreateQuickWxPopupActionLabel(string text, int top, Action clickAction)
         {
             System.Windows.Forms.Label label = new System.Windows.Forms.Label
             {
                 AutoSize = false,
                 BackColor = Color.Transparent,
-                Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(6.8f, textFontBold.Size - 2.1f), FontStyle.Bold),
+                Font = PopupRowFont(),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Cursor = Cursors.Hand,
-                Location = new Point(9, top),
-                Size = new Size(160, 16),
-                Text = text ?? string.Empty
+                Location = new Point(S(9), S(top)),
+                Size = SS(new Size(178, 18)),
+                Text = text ?? string.Empty,
+                UseCompatibleTextRendering = false,
+                Padding = SPad(new Padding(0))
             };
 
             label.ForeColor = MainPrimaryTextColor();
@@ -11448,7 +12551,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             return label;
         }
 
-        private void ConfigureQuickWxPopup()
+
+                private void ConfigureQuickWxPopup()
         {
             if (screenPanel == null)
             {
@@ -11463,27 +12567,67 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     Visible = false
                 };
                 quickWxPopupPanel.Paint += QuickWxPopup_Paint;
-
-                System.Windows.Forms.Label headerLabel = new System.Windows.Forms.Label
-                {
-                    AutoSize = false,
-                    BackColor = Color.Transparent,
-                    Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(7.2f, textFontBold.Size - 1.7f), FontStyle.Bold),
-                    TextAlign = ContentAlignment.MiddleLeft,
-                    Location = new Point(9, 7),
-                    Size = new Size(162, 15),
-                    Text = "QUICK ACTIONS"
-                };
-                headerLabel.ForeColor = MainPrimaryTextColor();
-
-                quickWxPopupPanel.Controls.Add(headerLabel);
-                quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ METAR DEP", 27, () => SendQuickWeatherRequest(false, false)));
-                quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ METAR ARR", 43, () => SendQuickWeatherRequest(false, true)));
-                quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ ATIS DEP", 59, () => SendQuickWeatherRequest(true, false)));
-                quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ ATIS ARR", 75, () => SendQuickWeatherRequest(true, true)));
                 screenPanel.Controls.Add(quickWxPopupPanel);
             }
+
+            quickWxPopupPanel.SuspendLayout();
+            quickWxPopupPanel.Controls.Clear();
+
+            System.Windows.Forms.Label headerLabel = new System.Windows.Forms.Label
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                Font = PopupHeaderFont(),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = SP(new Point(9, 6)),
+                Size = SS(new Size(166, 18)),
+                Text = "QUICK ACTIONS",
+                UseCompatibleTextRendering = false,
+                Padding = SPad(new Padding(0))
+            };
+            headerLabel.ForeColor = MainPrimaryTextColor();
+
+            quickWxPopupPanel.Controls.Add(headerLabel);
+            quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ METAR DEP", 29, () => SendQuickWeatherRequest(false, false)));
+            quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ METAR ARR", 47, () => SendQuickWeatherRequest(false, true)));
+            quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ ATIS DEP", 65, () => SendQuickWeatherRequest(true, false)));
+            quickWxPopupPanel.Controls.Add(CreateQuickWxPopupActionLabel("REQ ATIS ARR", 83, () => SendQuickWeatherRequest(true, true)));
+            quickWxPopupPanel.ResumeLayout();
+
+            PositionQuickWxPopup();
         }
+
+        private void PositionQuickWxPopup()
+        {
+            if (quickWxPopupPanel == null || screenPanel == null)
+            {
+                return;
+            }
+
+            int popupWidth = S(196);
+            int popupHeight = S(108);
+            quickWxPopupPanel.Size = new Size(popupWidth, popupHeight);
+
+            int x;
+            int y;
+
+            if (quickWxStatusLabel != null && !quickWxStatusLabel.IsDisposed)
+            {
+                x = quickWxStatusLabel.Right - popupWidth;
+                y = quickWxStatusLabel.Bottom + S(4);
+            }
+            else
+            {
+                x = screenPanel.Width - popupWidth - S(8);
+                y = S(82);
+            }
+
+            x = Math.Max(S(4), Math.Min(x, screenPanel.Width - popupWidth - S(4)));
+            y = Math.Max(S(4), Math.Min(y, screenPanel.Height - popupHeight - S(4)));
+
+            quickWxPopupPanel.Location = new Point(x, y);
+        }
+
 
         private void QuickWxPopup_Paint(object sender, PaintEventArgs e)
         {
@@ -11512,7 +12656,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Color.FromArgb(42, accent),
                 Color.FromArgb(13, accent),
                 LinearGradientMode.Vertical);
-            using Pen border = new Pen(Color.FromArgb(quickWxPopupPinned ? 190 : 118, accent), quickWxPopupPinned ? 1.35f : 1.0f);
+            using Pen border = new Pen(Color.FromArgb(quickWxPopupPinned ? 190 : 118, accent), quickWxPopupPinned ? ScaleUi(1.35f) : ScaleUi(1.0f));
 
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(border, path);
@@ -11553,6 +12697,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 }
             }
 
+            PositionQuickWxPopup();
             quickWxPopupPanel.Visible = true;
             quickWxPopupPanel.BringToFront();
             quickWxPopupPanel.Invalidate();
@@ -11597,14 +12742,14 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             // Physical Airbus side-key hitboxes, tuned to DCDU_Main_V15.png.
             int[] y = { 46, 88, 130, 172, 214 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
-            return new Rectangle(8, y[i], 64, 36);
+            return SR(new Rectangle(8, y[i], 64, 36));
         }
 
         private Rectangle AirbusAocRightLskBounds(int index)
         {
             int[] y = { 64, 106, 148, 190, 232 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
-            return new Rectangle(610, y[i], 66, 36);
+            return SR(new Rectangle(610, y[i], 66, 36));
         }
 
         private bool TryGetAirbusAocLineSelect(Point location, out bool rightSide, out int index)
@@ -11648,7 +12793,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     return !rightSide && (index == 1 || index == 2 || index == 5);
 
                 case AirbusAocPage.AtcMainMenu:
-                    return (!rightSide && (index == 1 || index == 2 || index == 5)) ||
+                    return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 5)) ||
                            (rightSide && (index == 1 || index == 2));
 
                 case AirbusAocPage.AtcDirectRequest:
@@ -11656,6 +12801,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 case AirbusAocPage.AtcSpeedRequest:
                 case AirbusAocPage.AtcWhenCanWeRequest:
                 case AirbusAocPage.AtcTextRequest:
+                case AirbusAocPage.AtcLogonRequest:
                     return (!rightSide && index == 5) ||
                            (rightSide && index == 5 && airbusAocSendReady);
 
@@ -11668,6 +12814,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                            (rightSide && (index == 1 || index == 2));
 
                 case AirbusAocPage.AtcConnectionMenu:
+                    return !rightSide && (index == 1 || index == 5);
+
                 case AirbusAocPage.AtcEmergencyMenu:
                     return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 5)) ||
                            (rightSide && index == 1);
@@ -11790,6 +12938,17 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     }
                     break;
 
+                case AirbusAocPage.AtcLogonRequest:
+                    if (!rightSide && index == 5)
+                    {
+                        ShowAirbusAtcConnectionMenu();
+                    }
+                    else if (rightSide && index == 5)
+                    {
+                        _ = SendAirbusAtcLogonRequestAsync();
+                    }
+                    break;
+
                 case AirbusAocPage.AtcDirectRequest:
                 case AirbusAocPage.AtcLevelRequest:
                 case AirbusAocPage.AtcSpeedRequest:
@@ -11883,14 +13042,14 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             // Physical Boeing DCDU side-key hitboxes, tuned for DCDU_Main_V15 Boeing asset.
             int[] y = { 66, 107, 149, 190, 232, 273 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
-            return new Rectangle(4, y[i], 70, 35);
+            return SR(new Rectangle(4, y[i], 70, 35));
         }
 
         private Rectangle BoeingTelexRightLskBounds(int index)
         {
             int[] y = { 66, 107, 149, 190, 232, 273 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
-            return new Rectangle(584, y[i], 70, 35);
+            return SR(new Rectangle(584, y[i], 70, 35));
         }
 
         private bool TryGetBoeingTelexLineSelect(Point location, out bool rightSide, out int index)
@@ -11946,8 +13105,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     return !rightSide && (index == 1 || index == 2 || index == 3 || index == 6);
 
                 case BoeingTelexPage.AtcMainMenu:
-                    return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 6)) ||
+                    return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 4 || index == 6)) ||
                            (rightSide && (index == 1 || index == 2 || index == 3));
+
+                case BoeingTelexPage.AtcConnectionMenu:
+                    return !rightSide && (index == 1 || index == 6);
 
                 case BoeingTelexPage.FreeText:
                 case BoeingTelexPage.Metar:
@@ -11958,6 +13120,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 case BoeingTelexPage.AtcLevelRequest:
                 case BoeingTelexPage.AtcSpeedRequest:
                 case BoeingTelexPage.AtcWhenCanWeRequest:
+                case BoeingTelexPage.AtcLogonRequest:
                     return (!rightSide && index == 6) ||
                            (rightSide && index == 6 && boeingTelexSendReady);
 
@@ -12051,9 +13214,42 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     {
                         ShowBoeingAtcOceanicClearance();
                     }
+                    else if (!rightSide && index == 4)
+                    {
+                        ShowBoeingAtcConnectionMenu();
+                    }
                     else if (!rightSide && index == 6)
                     {
                         CloseBoeingTelexPages();
+                    }
+                    break;
+
+                case BoeingTelexPage.AtcConnectionMenu:
+                    if (!rightSide && index == 1)
+                    {
+                        if (!string.IsNullOrWhiteSpace(CurrentATCUnit))
+                        {
+                            _ = ExecuteCpdlcLogoffFromEmbeddedMenuAsync();
+                        }
+                        else
+                        {
+                            ShowBoeingAtcLogonRequest();
+                        }
+                    }
+                    else if (!rightSide && index == 6)
+                    {
+                        ShowBoeingAtcMainMenu();
+                    }
+                    break;
+
+                case BoeingTelexPage.AtcLogonRequest:
+                    if (!rightSide && index == 6)
+                    {
+                        ShowBoeingAtcConnectionMenu();
+                    }
+                    else if (rightSide && index == 6)
+                    {
+                        _ = SendBoeingAtcLogonRequestAsync();
                     }
                     break;
 
@@ -12133,10 +13329,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             messageFormatPanel.Visible = true;
             messageFormatPanel.Enabled = true;
             messageFormatPanel.BringToFront();
-            messageFormatPanel.Location = new Point(12, 10);
-            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - 24), Math.Max(1, screenPanel.Height - 20));
-            messageFormatPanel.Padding = new Padding(0);
-            messageFormatPanel.Margin = new Padding(0);
+            messageFormatPanel.Location = SP(new Point(12, 10));
+            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - S(24)), Math.Max(1, screenPanel.Height - S(20)));
+            messageFormatPanel.Padding = SPad(new Padding(0));
+            messageFormatPanel.Margin = SPad(new Padding(0));
             messageFormatPanel.AutoScroll = false;
             messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
             messageFormatPanel.WrapContents = false;
@@ -12184,7 +13380,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             // with the painted Boeing side pushbuttons.
             int[] y = { 24, 62, 100, 138, 176, 224 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
-            return Math.Min(y[i], Math.Max(0, parent.Height - 34));
+            int baseHeight = BaseLogicalHeight(parent);
+            return Math.Min(y[i], Math.Max(0, (baseHeight > 0 ? baseHeight : parent.Height) - 34));
         }
 
         private int BoeingTelexActionY(Control parent)
@@ -12202,10 +13399,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Font = font ?? BoeingTelexMenuFont(),
                 Text = text ?? string.Empty,
                 TextAlign = align,
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                Margin = new Padding(0),
-                Padding = new Padding(0)
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, height)),
+                Size = new Size(ScaleChildWidth(parent, x, width), ScaleChildHeight(parent, y, height)),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0))
             };
             parent.Controls.Add(label);
             label.BringToFront();
@@ -12222,8 +13419,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 BorderStyle = BorderStyle.FixedSingle,
                 CharacterCasing = CharacterCasing.Upper,
                 Font = BoeingTelexValueFont(),
-                Location = new Point(x, y),
-                Size = new Size(width, height > 0 ? height : (multiline ? 78 : 24)),
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, height > 0 ? height : (multiline ? 78 : 24))),
+                Size = new Size(ScaleChildWidth(parent, x, width), ScaleChildHeight(parent, y, height > 0 ? height : (multiline ? 78 : 24))),
                 MaxLength = maxLength,
                 Text = text ?? string.Empty,
                 Multiline = multiline,
@@ -12263,9 +13460,9 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 Font = BoeingTelexValueFont(),
                 Text = selected,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(x, y),
-                Size = new Size(width, 23),
-                Padding = new Padding(4, 0, 2, 0),
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, 23)),
+                Size = new Size(ScaleChildWidth(parent, x, width), S(23)),
+                Padding = SPad(new Padding(4, 0, 2, 0)),
                 Cursor = Cursors.Hand
             };
 
@@ -12361,6 +13558,9 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 case BoeingTelexPage.Metar:
                 case BoeingTelexPage.Atis:
                     return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 4;
+
+                case BoeingTelexPage.AtcLogonRequest:
+                    return GetBoeingTelexInput(BoeingTelexInputStation).Length >= 3;
 
                 case BoeingTelexPage.AtcPreDepClearance:
                     return !string.IsNullOrWhiteSpace(AirbusAocDeparture()) &&
@@ -12542,10 +13742,87 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             AddBoeingTelexLabel(page, "<DIRECT REQ", 4, BoeingTelexLskTextY(page, 1), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<LEVEL REQ", 4, BoeingTelexLskTextY(page, 2), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<PRE DEP CLEARANCE", 4, BoeingTelexLskTextY(page, 3), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<CONNECTIONS", 4, BoeingTelexLskTextY(page, 4), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "WHEN CAN WE>", page.Width - 250, BoeingTelexLskTextY(page, 1), 246, 30, ContentAlignment.MiddleRight, color, menuFont);
             AddBoeingTelexLabel(page, "SPEED REQ>", page.Width - 230, BoeingTelexLskTextY(page, 2), 226, 30, ContentAlignment.MiddleRight, color, menuFont);
             AddBoeingTelexLabel(page, "OCEANIC CLEARANCE>", page.Width - 310, BoeingTelexLskTextY(page, 3), 306, 30, ContentAlignment.MiddleRight, color, menuFont);
             AddBoeingTelexLabel(page, "<RETURN", 4, BoeingTelexLskTextY(page, 6), 180, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+
+        private void ShowBoeingAtcConnectionMenu()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcConnectionMenu);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font menuFont = BoeingTelexMenuFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            string currentUnit = (CurrentATCUnit ?? string.Empty).Trim().ToUpperInvariant();
+            string detectedCode = (cpdlcDiscoveryLogonCode ?? string.Empty).Trim().ToUpperInvariant();
+
+            AddBoeingTelexLabel(page, "ATC CONNECTIONS", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+
+            if (!string.IsNullOrWhiteSpace(currentUnit))
+            {
+                AddBoeingTelexLabel(page, "<LOGOFF " + currentUnit, 4, BoeingTelexLskTextY(page, 1), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
+                AddBoeingTelexLabel(page, "CONNECTED TO " + currentUnit, 16, 112, page.Width - 32, 22, ContentAlignment.MiddleLeft, DcduTheme.Green, captionFont);
+            }
+            else
+            {
+                AddBoeingTelexLabel(page, "<LOGON", 4, BoeingTelexLskTextY(page, 1), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
+
+                string status = string.IsNullOrWhiteSpace(detectedCode)
+                    ? "NO CPDLC LOGON CANDIDATE"
+                    : "DETECTED LOGON " + detectedCode;
+                AddBoeingTelexLabel(page, status, 16, 112, page.Width - 32, 22, ContentAlignment.MiddleLeft, string.IsNullOrWhiteSpace(detectedCode) ? DcduTheme.Amber : DcduTheme.Green, captionFont);
+            }
+
+            AddBoeingTelexLabel(page, "<ATC MENU", 4, BoeingTelexLskTextY(page, 6), 190, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+
+        private void ShowBoeingAtcLogonRequest()
+        {
+            PrepareBoeingTelexPage(BoeingTelexPage.AtcLogonRequest);
+            Panel page = CreateBoeingTelexCanvas();
+            Font titleFont = BoeingTelexTitleFont();
+            Font captionFont = BoeingTelexCaptionFont();
+            Font hintFont = CreateDpiStablePointFont("Consolas", 8.8f, FontStyle.Bold);
+            Color color = MainPrimaryTextColor();
+
+            int leftX = 20;
+            int rightEdge = page.Width - 20;
+            string suggestedCode = GetStoredBoeingTelexInput(BoeingTelexPage.AtcLogonRequest, BoeingTelexInputStation, GetSuggestedCpdlcLogonCode());
+
+            AddBoeingTelexLabel(page, "ATC LOGON", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddBoeingTelexLabel(page, "STATION CODE", leftX, 54, 150, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, suggestedCode, leftX + 130, 50, 92, 8);
+            AddBoeingTelexLabel(page, "ENTER OR EDIT CPDLC LOGON CODE", leftX, 92, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, Color.FromArgb(155, color), hintFont);
+
+            string detected = (cpdlcDiscoveryLogonCode ?? string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(detected))
+            {
+                AddBoeingTelexLabel(page, "DETECTED " + detected, leftX, 118, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, DcduTheme.Green, hintFont);
+            }
+
+            AddBoeingTelexSendPrompt(page);
+            UpdateBoeingTelexSendState();
+        }
+
+        private async Task SendBoeingAtcLogonRequestAsync()
+        {
+            string station = GetBoeingTelexInput(BoeingTelexInputStation);
+
+            if (station.Length < 3)
+            {
+                WriteMessage("CPDLC LOGON NOT READY: ENTER STATION CODE", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            CloseBoeingTelexPages();
+            await SendCpdlcLogonRequestAsync(station, false);
         }
 
 
@@ -12563,11 +13840,14 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             int rightLabelX = page.Width - 166;
             int rightFieldX = page.Width - 112;
             int fieldHeight = 24;
+            string departure = AirbusAocDeparture();
+            string arrival = AirbusAocArrival();
+            string atisLetter = GetBestDepartureAtisLetter(departure);
 
             AddBoeingTelexLabel(page, "PRE DEP CLEARANCE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, valueColor, titleFont);
 
             AddBoeingTelexLabel(page, "ORIG/DEST", leftX, 34, 126, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddBoeingTelexLabel(page, AirbusAocDeparture() + "/" + AirbusAocArrival(), leftX, 52, 160, 24, ContentAlignment.MiddleLeft, valueColor, valueFont);
+            AddBoeingTelexLabel(page, departure + "/" + arrival, leftX, 52, 160, 24, ContentAlignment.MiddleLeft, valueColor, valueFont);
 
             AddBoeingTelexLabel(page, "ATC CALLSIGN", rightLabelX, 34, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
             AddBoeingTelexLabel(page, AirbusAocCallsign(), rightLabelX, 52, 150, 24, ContentAlignment.MiddleRight, valueColor, valueFont);
@@ -12576,13 +13856,13 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             AddBoeingTelexTextBox(page, BoeingAtcInputGate, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingAtcInputGate, string.Empty), leftX, 101, 90, 6, false, fieldHeight);
 
             AddBoeingTelexLabel(page, "ATIS ID", rightLabelX, 82, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
-            AddBoeingTelexTextBox(page, BoeingAtcInputAtis, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingAtcInputAtis, string.Empty), page.Width - 78, 101, 54, 1, false, fieldHeight);
+            AddBoeingTelexTextBox(page, BoeingAtcInputAtis, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingAtcInputAtis, atisLetter), page.Width - 78, 101, 54, 1, false, fieldHeight);
 
             AddBoeingTelexLabel(page, "A/C TYPE", leftX, 132, 120, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
             AddBoeingTelexLabel(page, AirbusAocAircraft(), leftX, 150, 130, 24, ContentAlignment.MiddleLeft, valueColor, valueFont);
 
             AddBoeingTelexLabel(page, "STATION", rightLabelX, 132, 150, 18, ContentAlignment.MiddleRight, labelColor, captionFont);
-            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingTelexInputStation, AirbusAocDeparture()), rightFieldX, 151, 88, 8, false, fieldHeight);
+            AddBoeingTelexTextBox(page, BoeingTelexInputStation, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingTelexInputStation, departure), rightFieldX, 151, 88, 8, false, fieldHeight);
 
             AddBoeingTelexLabel(page, "OPTIONAL FREE TEXT", leftX, 178, page.Width - 48, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
             AddBoeingTelexTextBox(page, BoeingAtcInputFreeText, GetStoredBoeingTelexInput(BoeingTelexPage.AtcPreDepClearance, BoeingAtcInputFreeText, string.Empty), leftX, 197, page.Width - 48, 160, true, 24);
@@ -12922,12 +14202,100 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             _ = SendBoeingTelexPendingRequestAsync();
         }
 
+        private static string FormatBoeingAtisInlineWarning(string warning)
+        {
+            string clean = (warning ?? string.Empty)
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Trim()
+                .ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return string.Empty;
+            }
+
+            Match splitMatch = Regex.Match(clean, @"ATIS\s+SPLIT\s+AVAILABLE\s+FOR\s+([A-Z0-9]{4})");
+            if (splitMatch.Success)
+            {
+                string station = splitMatch.Groups[1].Value.Trim().ToUpperInvariant();
+                return "ATIS SPLIT AVAILABLE\n" +
+                       station + " HAS ARR / DEP ATIS\n" +
+                       "SELECT ARR OR DEP";
+            }
+
+            clean = clean.Replace(". SELECT ", ".\nSELECT ");
+            clean = clean.Replace(". GENERIC ", ".\nGENERIC ");
+            clean = clean.Replace(". ", ".\n");
+            return clean;
+        }
+
+        private void ShowBoeingTelexAtisInlineWarning(string warning)
+        {
+            try
+            {
+                if (messageFormatPanel == null || messageFormatPanel.IsDisposed)
+                {
+                    return;
+                }
+
+                Control root = messageFormatPanel.Controls.Count > 0 ? messageFormatPanel.Controls[0] : messageFormatPanel;
+                string name = "boeingTelexAtisInlineWarning";
+
+                foreach (Control existing in root.Controls.Cast<Control>().Where(control => string.Equals(control.Name, name, StringComparison.Ordinal)).ToArray())
+                {
+                    root.Controls.Remove(existing);
+                    existing.Dispose();
+                }
+
+                string text = FormatBoeingAtisInlineWarning(warning);
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    return;
+                }
+
+                Font warningFont = CreateDpiStablePointFont("Consolas", 8.2f, FontStyle.Bold);
+                int warningY = 146;
+                int warningHeight = Math.Min(74, Math.Max(50, BoeingTelexActionY(root) - warningY - 8));
+
+                System.Windows.Forms.Label label = new()
+                {
+                    Name = name,
+                    AutoSize = false,
+                    BackColor = Color.FromArgb(3, 8, 15),
+                    ForeColor = DcduTheme.Amber,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Font = warningFont,
+                    Text = text,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Location = new Point(18, warningY),
+                    Size = new Size(Math.Max(1, root.Width - 36), Math.Max(1, warningHeight)),
+                    Padding = new Padding(6, 0, 4, 0)
+                };
+
+                root.Controls.Add(label);
+                label.BringToFront();
+                root.Invalidate();
+            }
+            catch
+            {
+                // Inline warning is cosmetic; keep the form usable.
+            }
+        }
+
         private void ShowBoeingTelexInfoConfirm(bool atis)
         {
             UpdateBoeingTelexSendState();
             if (!boeingTelexSendReady)
             {
-                WriteMessage("TELEX SEND NOT READY: ENTER STATION", "SYSTEM", "SYSTEM");
+                if (atis)
+                {
+                    ShowBoeingTelexAtisInlineWarning("ATIS REQUEST NOT READY. ENTER STATION.");
+                }
+                else
+                {
+                    WriteMessage("TELEX SEND NOT READY: ENTER STATION", "SYSTEM", "SYSTEM");
+                }
                 return;
             }
 
@@ -12957,7 +14325,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             if (!TryResolveAtisRequestTarget(station, selectedType, out string atisRequestIdentifier, out string warning))
             {
-                WriteMessage(warning, "SYSTEM", "SYSTEM");
+                ShowBoeingTelexAtisInlineWarning(warning);
                 return;
             }
 
@@ -13321,11 +14689,29 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
             foreach (Control control in mainControlsToFront)
             {
-                if (control != null && !control.IsDisposed && control.Visible)
+                if (control != null && !control.IsDisposed)
                 {
-                    control.BringToFront();
+                    control.Enabled = true;
+
+                    if (control != outputScrollBar)
+                    {
+                        control.Visible = true;
+                    }
+
+                    if (control.Visible)
+                    {
+                        control.BringToFront();
+                    }
                 }
             }
+
+            UpdateOnlineStatusLabel();
+            UpdateCurrentAtcUnitDisplay();
+            UpdateCallsignDisplay();
+            UpdateFlightPhaseBadge();
+            UpdateSmartStatusLabelColors();
+            UpdateClearanceStatusLabel();
+            RefreshVisibleMessageColors();
 
             screenPanel?.PerformLayout();
             screenPanel?.Invalidate(true);
@@ -13373,10 +14759,10 @@ airbusAocSendLabel = null;
             messageFormatPanel.BringToFront();
             // Use the Airbus LCD area with a small bezel-safe inset.
             // Text too close to the mask gets clipped on the left/top edges.
-            messageFormatPanel.Location = new Point(12, 10);
-            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - 24), Math.Max(1, screenPanel.Height - 20));
-            messageFormatPanel.Padding = new Padding(0);
-            messageFormatPanel.Margin = new Padding(0);
+            messageFormatPanel.Location = SP(new Point(12, 10));
+            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - S(24)), Math.Max(1, screenPanel.Height - S(20)));
+            messageFormatPanel.Padding = SPad(new Padding(0));
+            messageFormatPanel.Margin = SPad(new Padding(0));
             messageFormatPanel.AutoScroll = false;
             messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
             messageFormatPanel.WrapContents = false;
@@ -13445,7 +14831,8 @@ airbusAocSendLabel = null;
             // this lines the captions up with the centres of the left hardware keys.
             int[] preferred = { 20, 62, 104, 146, 196 };
             int i = Math.Max(0, Math.Min(index - 1, preferred.Length - 1));
-            return Math.Min(preferred[i], Math.Max(0, parent.Height - 34));
+            int baseHeight = BaseLogicalHeight(parent);
+            return Math.Min(preferred[i], Math.Max(0, (baseHeight > 0 ? baseHeight : parent.Height) - 34));
         }
 
         private int AirbusAocRightLskTextY(Control parent, int index)
@@ -13453,7 +14840,8 @@ airbusAocSendLabel = null;
             // Right hand keys sit slightly lower in the artwork, so keep a separate table.
             int[] preferred = { 20, 62, 104, 146, 196 };
             int i = Math.Max(0, Math.Min(index - 1, preferred.Length - 1));
-            return Math.Min(preferred[i], Math.Max(0, parent.Height - 34));
+            int baseHeight = BaseLogicalHeight(parent);
+            return Math.Min(preferred[i], Math.Max(0, (baseHeight > 0 ? baseHeight : parent.Height) - 34));
         }
 
         private int AirbusAocActionY(Control parent)
@@ -13500,48 +14888,52 @@ airbusAocSendLabel = null;
                 Font = font ?? AirbusAocMenuFont(),
                 Text = text ?? string.Empty,
                 TextAlign = alignment,
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                Margin = new Padding(0),
-                Padding = new Padding(0)
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, height)),
+                Size = new Size(ScaleChildWidth(parent, x, width), ScaleChildHeight(parent, y, height)),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0))
             };
             parent.Controls.Add(label);
             return label;
         }
 
-        private void AddAirbusAocRule(Control parent, int y, int x = 0, int width = -1)
+                private void AddAirbusAocRule(Control parent, int y, int x = 0, int width = -1)
         {
+            int logicalWidth = width < 0
+                ? Math.Max(1, BaseLogicalClientWidth(parent) - x)
+                : Math.Max(1, width);
+
             Panel rule = new()
             {
                 BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(width < 0 ? Math.Max(1, parent.Width - x) : Math.Max(1, width), 2),
-                Margin = new Padding(0),
-                Padding = new Padding(0),
+                Location = new Point(ScaleChildX(parent, x, logicalWidth), ScaleChildY(parent, y, 2)),
+                Size = new Size(ScaleChildWidth(parent, x, logicalWidth), Math.Max(1, S(2))),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0)),
                 Enabled = false
             };
             rule.Paint += (_, e) =>
             {
-                using Pen pen = new Pen(Color.FromArgb(155, MainPrimaryTextColor()), 1.0f);
+                using Pen pen = new Pen(Color.FromArgb(155, MainPrimaryTextColor()), Math.Max(1.0f, ScaleUi(1.0f)));
                 e.Graphics.DrawLine(pen, 0, 0, Math.Max(1, rule.Width - 1), 0);
             };
             parent.Controls.Add(rule);
         }
 
-        private void AddAirbusAocVerticalRule(Control parent, int x, int y, int height)
+                private void AddAirbusAocVerticalRule(Control parent, int x, int y, int height)
         {
             Panel rule = new()
             {
                 BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(2, Math.Max(1, height)),
-                Margin = new Padding(0),
-                Padding = new Padding(0),
+                Location = new Point(ScaleChildX(parent, x, 2), ScaleChildY(parent, y, height)),
+                Size = new Size(Math.Max(1, S(2)), ScaleChildHeight(parent, y, Math.Max(1, height))),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0)),
                 Enabled = false
             };
             rule.Paint += (_, e) =>
             {
-                using Pen pen = new Pen(Color.FromArgb(165, MainPrimaryTextColor()), 1.0f);
+                using Pen pen = new Pen(Color.FromArgb(165, MainPrimaryTextColor()), Math.Max(1.0f, ScaleUi(1.0f)));
                 e.Graphics.DrawLine(pen, 0, 0, 0, Math.Max(1, rule.Height - 1));
             };
             parent.Controls.Add(rule);
@@ -13587,10 +14979,10 @@ airbusAocSendLabel = null;
             Panel frame = new()
             {
                 BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                Margin = new Padding(0),
-                Padding = new Padding(0),
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, height)),
+                Size = new Size(ScaleChildWidth(parent, x, width), ScaleChildHeight(parent, y, height)),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0)),
                 Cursor = Cursors.IBeam
             };
 
@@ -13602,8 +14994,8 @@ airbusAocSendLabel = null;
                 BorderStyle = BorderStyle.None,
                 CharacterCasing = CharacterCasing.Upper,
                 Font = AirbusAocInputFont(multiline),
-                Location = multiline ? new Point(4, 4) : new Point(2, 2),
-                Size = multiline ? new Size(Math.Max(1, width - 8), Math.Max(1, height - 8)) : new Size(1, 1),
+                Location = multiline ? SP(new Point(4, 4)) : SP(new Point(2, 2)),
+                Size = multiline ? new Size(Math.Max(1, ScaleChildWidth(parent, x, width) - S(8)), Math.Max(1, ScaleChildHeight(parent, y, height) - S(8))) : SS(new Size(1, 1)),
                 MaxLength = maxLength,
                 Text = text ?? string.Empty,
                 Multiline = multiline,
@@ -13611,7 +15003,7 @@ airbusAocSendLabel = null;
                 ScrollBars = ScrollBars.None
             };
 
-            int emptyFrameWidth = width;
+            int emptyFrameWidth = frame.Width;
             bool caretVisible = false;
             System.Windows.Forms.Timer compactCaretTimer = null;
 
@@ -13680,9 +15072,9 @@ airbusAocSendLabel = null;
                     return;
                 }
 
-                int caretX = Math.Max(1, Math.Min(frame.Width - 2, x));
-                using Pen caretPen = new Pen(DcduTheme.Cyan, 1.0f);
-                graphics.DrawLine(caretPen, caretX, 3, caretX, frame.Height - 4);
+                int caretX = Math.Max(S(1), Math.Min(frame.Width - S(2), x));
+                using Pen caretPen = new Pen(DcduTheme.Cyan, Math.Max(1.0f, ScaleUi(1.0f)));
+                graphics.DrawLine(caretPen, caretX, S(3), caretX, frame.Height - S(4));
             }
 
             void SyncCompactTextBoxDisplay()
@@ -13696,8 +15088,8 @@ airbusAocSendLabel = null;
                 bool hasValue = value.Length > 0;
                 if (hasValue)
                 {
-                    int measured = TextRenderer.MeasureText(value, box.Font, Size.Empty, TextFormatFlags.NoPadding).Width + 6;
-                    int maxAvailable = Math.Max(emptyFrameWidth, parent.ClientSize.Width - frame.Left - 4);
+                    int measured = TextRenderer.MeasureText(value, box.Font, Size.Empty, TextFormatFlags.NoPadding).Width + S(6);
+                    int maxAvailable = Math.Max(emptyFrameWidth, parent.ClientSize.Width - frame.Left - S(4));
                     frame.Width = Math.Max(emptyFrameWidth, Math.Min(measured, maxAvailable));
                 }
                 else
@@ -13707,8 +15099,8 @@ airbusAocSendLabel = null;
 
                 // Keep the real WinForms TextBox offscreen and use it only for keyboard input.
                 // The visible value is painted manually, which avoids the dark-blue rectangle.
-                box.Location = new Point(-80, -80);
-                box.Size = new Size(1, 1);
+                box.Location = SP(new Point(-80, -80));
+                box.Size = SS(new Size(1, 1));
                 box.TextAlign = HorizontalAlignment.Left;
             }
 
@@ -13728,7 +15120,7 @@ airbusAocSendLabel = null;
 
                 if (hasValue)
                 {
-                    Rectangle textRect = new Rectangle(0, -1, Math.Max(1, frame.Width + 2), frame.Height + 2);
+                    Rectangle textRect = new Rectangle(0, -S(1), Math.Max(1, frame.Width + S(2)), frame.Height + S(2));
                     TextFormatFlags flags =
                         TextFormatFlags.Left |
                         TextFormatFlags.VerticalCenter |
@@ -13741,7 +15133,7 @@ airbusAocSendLabel = null;
                         e.Graphics,
                         value,
                         box.Font,
-                        new Rectangle(textRect.Left + 1, textRect.Top + 1, textRect.Width, textRect.Height),
+                        new Rectangle(textRect.Left + S(1), textRect.Top + S(1), textRect.Width, textRect.Height),
                         Color.FromArgb(8, 16, 22),
                         flags);
 
@@ -13758,7 +15150,7 @@ airbusAocSendLabel = null;
                         value,
                         box.Font,
                         Size.Empty,
-                        TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + 2;
+                        TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + S(2);
                     DrawCompactCaret(e.Graphics, caretX);
 
                     return;
@@ -13767,15 +15159,15 @@ airbusAocSendLabel = null;
                 // Empty Airbus entry fields show the amber slot boxes as prompts.
                 e.Graphics.DrawRectangle(border, bounds);
                 float slotWidth = frame.Width / (float)Math.Max(1, maxLength);
-                using Pen slotPen = new Pen(Color.FromArgb(176, frameColor), 1.0f);
+                using Pen slotPen = new Pen(Color.FromArgb(176, frameColor), Math.Max(1.0f, ScaleUi(1.0f)));
                 for (int i = 1; i < maxLength; i++)
                 {
                     int sx = (int)Math.Round(slotWidth * i);
-                    e.Graphics.DrawLine(slotPen, sx, 2, sx, frame.Height - 3);
+                    e.Graphics.DrawLine(slotPen, sx, S(2), sx, frame.Height - S(3));
                 }
 
                 // No focus rectangle here: real Airbus DCDU amber slots do not show a blue selection box.
-                DrawCompactCaret(e.Graphics, 2);
+                DrawCompactCaret(e.Graphics, S(2));
             };
 
             box.TextChanged += (_, __) =>
@@ -13860,7 +15252,7 @@ airbusAocSendLabel = null;
 
 
 
-        private System.Windows.Forms.Label AddAirbusAocCycleBox(Control parent, AirbusAocPage pageKey, string key, string[] items, string selectedItem, int x, int y, int width)
+                private System.Windows.Forms.Label AddAirbusAocCycleBox(Control parent, AirbusAocPage pageKey, string key, string[] items, string selectedItem, int x, int y, int width)
         {
             if (items == null || items.Length == 0)
             {
@@ -13870,13 +15262,25 @@ airbusAocSendLabel = null;
             string selected = items.FirstOrDefault(item => string.Equals(item, selectedItem, StringComparison.OrdinalIgnoreCase)) ?? items[0];
             SetStoredAirbusAocInput(pageKey, key, selected);
 
+            int fieldHeight = 20;
+            Font valueFont = AirbusAocInputFont(false);
+            int measuredMaxItemWidth = items
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => TextRenderer.MeasureText(item.Trim().ToUpperInvariant(), valueFont, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width)
+                .DefaultIfEmpty(0)
+                .Max();
+
+            int scaledFieldWidth = Math.Max(
+                ScaleChildWidth(parent, x, width),
+                Math.Max(S(58), measuredMaxItemWidth + S(14)));
+
             Panel frame = new()
             {
                 BackColor = Color.Transparent,
-                Location = new Point(x, y),
-                Size = new Size(width, 20),
-                Margin = new Padding(0),
-                Padding = new Padding(0),
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, fieldHeight)),
+                Size = new Size(scaledFieldWidth, ScaleChildHeight(parent, y, fieldHeight)),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0)),
                 Cursor = Cursors.Hand
             };
 
@@ -13885,12 +15289,12 @@ airbusAocSendLabel = null;
                 AutoSize = false,
                 BackColor = Color.FromArgb(2, 8, 20),
                 ForeColor = DcduTheme.Cyan,
-                Font = AirbusAocInputFont(false),
+                Font = valueFont,
                 Text = selected,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(2, 1),
-                Size = new Size(Math.Max(1, width - 4), 18),
-                Padding = new Padding(2, 0, 2, 0),
+                Location = SP(new Point(2, 1)),
+                Size = new Size(Math.Max(1, frame.Width - S(4)), Math.Max(1, frame.Height - S(2))),
+                Padding = SPad(new Padding(2, 0, 2, 0)),
                 Cursor = Cursors.Hand
             };
 
@@ -13914,7 +15318,7 @@ airbusAocSendLabel = null;
             frame.Paint += (_, e) =>
             {
                 Rectangle bounds = new Rectangle(0, 0, Math.Max(1, frame.Width - 1), Math.Max(1, frame.Height - 1));
-                using Pen border = new Pen(DcduTheme.Amber, 1.0f);
+                using Pen border = new Pen(DcduTheme.Amber, Math.Max(1.0f, ScaleUi(1.0f)));
                 e.Graphics.DrawRectangle(border, bounds);
             };
 
@@ -14032,6 +15436,7 @@ airbusAocSendLabel = null;
             AddAirbusAocLabel(page, "VERT REQ>", rightMenuX, AirbusAocRightLskTextY(page, 1), 202, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
             AddAirbusAocLabel(page, "<WHEN CAN WE", leftMenuX, AirbusAocLskTextY(page, 2), 250, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
             AddAirbusAocLabel(page, "OTHER REQ>", rightMenuX, AirbusAocRightLskTextY(page, 2), 202, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<CONNECTIONS", leftMenuX, AirbusAocLskTextY(page, 3), 250, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
             AddAirbusAocLabel(page, "<RETURN", leftMenuX, AirbusAocLskTextY(page, 5), 190, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
         }
 
@@ -14052,6 +15457,10 @@ airbusAocSendLabel = null;
             else if (rightSide && index == 2)
             {
                 ShowAirbusAtcSpeedRequest();
+            }
+            else if (!rightSide && index == 3)
+            {
+                ShowAirbusAtcConnectionMenu();
             }
             else if (!rightSide && index == 5)
             {
@@ -14115,6 +15524,99 @@ airbusAocSendLabel = null;
             AddAirbusAocTextBox(page, AirbusAocInputRemarks, GetStoredAirbusAocInput(pageKey, AirbusAocInputRemarks, string.Empty), x, y + 18, width, 160, true, height);
         }
 
+        private void ShowAirbusAtcConnectionMenu()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcConnectionMenu);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font menuFont = AirbusAocMenuFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            int leftMenuX = 8;
+            string currentUnit = (CurrentATCUnit ?? string.Empty).Trim().ToUpperInvariant();
+            string detectedCode = (cpdlcDiscoveryLogonCode ?? string.Empty).Trim().ToUpperInvariant();
+
+            AddAirbusAocLabel(page, "ATC CONNECTIONS", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+
+            if (!string.IsNullOrWhiteSpace(currentUnit))
+            {
+                AddAirbusAocLabel(page, "<LOGOFF " + currentUnit, leftMenuX, AirbusAocLskTextY(page, 1), 300, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+                AddAirbusAocLabel(page, "CONNECTED TO " + currentUnit, 20, 92, page.Width - 40, 20, ContentAlignment.MiddleLeft, DcduTheme.Green, captionFont);
+            }
+            else
+            {
+                AddAirbusAocLabel(page, "<LOGON", leftMenuX, AirbusAocLskTextY(page, 1), 300, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+
+                string status = string.IsNullOrWhiteSpace(detectedCode)
+                    ? "NO CPDLC LOGON CANDIDATE"
+                    : "DETECTED LOGON " + detectedCode;
+                AddAirbusAocLabel(page, status, 20, 92, page.Width - 40, 20, ContentAlignment.MiddleLeft, string.IsNullOrWhiteSpace(detectedCode) ? DcduTheme.Amber : DcduTheme.Green, captionFont);
+            }
+
+            AddAirbusAocLabel(page, "<ATC MENU", leftMenuX, AirbusAocLskTextY(page, 5), 210, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+        }
+
+        private string GetSuggestedCpdlcLogonCode()
+        {
+            string detected = (cpdlcDiscoveryLogonCode ?? string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(detected))
+            {
+                return detected;
+            }
+
+            string current = (CurrentATCUnit ?? string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                return current;
+            }
+
+            string pending = (pendingLogon ?? string.Empty).Trim().ToUpperInvariant();
+            return pending;
+        }
+
+        private void ShowAirbusAtcLogonRequest()
+        {
+            PrepareAirbusAocPage(AirbusAocPage.AtcLogonRequest);
+            Panel page = CreateAirbusAocCanvas();
+            Font titleFont = AirbusAocTitleFont();
+            Font captionFont = AirbusAocCaptionFont();
+            Font hintFont = AirbusAocCaptionFont();
+            Color labelColor = MainPrimaryTextColor();
+
+            int leftX = 22;
+            int rightEdge = page.Width - 22;
+            string suggestedCode = GetStoredAirbusAocInput(AirbusAocPage.AtcLogonRequest, AirbusAocInputStation, GetSuggestedCpdlcLogonCode());
+
+            AddAirbusAocLabel(page, "ATC LOGON", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
+            AddAirbusAocLabel(page, "STATION CODE", leftX, 44, 180, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
+            AddAirbusAocTextBox(page, AirbusAocInputStation, suggestedCode, leftX, 64, 76, 8);
+            AddAirbusAocLabel(page, "ENTER OR EDIT CPDLC LOGON CODE", leftX, 104, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, Color.FromArgb(165, labelColor), hintFont);
+
+            string detected = (cpdlcDiscoveryLogonCode ?? string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(detected))
+            {
+                AddAirbusAocLabel(page, "DETECTED " + detected, leftX, 128, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, DcduTheme.Green, hintFont);
+            }
+
+            AddAirbusAtcBottomActions(page, "<CONNECTIONS");
+            UpdateAirbusAocSendState();
+        }
+
+        private async Task SendAirbusAtcLogonRequestAsync()
+        {
+            string station = GetAirbusAocInput(AirbusAocInputStation);
+
+            if (station.Length < 3)
+            {
+                WriteMessage("CPDLC LOGON NOT READY: ENTER STATION CODE", "SYSTEM", "SYSTEM");
+                return;
+            }
+
+            CloseAirbusAocPages();
+            await SendCpdlcLogonRequestAsync(station, false);
+        }
+
         private void ShowAirbusAtcDirectRequest()
         {
             PrepareAirbusAocPage(AirbusAocPage.AtcDirectRequest);
@@ -14129,11 +15631,11 @@ airbusAocSendLabel = null;
             AddAirbusAtcRecipientField(page, AirbusAocPage.AtcDirectRequest, leftX, 38);
 
             AddAirbusAocLabel(page, "DIRECT TO", leftX + 150, 38, 120, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddAirbusAocTextBox(page, AirbusAocInputDirectTo, GetStoredAirbusAocInput(AirbusAocPage.AtcDirectRequest, AirbusAocInputDirectTo, string.Empty), leftX + 150, 56, 58, 7);
+            AddAirbusAocTextBox(page, AirbusAocInputDirectTo, GetStoredAirbusAocInput(AirbusAocPage.AtcDirectRequest, AirbusAocInputDirectTo, string.Empty), leftX + 150, 60, 58, 7);
 
             AddAirbusAocLabel(page, "DUE TO", leftX, 88, 90, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddAirbusAocCycleBox(page, AirbusAocPage.AtcDirectRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcDirectRequest, AirbusAocInputDueReason, "NONE"), leftX, 106, 48);
-            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 64, 106, 250, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcDirectRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcDirectRequest, AirbusAocInputDueReason, "NONE"), leftX, 110, 48);
+            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 82, 110, 280, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
 
             AddAirbusAtcRemarksField(page, AirbusAocPage.AtcDirectRequest, leftX, 134, rightEdge - leftX, Math.Max(34, AirbusAocActionY(page) - 156));
             AddAirbusAtcBottomActions(page);
@@ -14155,11 +15657,11 @@ airbusAocSendLabel = null;
             AddAirbusAtcRecipientField(page, AirbusAocPage.AtcLevelRequest, leftX, 38);
 
             AddAirbusAocLabel(page, "REQUESTED FL", leftX + 150, 38, 140, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddAirbusAocTextBox(page, AirbusAocInputRequestedFlightLevel, GetStoredAirbusAocInput(AirbusAocPage.AtcLevelRequest, AirbusAocInputRequestedFlightLevel, string.Empty), leftX + 150, 56, 26, 3);
+            AddAirbusAocTextBox(page, AirbusAocInputRequestedFlightLevel, GetStoredAirbusAocInput(AirbusAocPage.AtcLevelRequest, AirbusAocInputRequestedFlightLevel, string.Empty), leftX + 150, 60, 26, 3);
 
             AddAirbusAocLabel(page, "DUE TO", leftX, 88, 90, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddAirbusAocCycleBox(page, AirbusAocPage.AtcLevelRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcLevelRequest, AirbusAocInputDueReason, "NONE"), leftX, 106, 48);
-            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 64, 106, 250, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcLevelRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcLevelRequest, AirbusAocInputDueReason, "NONE"), leftX, 110, 48);
+            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 82, 110, 280, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
 
             AddAirbusAtcRemarksField(page, AirbusAocPage.AtcLevelRequest, leftX, 134, rightEdge - leftX, Math.Max(34, AirbusAocActionY(page) - 156));
             AddAirbusAtcBottomActions(page);
@@ -14181,13 +15683,13 @@ airbusAocSendLabel = null;
             AddAirbusAtcRecipientField(page, AirbusAocPage.AtcSpeedRequest, leftX, 38);
 
             AddAirbusAocLabel(page, "MODE", leftX + 150, 38, 70, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddAirbusAocCycleBox(page, AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedMode, new[] { "MACH", "SPEED" }, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedMode, "SPEED"), leftX + 150, 56, 58);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedMode, new[] { "MACH", "SPEED" }, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedMode, "SPEED"), leftX + 150, 60, 58);
             AddAirbusAocLabel(page, "VALUE", leftX + 230, 38, 70, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddAirbusAocTextBox(page, AirbusAocInputSpeedValue, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedValue, string.Empty), leftX + 230, 56, 30, 3);
+            AddAirbusAocTextBox(page, AirbusAocInputSpeedValue, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputSpeedValue, string.Empty), leftX + 230, 60, 30, 3);
 
             AddAirbusAocLabel(page, "DUE TO", leftX, 88, 90, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-            AddAirbusAocCycleBox(page, AirbusAocPage.AtcSpeedRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputDueReason, "NONE"), leftX, 106, 48);
-            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 64, 106, 250, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddAirbusAocCycleBox(page, AirbusAocPage.AtcSpeedRequest, AirbusAocInputDueReason, new[] { "NONE", "WX", "A/C" }, GetStoredAirbusAocInput(AirbusAocPage.AtcSpeedRequest, AirbusAocInputDueReason, "NONE"), leftX, 110, 48);
+            AddAirbusAocLabel(page, "NONE / WX / A/C PERF", leftX + 82, 110, 280, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
 
             AddAirbusAtcRemarksField(page, AirbusAocPage.AtcSpeedRequest, leftX, 134, rightEdge - leftX, Math.Max(34, AirbusAocActionY(page) - 156));
             AddAirbusAtcBottomActions(page);
@@ -14213,16 +15715,16 @@ airbusAocSendLabel = null;
             AddAirbusAocCycleBox(page, AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwType,
                 new[] { "HIGHER", "LOWER", "BACK ROUTE", "CLIMB", "DESCENT", "MACH", "SPEED", "DIRECT" },
                 selectedWcwType,
-                leftX + 150, 56, 88);
+                leftX + 150, 60, 88);
 
             bool wcwNeedsValue = AirbusAtcWhenCanWeNeedsValue(selectedWcwType);
-            int remarksY = wcwNeedsValue ? 122 : 98;
-            int remarksBottomOffset = wcwNeedsValue ? 144 : 120;
+            int remarksY = wcwNeedsValue ? 122 : 116;
+            int remarksBottomOffset = wcwNeedsValue ? 144 : 138;
 
             if (wcwNeedsValue)
             {
                 AddAirbusAocLabel(page, "VALUE", leftX + 260, 38, 70, 18, ContentAlignment.MiddleLeft, labelColor, captionFont);
-                AddAirbusAocTextBox(page, AirbusAocInputWcwValue, GetStoredAirbusAocInput(AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwValue, string.Empty), leftX + 260, 56, 58, 7);
+                AddAirbusAocTextBox(page, AirbusAocInputWcwValue, GetStoredAirbusAocInput(AirbusAocPage.AtcWhenCanWeRequest, AirbusAocInputWcwValue, string.Empty), leftX + 260, 60, 58, 7);
                 AddAirbusAocLabel(page, "VALUE FOR CLIMB / DESCENT / MACH / SPEED / DIRECT", leftX, 92, rightEdge - leftX, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
             }
             else
@@ -14378,7 +15880,29 @@ airbusAocSendLabel = null;
         private void HandleAirbusAtcWhenCanWeMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
         private void HandleAirbusAtcOtherMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
         private void HandleAirbusAtcReportsMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
-        private void HandleAirbusAtcConnectionMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
+        private void HandleAirbusAtcConnectionMenuLineSelect(bool rightSide, int index)
+        {
+            if (rightSide)
+            {
+                return;
+            }
+
+            if (index == 1)
+            {
+                if (!string.IsNullOrWhiteSpace(CurrentATCUnit))
+                {
+                    _ = ExecuteCpdlcLogoffFromEmbeddedMenuAsync();
+                }
+                else
+                {
+                    ShowAirbusAtcLogonRequest();
+                }
+            }
+            else if (index == 5)
+            {
+                ShowAirbusAtcMainMenu();
+            }
+        }
         private void HandleAirbusAtcEmergencyMenuLineSelect(bool rightSide, int index) { ShowAirbusAtcMainMenu(); }
 
         private void ShowAirbusAocMainMenu()
@@ -14535,8 +16059,8 @@ airbusAocSendLabel = null;
 
             int leftX = 28;
             int rightEdge = page.Width - 28;
-            int labelY = 48;
-            int boxY = 64;
+            int labelY = 46;
+            int boxY = 68;
 
             AddAirbusAocLabel(page, atis ? "AOC ATIS REQUEST" : "AOC WX REQUEST", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, labelColor, titleFont);
             AddAirbusAocLabel(page, "STATION", leftX, labelY, 110, 16, ContentAlignment.MiddleLeft, labelColor, captionFont);
@@ -14682,6 +16206,9 @@ airbusAocSendLabel = null;
                 case AirbusAocPage.AtisRequest:
                     return GetAirbusAocInput(AirbusAocInputStation).Length >= 4;
 
+                case AirbusAocPage.AtcLogonRequest:
+                    return GetAirbusAocInput(AirbusAocInputStation).Length >= 3;
+
                 case AirbusAocPage.FreeTextRequest:
                 case AirbusAocPage.AtcTextRequest:
                     return GetAirbusAocInput(AirbusAocInputStation).Length >= 4 &&
@@ -14789,12 +16316,71 @@ airbusAocSendLabel = null;
             ShowAirbusAocSendConfirmPage();
         }
 
+        private void ShowAirbusAocAtisInlineWarning(string warning)
+        {
+            try
+            {
+                if (messageFormatPanel == null || messageFormatPanel.IsDisposed)
+                {
+                    return;
+                }
+
+                Control root = messageFormatPanel.Controls.Count > 0 ? messageFormatPanel.Controls[0] : messageFormatPanel;
+                string name = "airbusAocAtisInlineWarning";
+
+                foreach (Control existing in root.Controls.Cast<Control>().Where(control => string.Equals(control.Name, name, StringComparison.Ordinal)).ToArray())
+                {
+                    root.Controls.Remove(existing);
+                    existing.Dispose();
+                }
+
+                string text = FormatAtisInlineWarning(warning);
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    return;
+                }
+
+                Font warningFont = CreateDpiStablePointFont("Consolas", 8.8f, FontStyle.Bold);
+                int warningY = 132;
+                int warningHeight = Math.Min(92, Math.Max(48, AirbusAocActionY(root) - warningY - 18));
+
+                System.Windows.Forms.Label label = new()
+                {
+                    Name = name,
+                    AutoSize = false,
+                    BackColor = Color.Transparent,
+                    ForeColor = DcduTheme.Amber,
+                    Font = warningFont,
+                    Text = WrapAirbusAocPreviewText(text, 44),
+                    TextAlign = ContentAlignment.TopLeft,
+                    Location = new Point(28, warningY),
+                    Size = new Size(Math.Max(1, root.Width - 56), Math.Max(1, warningHeight)),
+                    Padding = new Padding(0)
+                };
+
+                root.Controls.Add(label);
+                label.BringToFront();
+                root.Invalidate();
+            }
+            catch
+            {
+                // Inline warning is cosmetic; keep the form usable.
+            }
+        }
+
         private void ShowAirbusAocWeatherConfirm(bool atis)
         {
             UpdateAirbusAocSendState();
             if (!airbusAocSendReady)
             {
-                WriteMessage("AOC SEND NOT READY: ENTER STATION", "SYSTEM", "SYSTEM");
+                if (atis)
+                {
+                    ShowAirbusAocAtisInlineWarning("ATIS REQUEST NOT READY. ENTER STATION.");
+                }
+                else
+                {
+                    WriteMessage("AOC SEND NOT READY: ENTER STATION", "SYSTEM", "SYSTEM");
+                }
                 return;
             }
 
@@ -14830,7 +16416,7 @@ airbusAocSendLabel = null;
 
             if (!TryResolveAtisRequestTarget(station, selectedType, out string atisRequestIdentifier, out string warning))
             {
-                WriteMessage(warning, "SYSTEM", "SYSTEM");
+                ShowAirbusAocAtisInlineWarning(warning);
                 return;
             }
 
@@ -15179,12 +16765,12 @@ airbusAocSendLabel = null;
         private void UpdateMainFrameButtonHotspots(bool isBoeing)
         {
             mainMinimizeButton.Bounds = isBoeing
-                ? new Rectangle(562, 379, 54, 28)
-                : new Rectangle(514, 314, 36, 23);
+                ? SR(new Rectangle(562, 379, 54, 28))
+                : SR(new Rectangle(514, 314, 36, 23));
 
             mainReloadFlightPlanButton.Bounds = isBoeing
-                ? new Rectangle(166, 379, 55, 28)
-                : new Rectangle(311, 318, 48, 20);
+                ? SR(new Rectangle(166, 379, 55, 28))
+                : SR(new Rectangle(311, 318, 48, 20));
         }
 
         private async void ReloadFlightPlanButton_Click(object sender, EventArgs e)
@@ -15352,6 +16938,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 flightPhaseArrivalSeen = false;
                 flightPhaseDepartureSeen = false;
                 lastFlightPhaseSignature = string.Empty;
+                ResetFlightPhaseTrendTracking();
                 arrivalReloadReminderShown = false;
                 arrivalReloadReminderStartUtc = DateTime.MinValue;
                 arrivalReloadReminderSignature = string.Empty;
@@ -15448,7 +17035,8 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
         private void ApplyMainWindowBounds(bool isBoeing)
         {
-            Size targetSize = isBoeing ? new Size(660, 450) : new Size(700, 350);
+            Size baseTargetSize = isBoeing ? new Size(660, 450) : new Size(700, 350);
+            Size targetSize = SS(baseTargetSize);
 
             if (ClientSize != targetSize)
             {
@@ -15466,7 +17054,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 dcduFrame.Invalidate();
             }
 
-            DcduWindowHelper.ApplyDeviceWindow(this, dcduFrame, 22);
+            DcduWindowHelper.ApplyDeviceWindow(this, dcduFrame, S(22));
         }
 
         private void ApplyMainScreenLayout(bool isBoeing)
@@ -15477,55 +17065,55 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 if (outputTable.ColumnStyles.Count >= 3)
                 {
                     outputTable.ColumnStyles[0].SizeType = SizeType.Absolute;
-                    outputTable.ColumnStyles[0].Width = 74F;
+                    outputTable.ColumnStyles[0].Width = SF(74F);
                     outputTable.ColumnStyles[1].SizeType = SizeType.Percent;
                     outputTable.ColumnStyles[1].Width = 100F;
                     outputTable.ColumnStyles[2].SizeType = SizeType.Absolute;
                     outputTable.ColumnStyles[2].Width = OpenMessageActionsIndicatorWidth();
                 }
-                screenPanel.Location = new Point(76, 34);
-                screenPanel.Size = new Size(496, 282);
+                screenPanel.Location = SP(new Point(76, 34));
+                screenPanel.Size = SS(new Size(496, 282));
                 screenPanel.BackColor = Color.Transparent;
                 screenPanel.DrawScreenBackground = false;
 
                 titleLabel.Visible = false;
                 clockLabel.Visible = false;
-                statusCaptionLabel.Location = new Point(12, 16);
-                statusCaptionLabel.Size = new Size(100, 21);
-                statusValueLabel.Location = new Point(112, 16);
-                statusValueLabel.Size = new Size(128, 21);
-                atcUnitLabel.Location = new Point(258, 16);
-                atcUnitLabel.Size = new Size(172, 21);
+                statusCaptionLabel.Location = SP(new Point(12, 16));
+                statusCaptionLabel.Size = SS(new Size(100, 21));
+                statusValueLabel.Location = SP(new Point(112, 16));
+                statusValueLabel.Size = SS(new Size(128, 21));
+                atcUnitLabel.Location = SP(new Point(258, 16));
+                atcUnitLabel.Size = SS(new Size(172, 21));
                 atcUnitLabel.Text = "CURRENT ATS UNIT:";
-                atcUnitDisplay.Location = new Point(435, 16);
-                atcUnitDisplay.Size = new Size(58, 21);
+                atcUnitDisplay.Location = SP(new Point(435, 16));
+                atcUnitDisplay.Size = SS(new Size(58, 21));
                 if (nextAtcUnitLabel != null)
                 {
-                    nextAtcUnitLabel.Location = new Point(258, 37);
-                    nextAtcUnitLabel.Size = new Size(172, 19);
+                    nextAtcUnitLabel.Location = SP(new Point(258, 37));
+                    nextAtcUnitLabel.Size = SS(new Size(172, 19));
                 }
                 if (nextAtcUnitDisplay != null)
                 {
-                    nextAtcUnitDisplay.Location = new Point(435, 37);
-                    nextAtcUnitDisplay.Size = new Size(58, 19);
+                    nextAtcUnitDisplay.Location = SP(new Point(435, 37));
+                    nextAtcUnitDisplay.Size = SS(new Size(58, 19));
                 }
-                messageHeaderLabel.Location = new Point(12, 116);
+                messageHeaderLabel.Location = SP(new Point(12, 116));
                 messageHeaderLabel.Text = "MESSAGES / DATA";
 
-                outputTable.Location = new Point(16, 141);
-                outputTable.Size = new Size(470, 125);
-                outputTable.Padding = new Padding(0, 4, 2, 4);
+                outputTable.Location = SP(new Point(16, 141));
+                outputTable.Size = SS(new Size(470, 125));
+                outputTable.Padding = SPad(new Padding(0, 4, 2, 4));
                 outputTable.BackColor = Color.Transparent;
 
-                messageFormatPanel.Location = new Point(16, 141);
-                messageFormatPanel.Size = new Size(470, 125);
+                messageFormatPanel.Location = SP(new Point(16, 141));
+                messageFormatPanel.Size = SS(new Size(470, 125));
                 messageFormatPanel.BackColor = Color.Transparent;
 
-                SendingProgress.Location = new Point(16, 271);
-                SendingProgress.Size = new Size(470, 8);
+                SendingProgress.Location = SP(new Point(16, 271));
+                SendingProgress.Size = SS(new Size(470, 8));
 
-                outputScrollBar.Location = new Point(486, 141);
-                outputScrollBar.Size = new Size(12, 125);
+                outputScrollBar.Location = SP(new Point(486, 141));
+                outputScrollBar.Size = SS(new Size(12, 125));
                 outputScrollBar.Target = outputTable;
                 outputScrollBar.Invalidate();
                 UpdateMainFrameButtonHotspots(isBoeing);
@@ -15537,55 +17125,55 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             if (outputTable.ColumnStyles.Count >= 3)
             {
                 outputTable.ColumnStyles[0].SizeType = SizeType.Absolute;
-                outputTable.ColumnStyles[0].Width = 68F;
+                outputTable.ColumnStyles[0].Width = SF(68F);
                 outputTable.ColumnStyles[1].SizeType = SizeType.Percent;
                 outputTable.ColumnStyles[1].Width = 100F;
                 outputTable.ColumnStyles[2].SizeType = SizeType.Absolute;
                 outputTable.ColumnStyles[2].Width = OpenMessageActionsIndicatorWidth();
             }
-            screenPanel.Location = new Point(103, 38);
-            screenPanel.Size = new Size(493, 282);
+            screenPanel.Location = SP(new Point(103, 38));
+            screenPanel.Size = SS(new Size(493, 282));
             screenPanel.BackColor = Color.Transparent;
             screenPanel.DrawScreenBackground = false;
 
             titleLabel.Visible = false;
             clockLabel.Visible = false;
-            statusCaptionLabel.Location = new Point(8, 18);
-            statusCaptionLabel.Size = new Size(94, 18);
-            statusValueLabel.Location = new Point(104, 18);
-            statusValueLabel.Size = new Size(126, 18);
-            atcUnitLabel.Location = new Point(232, 18);
-            atcUnitLabel.Size = new Size(176, 18);
+            statusCaptionLabel.Location = SP(new Point(8, 18));
+            statusCaptionLabel.Size = SS(new Size(94, 18));
+            statusValueLabel.Location = SP(new Point(104, 18));
+            statusValueLabel.Size = SS(new Size(126, 18));
+            atcUnitLabel.Location = SP(new Point(232, 18));
+            atcUnitLabel.Size = SS(new Size(176, 18));
             atcUnitLabel.Text = "CURRENT ATS UNIT:";
-            atcUnitDisplay.Location = new Point(413, 18);
-            atcUnitDisplay.Size = new Size(68, 18);
+            atcUnitDisplay.Location = SP(new Point(413, 18));
+            atcUnitDisplay.Size = SS(new Size(68, 18));
             if (nextAtcUnitLabel != null)
             {
-                nextAtcUnitLabel.Location = new Point(232, 38);
-                nextAtcUnitLabel.Size = new Size(176, 18);
+                nextAtcUnitLabel.Location = SP(new Point(232, 38));
+                nextAtcUnitLabel.Size = SS(new Size(176, 18));
             }
             if (nextAtcUnitDisplay != null)
             {
-                nextAtcUnitDisplay.Location = new Point(413, 38);
-                nextAtcUnitDisplay.Size = new Size(68, 18);
+                nextAtcUnitDisplay.Location = SP(new Point(413, 38));
+                nextAtcUnitDisplay.Size = SS(new Size(68, 18));
             }
-            messageHeaderLabel.Location = new Point(8, 100);
+            messageHeaderLabel.Location = SP(new Point(8, 100));
             messageHeaderLabel.Text = "MESSAGES / DATA";
 
-            outputTable.Location = new Point(8, 124);
-            outputTable.Size = new Size(476, 132);
-            outputTable.Padding = new Padding(0, 4, 2, 4);
+            outputTable.Location = SP(new Point(8, 124));
+            outputTable.Size = SS(new Size(476, 132));
+            outputTable.Padding = SPad(new Padding(0, 4, 2, 4));
             outputTable.BackColor = Color.Transparent;
 
-            messageFormatPanel.Location = new Point(8, 124);
-            messageFormatPanel.Size = new Size(476, 132);
+            messageFormatPanel.Location = SP(new Point(8, 124));
+            messageFormatPanel.Size = SS(new Size(476, 132));
             messageFormatPanel.BackColor = Color.Transparent;
 
-            SendingProgress.Location = new Point(8, 263);
-            SendingProgress.Size = new Size(476, 8);
+            SendingProgress.Location = SP(new Point(8, 263));
+            SendingProgress.Size = SS(new Size(476, 8));
 
-            outputScrollBar.Location = new Point(486, 124);
-            outputScrollBar.Size = new Size(8, 132);
+            outputScrollBar.Location = SP(new Point(486, 124));
+            outputScrollBar.Size = SS(new Size(8, 132));
             outputScrollBar.Target = outputTable;
             outputScrollBar.Invalidate();
             UpdateMainFrameButtonHotspots(isBoeing);
@@ -15597,24 +17185,24 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             if (isBoeing)
             {
                 // Hitboxes tuned for the 656x450 Boeing main asset.
-                retrieveButton.Location = new Point(17, 343);
-                retrieveButton.Size = new Size(45, 24);
+                retrieveButton.Location = SP(new Point(17, 343));
+                retrieveButton.Size = SS(new Size(45, 24));
 
-                telexButton.Location = new Point(69, 343);
-                telexButton.Size = new Size(44, 24);
+                telexButton.Location = SP(new Point(69, 343));
+                telexButton.Size = SS(new Size(44, 24));
 
-                atcButton.Location = new Point(121, 343);
-                atcButton.Size = new Size(44, 24);
+                atcButton.Location = SP(new Point(121, 343));
+                atcButton.Size = SS(new Size(44, 24));
 
-                settingsButton.Location = new Point(171, 343);
-                settingsButton.Size = new Size(47, 24);
+                settingsButton.Location = SP(new Point(171, 343));
+                settingsButton.Size = SS(new Size(47, 24));
 
                 helpButton.Enabled = true;
-                helpButton.Location = new Point(505, 343);
-                helpButton.Size = new Size(49, 24);
+                helpButton.Location = SP(new Point(505, 343));
+                helpButton.Size = SS(new Size(49, 24));
 
-                exitButton.Location = new Point(561, 343);
-                exitButton.Size = new Size(53, 24);
+                exitButton.Location = SP(new Point(561, 343));
+                exitButton.Size = SS(new Size(53, 24));
                 UpdateMainFrameButtonHotspots(isBoeing);
                 return;
             }
@@ -15622,28 +17210,28 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             // Airbus bottom-row hitboxes aligned to DCDU_Main_V15.png.
             // Slightly higher/right with wider spacing to match the painted bottom pushbuttons.
             // The side keys are now used as AOC line-select keys when an AOC page is open.
-            retrieveButton.Location = new Point(120, 318);
-            retrieveButton.Size = new Size(36, 20);
+            retrieveButton.Location = SP(new Point(120, 318));
+            retrieveButton.Size = SS(new Size(36, 20));
 
-            telexButton.Location = new Point(167, 318);
-            telexButton.Size = new Size(36, 20);
+            telexButton.Location = SP(new Point(167, 318));
+            telexButton.Size = SS(new Size(36, 20));
             telexButton.AccessibleName = "AOC";
 
-            atcButton.Location = new Point(214, 318);
-            atcButton.Size = new Size(36, 20);
+            atcButton.Location = SP(new Point(214, 318));
+            atcButton.Size = SS(new Size(36, 20));
 
-            settingsButton.Location = new Point(261, 318);
-            settingsButton.Size = new Size(44, 20);
+            settingsButton.Location = SP(new Point(261, 318));
+            settingsButton.Size = SS(new Size(44, 20));
 
             // Airbus: no active HELP hotspot here. Keep the visual artwork untouched,
             // but remove the invisible clickspot so only MIN and CLOSE react.
             helpButton.Enabled = false;
-            helpButton.Location = new Point(-200, -200);
-            helpButton.Size = new Size(1, 1);
+            helpButton.Location = SP(new Point(-200, -200));
+            helpButton.Size = SS(new Size(1, 1));
 
             // Align MIN / CLOSE to the actual painted Airbus bottom buttons.
-            exitButton.Location = new Point(556, 314);
-            exitButton.Size = new Size(37, 23);
+            exitButton.Location = SP(new Point(556, 314));
+            exitButton.Size = SS(new Size(37, 23));
 
             mainMinimizeButton.BringToFront();
             exitButton.BringToFront();
@@ -15918,7 +17506,31 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             else
             {
                 message.Font = GetMessageTextFont(false);
-                message.ForeColor = message.acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
+
+                if (message.outbound &&
+                    string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (IsCpdlcSentReplyOverviewText(message.message))
+                    {
+                        message.ForeColor = DcduTheme.Green;
+                    }
+                    else if (IsCpdlcSendingReplyOverviewText(message.message))
+                    {
+                        message.ForeColor = DcduTheme.Amber;
+                    }
+                    else if (IsCpdlcFailedReplyOverviewText(message.message))
+                    {
+                        message.ForeColor = CallsignMismatchAlarmColor();
+                    }
+                    else
+                    {
+                        message.ForeColor = message.acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
+                    }
+                }
+                else
+                {
+                    message.ForeColor = message.acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
+                }
             }
 
             try
@@ -15929,8 +17541,16 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                     if (index >= 0 && index + 1 < outputTable.Controls.Count &&
                         outputTable.Controls[index + 1] is TimerLabel menuLabel)
                     {
-                        ConfigureOpenMessageIndicator(menuLabel);
-                        menuLabel.CanFlash = ShouldFlashForReply(message);
+                        if (ShouldUseDeleteOnlyOverviewAction(message))
+                        {
+                            ConfigureDeleteOnlyMessageIndicator(menuLabel);
+                            menuLabel.CanFlash = false;
+                        }
+                        else
+                        {
+                            ConfigureOpenMessageIndicator(menuLabel);
+                            menuLabel.CanFlash = ShouldFlashForReply(message);
+                        }
                         if (!menuLabel.CanFlash)
                         {
                             menuLabel.ForeColor = MainPrimaryTextColor();
@@ -16747,6 +18367,11 @@ private async Task HandlePendingLogonUpdateClickAsync()
         Release latest = pendingLogonUpdateRelease;
         ReleaseAsset zipAsset = pendingLogonUpdateAsset;
 
+        if (!ShowGithubReleaseChangelogDialog(latest, zipAsset != null))
+        {
+            return;
+        }
+
         if (zipAsset == null)
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(latest.HtmlUrl) { UseShellExecute = true });
@@ -16758,6 +18383,127 @@ private async Task HandlePendingLogonUpdateClickAsync()
     catch (Exception ex)
     {
         Logger.Debug("Update click handling failed: " + ex.Message);
+    }
+}
+
+
+private bool ShowGithubReleaseChangelogDialog(Release release, bool canInstall)
+{
+    try
+    {
+        string tag = release?.TagName;
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            tag = release?.Name;
+        }
+
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            tag = "available update";
+        }
+
+        string body = release?.Body ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            body = "No changelog was provided for this GitHub release.";
+        }
+
+        using Form form = new()
+        {
+            Text = "EasyCPDLC Update",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            TopMost = true,
+            ClientSize = new Size(620, 460),
+            BackColor = Color.FromArgb(12, 18, 22),
+            ForeColor = Color.White,
+            AutoScaleMode = AutoScaleMode.None,
+            Font = CreateDpiStablePointFont("Segoe UI", 9.0f, FontStyle.Regular)
+        };
+
+        System.Windows.Forms.Label title = new()
+        {
+            AutoSize = false,
+            Text = "Update available: " + tag,
+            Left = 18,
+            Top = 16,
+            Width = 584,
+            Height = 28,
+            ForeColor = Color.White,
+            Font = CreateDpiStablePointFont("Segoe UI Semibold", 11.0f, FontStyle.Regular)
+        };
+
+        System.Windows.Forms.Label subtitle = new()
+        {
+            AutoSize = false,
+            Text = "GitHub release changelog",
+            Left = 18,
+            Top = 44,
+            Width = 584,
+            Height = 22,
+            ForeColor = Color.FromArgb(190, 210, 220),
+            Font = CreateDpiStablePointFont("Segoe UI", 9.0f, FontStyle.Regular)
+        };
+
+        TextBox changelogBox = new()
+        {
+            Left = 18,
+            Top = 76,
+            Width = 584,
+            Height = 318,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            WordWrap = true,
+            BackColor = Color.FromArgb(5, 10, 16),
+            ForeColor = Color.White,
+            BorderStyle = BorderStyle.FixedSingle,
+            Text = body.Replace("\n", Environment.NewLine)
+        };
+
+        Button installButton = new()
+        {
+            Text = canInstall ? "Install Update" : "Open GitHub",
+            Width = 132,
+            Height = 32,
+            Left = form.ClientSize.Width - 286,
+            Top = form.ClientSize.Height - 48,
+            DialogResult = DialogResult.OK
+        };
+
+        Button cancelButton = new()
+        {
+            Text = "Cancel",
+            Width = 112,
+            Height = 32,
+            Left = form.ClientSize.Width - 138,
+            Top = form.ClientSize.Height - 48,
+            DialogResult = DialogResult.Cancel
+        };
+
+        form.Controls.Add(title);
+        form.Controls.Add(subtitle);
+        form.Controls.Add(changelogBox);
+        form.Controls.Add(installButton);
+        form.Controls.Add(cancelButton);
+        form.AcceptButton = installButton;
+        form.CancelButton = cancelButton;
+
+        return form.ShowDialog(this) == DialogResult.OK;
+    }
+    catch (Exception ex)
+    {
+        Logger.Debug("Could not show update changelog dialog: " + ex.Message);
+
+        string fallbackText = "Install update " + (release?.TagName ?? string.Empty) + "?";
+        return MessageBox.Show(
+            fallbackText,
+            "EasyCPDLC Update",
+            MessageBoxButtons.OKCancel,
+            MessageBoxIcon.Information) == DialogResult.OK;
     }
 }
 
@@ -17754,6 +19500,7 @@ catch {
         public void ClearPreview()
         {
             HideManualDeleteConfirmPopup();
+            styledMessageReplySendInProgress = false;
             previewMessage = null;
             RestoreMainScreenFromEmbeddedPage();
         }
@@ -17801,7 +19548,114 @@ catch {
                 ClearPreview();
             }
         }
-        private void ReplyMessage(EventArgs e, CPDLCMessage message, string reply)
+
+
+        private void SetStyledMessageActionLabelsVisible(bool visible)
+        {
+            if (messageFormatPanel == null || messageFormatPanel.IsDisposed)
+            {
+                return;
+            }
+
+            foreach (System.Windows.Forms.Label label in messageFormatPanel.Controls
+                         .Cast<Control>()
+                         .SelectMany(control => control.Controls.Cast<Control>())
+                         .OfType<System.Windows.Forms.Label>())
+            {
+                if (string.Equals(label.AccessibleDescription, "DCDU_STYLED_MESSAGE_ACTION", StringComparison.Ordinal))
+                {
+                    label.Visible = visible;
+                    label.Enabled = visible;
+                }
+            }
+        }
+
+        private void ShowStyledMessageReplySendStatus(string statusText)
+        {
+            if (messageFormatPanel == null || messageFormatPanel.IsDisposed || !messageFormatPanel.Visible)
+            {
+                return;
+            }
+
+            Control host = messageFormatPanel.Controls.Cast<Control>().FirstOrDefault();
+            if (host == null || host.IsDisposed)
+            {
+                host = messageFormatPanel;
+            }
+
+            SetStyledMessageActionLabelsVisible(false);
+
+            const string statusPanelName = "styledMessageReplySendStatusPanel";
+            Control existing = host.Controls.Find(statusPanelName, true).FirstOrDefault();
+            if (existing != null)
+            {
+                host.Controls.Remove(existing);
+                existing.Dispose();
+            }
+
+            int panelHeight = S(DcduStyleManager.IsBoeing ? 30 : 32);
+            int panelY = Math.Max(0, host.Height - panelHeight - S(DcduStyleManager.IsBoeing ? 8 : 12));
+
+            int panelX;
+            int panelW;
+            if (DcduStyleManager.IsBoeing)
+            {
+                int boeingStatusMarginLeft = S(28);
+                int boeingStatusMarginRight = S(20);
+                panelX = boeingStatusMarginLeft;
+                panelW = Math.Max(1, host.ClientSize.Width - boeingStatusMarginLeft - boeingStatusMarginRight);
+            }
+            else
+            {
+                panelW = Math.Max(S(170), host.ClientSize.Width / 3);
+                panelX = Math.Max(0, (host.ClientSize.Width - panelW) / 2);
+            }
+
+            Panel panel = new()
+            {
+                Name = statusPanelName,
+                BackColor = Color.Transparent,
+                Location = new Point(panelX, panelY),
+                Size = new Size(panelW, panelHeight),
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+
+            if (DcduStyleManager.IsBoeing)
+            {
+                panel.BackColor = Color.FromArgb(5, 10, 16);
+                panel.Paint += (_, paintEvent) =>
+                {
+                    using Pen border = new Pen(MainPrimaryTextColor(), 1.0f);
+                    paintEvent.Graphics.DrawRectangle(border, 0, 0, Math.Max(1, panel.Width - 1), Math.Max(1, panel.Height - 1));
+                };
+            }
+
+            System.Windows.Forms.Label label = new()
+            {
+                AutoSize = false,
+                BackColor = Color.Transparent,
+                ForeColor = DcduStyleManager.IsBoeing ? MainPrimaryTextColor() : DcduTheme.Cyan,
+                Font = DcduStyleManager.IsBoeing
+                    ? CreateDpiStablePointFont("Consolas", 11.4f, FontStyle.Bold)
+                    : CreateDpiStablePointFont("Consolas", 12.2f, FontStyle.Bold),
+                Text = statusText ?? string.Empty,
+                TextAlign = DcduStyleManager.IsBoeing ? ContentAlignment.MiddleLeft : ContentAlignment.MiddleCenter,
+                Location = new Point(S(DcduStyleManager.IsBoeing ? 10 : 0), S(2)),
+                Size = new Size(Math.Max(1, panel.ClientSize.Width - S(DcduStyleManager.IsBoeing ? 20 : 0)), Math.Max(1, panel.ClientSize.Height - S(4))),
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+
+            panel.Controls.Add(label);
+            host.Controls.Add(panel);
+            panel.BringToFront();
+            label.BringToFront();
+            panel.Invalidate();
+            host.Invalidate();
+        }
+
+        private async void ReplyMessage(EventArgs e, CPDLCMessage message, string reply)
         {
             try
             {
@@ -17817,10 +19671,17 @@ catch {
             }
             catch
             {
+                if (styledMessageReplySendInProgress)
+                {
+                    return;
+                }
+
                 if (message == null || message.header == null)
                 {
                     return;
                 }
+
+                styledMessageReplySendInProgress = true;
 
                 foreach (AccessibleLabel _label in replyOptionsList ?? Array.Empty<AccessibleLabel>())
                 {
@@ -17831,26 +19692,63 @@ catch {
                 }
 
                 message.header.ResponseID = messageOutCounter;
+                string packet = String.Format(
+                    "/data2/{0}/{1}/N/{2}",
+                    message.header.ResponseID,
+                    message.header.MessageID,
+                    reply);
 
-                if (reply != "STANDBY")
+                ShowStyledMessageReplySendStatus("SENDING....");
+                // Keep the DCDU-style sending state visible long enough to feel like a real transmission.
+                await Task.Delay(2200);
+
+                try
                 {
-                    message.acknowledged = true;
-                    int index = outputTable.Controls.GetChildIndex(message);
-                    ((TimerLabel)outputTable.Controls[index + 1]).CanFlash = false;
-                    outputTable.Controls[index + 1].ForeColor = controlFrontColor;
-                    message.ForeColor = SystemColors.ControlDark;
-                }
+                    TrackClearanceReply(message, reply);
+                    await SendCPDLCMessage(message.recipient, message.type, packet);
 
-                TrackClearanceReply(message, reply);
-                _ = Task.Run(() => SendCPDLCMessage(message.recipient, message.type, String.Format("/data2/{0}/{1}/N/{2}", message.header.ResponseID, message.header.MessageID, reply)));
-                messageOutCounter += 1;
-                ClearPreview();
-
-                foreach (AccessibleLabel _label in replyOptionsList ?? Array.Empty<AccessibleLabel>())
-                {
-                    if (_label != null)
+                    if (reply != "STANDBY")
                     {
-                        _label.Enabled = true;
+                        message.acknowledged = true;
+                        int index = outputTable.Controls.GetChildIndex(message);
+                        if (index >= 0 && index + 1 < outputTable.Controls.Count && outputTable.Controls[index + 1] is TimerLabel timerLabel)
+                        {
+                            timerLabel.CanFlash = false;
+                            timerLabel.ForeColor = controlFrontColor;
+                        }
+
+                        message.ForeColor = SystemColors.ControlDark;
+                    }
+
+                    messageOutCounter += 1;
+
+                    ShowStyledMessageReplySendStatus("SENT");
+                    await Task.Delay(1400);
+                    ClearPreview();
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        Logger.Debug("CPDLC reply send failed: " + ex.Message);
+                    }
+                    catch
+                    {
+                    }
+
+                    ShowStyledMessageReplySendStatus("SEND FAILED");
+                    await Task.Delay(2200);
+                    styledMessageReplySendInProgress = false;
+                    SetStyledMessageActionLabelsVisible(true);
+                }
+                finally
+                {
+                    foreach (AccessibleLabel _label in replyOptionsList ?? Array.Empty<AccessibleLabel>())
+                    {
+                        if (_label != null)
+                        {
+                            _label.Enabled = true;
+                        }
                     }
                 }
             }
@@ -18334,10 +20232,64 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             UpdateConnectionGatedControls();
             Logger.Info("Setup Complete.");
         }
+        private static bool IsHoppieNetworkLoadResponse(string response)
+        {
+            string upper = (response ?? string.Empty).Trim().ToUpperInvariant();
+
+            return upper.Contains("TOO HEAVY") ||
+                   upper.Contains("HEAVY ON THE NETWORK") ||
+                   upper.Contains("TOO MANY REQUESTS") ||
+                   upper.Contains("RATE LIMIT");
+        }
+
+        private void HandleHoppieNetworkLoadResponse(string response)
+        {
+            hoppiePollPausedUntilUtc = DateTime.UtcNow + hoppieNetworkLoadBackoff;
+
+            if (DateTime.UtcNow - lastHoppieNetworkLoadWarningUtc < TimeSpan.FromSeconds(60))
+            {
+                return;
+            }
+
+            lastHoppieNetworkLoadWarningUtc = DateTime.UtcNow;
+            Logger.Debug("Hoppie network load/backoff response: " + SafeLogValue(response, 96));
+            SafeUi(() => WriteMessage("HOPPIE SERVER RATE LIMIT: TOO HEAVY ON THE NETWORK. EASYCPDLC WILL BACK OFF BRIEFLY AND TRY AGAIN.", "SYSTEM", "SYSTEM"));
+        }
+
         private async Task PeriodicCheckMessage(TimeSpan interval, CancellationToken cancellationToken)
         {
+            try
+            {
+                // Do not poll Hoppie immediately after connect. Login/setup already
+                // performs VATSIM/Hoppie helper refreshes and the user may click LOGON.
+                await Task.Delay(hoppieInitialPollDelay, cancellationToken);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
             while (!cancellationToken.IsCancellationRequested)
             {
+                if (DateTime.UtcNow < hoppiePollPausedUntilUtc)
+                {
+                    TimeSpan pauseRemaining = hoppiePollPausedUntilUtc - DateTime.UtcNow;
+                    TimeSpan delay = pauseRemaining < interval ? pauseRemaining : interval;
+
+                    Logger.Debug("Hoppie poll delayed by explicit server backoff for " + (int)Math.Max(0, delay.TotalMilliseconds) + "ms");
+
+                    try
+                    {
+                        await Task.Delay(delay, cancellationToken);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
                 Logger.Debug("Attempting to poll Hoppie for new messages");
 
                 await SendCPDLCMessage("NONE", "poll", "");
@@ -18464,7 +20416,6 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         public async Task SendCPDLCMessage(string recipient, string messageType, string packetData, bool _write = true)
         {
-
             var connectionValues = new Dictionary<string, string> {
                 {"logon", logonCode ?? String.Empty},
                 {"from", callsign ?? String.Empty},
@@ -18508,6 +20459,13 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 var responseString = await response.Content.ReadAsStringAsync();
                 string printString = responseString.ToString().ToUpper().Trim();
                 Logger.Debug(String.Format("HOPPIE RESPONSE: status={0} | length={1}", ClassifyHoppieResponseForLog(responseString), (responseString ?? string.Empty).Length));
+
+                if (IsHoppieNetworkLoadResponse(printString))
+                {
+                    HandleHoppieNetworkLoadResponse(printString);
+                    UpdateSendingProgress(() => SendingProgress.Visible = false);
+                    return;
+                }
 
                 if (printString.Contains("ERROR"))
                 {
@@ -18596,6 +20554,300 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             return text;
         }
 
+        private static string ExtractCpdlcPacketOverviewPayload(string contents)
+        {
+            string raw = (contents ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return string.Empty;
+            }
+
+            Match packet = Regex.Match(
+                raw,
+                @"(?:^|\s)/data2/\d+/[^/\s]*/[A-Z]{1,2}/(?<payload>.*)$",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+            if (packet.Success)
+            {
+                string payload = packet.Groups["payload"].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(payload))
+                {
+                    return payload;
+                }
+            }
+
+            if (raw.StartsWith("/data2/", StringComparison.OrdinalIgnoreCase))
+            {
+                int lastSlash = raw.LastIndexOf('/');
+                if (lastSlash >= 0 && lastSlash + 1 < raw.Length)
+                {
+                    return raw.Substring(lastSlash + 1).Trim();
+                }
+            }
+
+            return raw;
+        }
+
+        private static string NormalizeCpdlcOverviewText(string contents)
+        {
+            string source = ExtractCpdlcPacketOverviewPayload(contents);
+
+            string clean = (source ?? string.Empty)
+                .Replace("\r\n", " ")
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Replace("@", " ")
+                .Replace("_", " ")
+                .Trim()
+                .ToUpperInvariant();
+
+            clean = Regex.Replace(clean, @"\s+", " ").Trim();
+            return clean;
+        }
+
+        private static string ShortenOverviewText(string text, int maxChars)
+        {
+            string clean = Regex.Replace((text ?? string.Empty).Trim(), @"\s+", " ");
+
+            if (clean.Length <= maxChars)
+            {
+                return clean;
+            }
+
+            return clean.Substring(0, Math.Max(1, maxChars - 1)).TrimEnd() + "…";
+        }
+
+        private static bool IsCpdlcReplyStatusText(string text)
+        {
+            string clean = NormalizeCpdlcOverviewText(text);
+
+            if (clean.StartsWith("✓ ", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean.Substring(2).Trim();
+            }
+
+            if (clean.EndsWith(" SENT", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean.Substring(0, clean.Length - 5).Trim();
+            }
+
+            return clean == "WILCO" ||
+                   clean == "UNABLE" ||
+                   clean == "STANDBY" ||
+                   clean == "STBY" ||
+                   clean == "ROGER" ||
+                   clean == "AFFIRMATIVE" ||
+                   clean == "NEGATIVE";
+        }
+
+        private static bool IsCpdlcDirectStatusText(string contents)
+        {
+            string clean = NormalizeCpdlcOverviewText(contents);
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return false;
+            }
+
+            return IsCpdlcReplyStatusText(clean) ||
+                   IsCpdlcSentReplyOverviewText(clean) ||
+                   IsCpdlcFailedReplyOverviewText(clean) ||
+                   clean == "REQUEST LOGON" ||
+                   clean == "LOGOFF" ||
+                   clean.Contains("CONNECTED TO") ||
+                   clean.Contains("LOGON ACCEPTED") ||
+                   clean.Contains("LOGON REJECTED") ||
+                   clean.Contains("LOGON FAILED") ||
+                   clean.Contains("LOGON REQUEST") ||
+                   clean.Contains("CONNECTION TERMINATED") ||
+                   clean.Contains("LOGOFF");
+        }
+
+        private static string ExtractConnectedAtcUnitFromCpdlcText(string cleanText, string fallback)
+        {
+            string cleanFallback = (fallback ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(cleanText))
+            {
+                return cleanFallback;
+            }
+
+            Match connected = Regex.Match(cleanText, @"\bCONNECTED\s+TO\s*:?\s*([A-Z0-9_]{3,16})\b");
+            if (connected.Success)
+            {
+                return connected.Groups[1].Value.Trim().ToUpperInvariant();
+            }
+
+            Match accepted = Regex.Match(cleanText, @"\bLOGON\s+(?:ACCEPTED|CONFIRMED|ESTABLISHED)(?:\s+(?:BY|WITH|TO))?\s*([A-Z0-9_]{3,16})?\b");
+            if (accepted.Success && accepted.Groups.Count > 1 && !string.IsNullOrWhiteSpace(accepted.Groups[1].Value))
+            {
+                return accepted.Groups[1].Value.Trim().ToUpperInvariant();
+            }
+
+            return cleanFallback;
+        }
+
+        private string BuildCpdlcListText(string contents, string recipient, bool outbound)
+        {
+            string clean = NormalizeCpdlcOverviewText(contents);
+            string unit = (recipient ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return outbound
+                    ? "CPDLC MESSAGE TO " + unit
+                    : "CPDLC MESSAGE FROM " + unit;
+            }
+
+            if (outbound)
+            {
+                if (IsCpdlcSendingReplyOverviewText(clean) || IsCpdlcFailedReplyOverviewText(clean))
+                {
+                    return ShortenOverviewText(clean, 62);
+                }
+
+                if (clean == "REQUEST LOGON")
+                {
+                    return string.IsNullOrWhiteSpace(unit)
+                        ? "REQUEST LOGON"
+                        : "REQUEST LOGON TO: " + unit;
+                }
+
+                if (clean == "LOGOFF")
+                {
+                    return string.IsNullOrWhiteSpace(unit)
+                        ? "LOGOFF SENT"
+                        : "LOGOFF SENT TO: " + unit;
+                }
+
+                if (IsCpdlcReplyStatusText(clean))
+                {
+                    return BuildCpdlcSentReplyOverviewText(clean);
+                }
+
+                return string.IsNullOrWhiteSpace(unit)
+                    ? ShortenOverviewText(clean, 62)
+                    : ShortenOverviewText(clean + " TO " + unit, 62);
+            }
+
+            if (clean.Contains("CONNECTED TO") || clean.Contains("LOGON ACCEPTED") || clean.Contains("LOGON CONFIRMED") || clean.Contains("LOGON ESTABLISHED"))
+            {
+                string connectedUnit = ExtractConnectedAtcUnitFromCpdlcText(clean, unit);
+                return string.IsNullOrWhiteSpace(connectedUnit)
+                    ? "CPDLC CONNECTED"
+                    : "CPDLC CONNECTED TO: " + connectedUnit;
+            }
+
+            if (clean.Contains("LOGON REJECTED") || clean.Contains("LOGON FAILED"))
+            {
+                return string.IsNullOrWhiteSpace(unit)
+                    ? "CPDLC LOGON REJECTED"
+                    : "CPDLC LOGON REJECTED BY: " + unit;
+            }
+
+            if (clean.Contains("LOGOFF") || clean.Contains("CONNECTION TERMINATED"))
+            {
+                return string.IsNullOrWhiteSpace(unit)
+                    ? "CPDLC LOGOFF"
+                    : "CPDLC LOGOFF FROM: " + unit;
+            }
+
+            // For real CPDLC uplinks, show the actual instruction directly in the
+            // message overview instead of the generic "CPDLC MESSAGE FROM XXXX".
+            return ShortenOverviewText(clean, 66);
+        }
+
+        private static bool IsCpdlcSendingReplyOverviewText(string text)
+        {
+            string clean = NormalizeCpdlcOverviewText(text);
+            return clean.StartsWith("◷ ", StringComparison.OrdinalIgnoreCase) ||
+                   clean.StartsWith("◶ ", StringComparison.OrdinalIgnoreCase) ||
+                   clean.StartsWith("◵ ", StringComparison.OrdinalIgnoreCase) ||
+                   clean.StartsWith("◴ ", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsCpdlcFailedReplyOverviewText(string text)
+        {
+            string clean = NormalizeCpdlcOverviewText(text);
+            return clean.StartsWith("✕ ", StringComparison.OrdinalIgnoreCase) &&
+                   clean.Contains(" FAILED");
+        }
+
+        private static bool IsCpdlcSentReplyOverviewText(string text)
+        {
+            string clean = NormalizeCpdlcOverviewText(text);
+
+            if (clean.StartsWith("✓ ", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean.Substring(2).Trim();
+            }
+
+            clean = clean.Replace(" SENT", string.Empty).Trim();
+
+            return IsCpdlcReplyStatusText(clean);
+        }
+
+        private static string BuildCpdlcSentReplyOverviewText(string reply)
+        {
+            string clean = NormalizeCpdlcOverviewText(reply);
+            if (clean.StartsWith("✓ ", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean.Substring(2).Trim();
+            }
+            if (clean == "STBY")
+            {
+                clean = "STANDBY";
+            }
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                clean = "CPDLC";
+            }
+
+            return "✓ " + clean;
+        }
+
+        private bool ShouldUseDeleteOnlyOverviewAction(CPDLCMessage message)
+        {
+            if (message == null)
+            {
+                return false;
+            }
+
+            if (!message.outbound ||
+                !string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // LOGON / LOGOFF / WILCO / STANDBY etc. are short status rows and use
+            // the existing auto-delete handling. Actual outbound CPDLC requests are
+            // just sent request history lines: delete-only, no open action.
+            if (IsCpdlcSendingReplyOverviewText(message.message) ||
+                IsCpdlcFailedReplyOverviewText(message.message))
+            {
+                return false;
+            }
+
+            return !IsCpdlcDirectStatusText(message.message);
+        }
+
+        private bool CanDirectWilcoFromOverview(CPDLCMessage message)
+        {
+            if (message == null ||
+                message.outbound ||
+                message.acknowledged ||
+                !string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase) ||
+                message.header == null)
+            {
+                return false;
+            }
+
+            string responseCode = (message.header.Responses ?? string.Empty).Trim().ToUpperInvariant();
+            return string.Equals(responseCode, "WU", StringComparison.OrdinalIgnoreCase);
+        }
+
         private string CreateMessageListText(string contents, string type, string recipient, bool outbound)
         {
             string normalizedType = (type ?? string.Empty).Trim().ToUpperInvariant();
@@ -18617,7 +20869,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             if (ShouldUseAtisListText(contents, normalizedType, recipient))
             {
-                string target = GetAtisListTarget(contents, recipient, !outbound);
+                string target = outbound
+                    ? FormatAtisTargetForList(recipient)
+                    : GetAtisListTarget(contents, recipient, true);
                 string upperContents = (contents ?? string.Empty).ToUpperInvariant();
 
                 if (outbound)
@@ -18640,7 +20894,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             if (ShouldUseMetarListText(contents, normalizedType, recipient))
             {
-                string target = GetMetarListTarget(contents, recipient, !outbound);
+                string target = outbound
+                    ? FormatAtisTargetForList(recipient)
+                    : GetMetarListTarget(contents, recipient, true);
                 string upperContents = (contents ?? string.Empty).ToUpperInvariant();
 
                 if (outbound)
@@ -18658,6 +20914,11 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 string metarSummary = "RECEIVED" + BuildWeatherOverviewSuffix(contents, 30, true);
                 CacheWeatherMessage("METAR", target, contents, metarSummary);
                 return BuildMetarListSummary(target, metarSummary);
+            }
+
+            if (normalizedType == "CPDLC")
+            {
+                return BuildCpdlcListText(contents, recipient, outbound);
             }
 
             if (!outbound &&
@@ -18701,17 +20962,20 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             // ACARS/INFO response as ATIS. This fixes "INFO MESSAGE FROM ACARS" after ATIS requests.
             if (upperRecipient == "ACARS" && HasPendingAtisRequest())
             {
-                if (!HasPendingMetarRequest())
+                if (LooksLikeGenericAtisInformation(upperContents) ||
+                    LooksLikeAtisBroadcastText(upperContents) ||
+                    upperContents.Contains("ATIS"))
                 {
                     return true;
                 }
 
-                return LooksLikeGenericAtisInformation(upperContents) || upperContents.Contains("ATIS");
+                return !HasPendingMetarRequest();
             }
 
             // A CPDLC clearance can also contain "ATIS C", so only map generic text
             // to ATIS when an ATIS request is actually pending.
-            return LooksLikeGenericAtisInformation(upperContents) && HasPendingAtisRequest();
+            return (LooksLikeGenericAtisInformation(upperContents) || LooksLikeAtisBroadcastText(upperContents)) &&
+                   HasPendingAtisRequest();
         }
 
         private bool ShouldUseMetarListText(string contents, string normalizedType, string recipient)
@@ -18781,6 +21045,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private string GetMetarListTarget(string contents, string recipient, bool consumePending)
         {
+            string pendingRequestTarget = GetPendingMetarRequestTarget(consumePending);
+            if (pendingRequestTarget != "METAR")
+            {
+                return pendingRequestTarget;
+            }
+
             string combined = ((contents ?? string.Empty) + "\n" + (recipient ?? string.Empty)).ToUpperInvariant();
 
             Match explicitMetar = Regex.Match(combined, @"\b(?:METAR|SPECI)\s+([A-Z][A-Z0-9]{3})\b");
@@ -18806,7 +21076,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
             }
 
-            return GetPendingMetarRequestTarget(consumePending);
+            return "METAR";
         }
 
         private static bool IsAirportCodeToken(string token)
@@ -18823,7 +21093,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 "METAR", "SPECI", "AUTO", "CORR", "CAVOK", "NOSIG",
                 "TEMPO", "BECMG", "PROB", "WIND", "RWYS", "RWY",
                 "QNH", "INFO", "FROM", "ACARS", "DATA", "LINK",
-                "ATIS", "THIS", "WITH", "TEXT", "NIL"
+                "ATIS", "THIS", "WITH", "TEXT", "NIL",
+                "RNAV", "RNP", "GPS", "ILS", "VOR", "NDB", "DME",
+                "STAR", "SID", "APCH", "ARR", "DEP", "DEW", "POINT",
+                "DEGREES", "KNOTS", "FEET"
             };
 
             if (reserved.Contains(upper))
@@ -19198,6 +21471,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private string GetAtisListTarget(string contents, string recipient, bool consumePending)
         {
+            string pendingRequestTarget = GetPendingAtisRequestTarget(consumePending);
+            if (pendingRequestTarget != "ATIS")
+            {
+                return pendingRequestTarget;
+            }
+
             string contentsUpper = (contents ?? string.Empty).ToUpperInvariant();
             string recipientUpper = (recipient ?? string.Empty).ToUpperInvariant();
             string combined = (contentsUpper + "\n" + recipientUpper).ToUpperInvariant();
@@ -19213,19 +21492,6 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
 
                 return formattedTarget;
-            }
-
-            // Generic VATATIS replies can look like:
-            // "THIS IS GENEVA INFORMATION ECHO ..."
-            // In that case words like ECHO/DELTA must NOT be treated as the airport.
-            // ACARS can also send a very generic "INFO MESSAGE FROM ACARS".
-            if (LooksLikeGenericAtisInformation(contentsUpper) || recipientUpper == "ACARS")
-            {
-                string pendingTarget = GetPendingAtisRequestTarget(consumePending);
-                if (pendingTarget != "ATIS")
-                {
-                    return pendingTarget;
-                }
             }
 
             MatchCollection matches = Regex.Matches(combined, @"\b[A-Z0-9]{4}(?:_[AD])?(?:_ATIS)?\b");
@@ -19246,7 +21512,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
             }
 
-            return GetPendingAtisRequestTarget(consumePending);
+            return "ATIS";
         }
 
         private static bool LooksLikeGenericAtisInformation(string upperContents)
@@ -19258,6 +21524,36 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             return upperContents.Contains("THIS IS ") &&
                    upperContents.Contains(" INFORMATION ");
+        }
+
+        private static bool LooksLikeAtisBroadcastText(string upperContents)
+        {
+            if (string.IsNullOrWhiteSpace(upperContents))
+            {
+                return false;
+            }
+
+            string upper = Regex.Replace(upperContents, @"\s+", " ").Trim();
+
+            bool hasInformationDesignator =
+                Regex.IsMatch(upper, @"\bINFORMATION\s+[A-Z]\b") ||
+                Regex.IsMatch(upper, @"\bINFO\s+[A-Z]\b");
+
+            if (!hasInformationDesignator)
+            {
+                return false;
+            }
+
+            return upper.Contains(" QNH ") ||
+                   upper.Contains(" RWY ") ||
+                   upper.Contains(" RUNWAY ") ||
+                   upper.Contains(" CAVOK ") ||
+                   upper.Contains(" NOSIG") ||
+                   upper.Contains(" ARRIVALS ") ||
+                   upper.Contains(" DEPARTURES ") ||
+                   upper.Contains(" EXPECT ") ||
+                   upper.Contains(" TRANSITION ") ||
+                   upper.Contains(" APPROACH ");
         }
 
         private static bool IsAtisTargetToken(string token)
@@ -19500,7 +21796,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             _message.BorderStyle = BorderStyle.None;
             _message.TabStop = true;
             _message.TabIndex = 0;
-            _message.Margin = new Padding(0, 3, 0, 0);
+            _message.Margin = SPad(new Padding(0, 3, 0, 0));
 
             return _message;
         }
@@ -19802,11 +22098,17 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 return true;
             }
 
+            // Short CPDLC connection/reply status noise can be auto-cleaned.
+            // Actual controller uplinks remain visible/interactive.
+            if (type == "CPDLC" && IsCpdlcDirectStatusText(text))
+            {
+                return true;
+            }
+
             // Keep important/interactive messages visible.
             if (type == "CPDLC" ||
                 IsCallsignMismatchAlarmText(text) ||
                 IsCpdlcStationDetectedText(text) ||
-                text.Contains("LOGON") ||
                 text.Contains("PREDEP") ||
                 text.Contains("PDC") ||
                 text.Contains("CLEARANCE") ||
@@ -19854,7 +22156,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             menuLabel.Text = string.Empty;
             menuLabel.AutoSize = false;
             menuLabel.Width = OpenMessageActionsIndicatorWidth();
-            menuLabel.Height = 18;
+            menuLabel.Height = S(18);
             menuLabel.TextAlign = ContentAlignment.MiddleRight;
             menuLabel.Paint -= AutoDeleteRequestIndicator_Paint;
             menuLabel.Paint += AutoDeleteRequestIndicator_Paint;
@@ -19888,32 +22190,52 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             bool blinkOn = remainingSeconds % 2 == 0;
             Color accent = blinkOn ? DcduTheme.Amber : NeutralStatusBadgeColor();
 
-            Rectangle trash = new Rectangle(Math.Max(0, label.Width - 30), 2, 13, 14);
-            using Pen pen = new Pen(accent, 1.2f);
+            int rightMargin = ScaleUi(2);
+            int secondsWidth = ScaleUi(24);
+            int secondsHeight = Math.Max(1, label.Height - ScaleUi(1));
+            Rectangle secondsRect = new Rectangle(
+                Math.Max(0, label.Width - secondsWidth - rightMargin),
+                ScaleUi(1),
+                secondsWidth,
+                secondsHeight);
+
+            Rectangle trash = new Rectangle(
+                Math.Max(0, secondsRect.Left - ScaleUi(17)),
+                ScaleUi(2),
+                ScaleUi(13),
+                ScaleUi(14));
+
+            using Pen pen = new Pen(accent, Math.Max(1.0f, ScaleUi(1.2f)));
 
             // Draw a small trash can icon manually instead of relying on emoji font support.
-            e.Graphics.DrawLine(pen, trash.Left + 2, trash.Top + 2, trash.Right - 2, trash.Top + 2);       // lid
-            e.Graphics.DrawLine(pen, trash.Left + 5, trash.Top, trash.Right - 5, trash.Top);             // handle
-            e.Graphics.DrawRectangle(pen, trash.Left + 3, trash.Top + 4, trash.Width - 6, trash.Height - 5);
-            e.Graphics.DrawLine(pen, trash.Left + 6, trash.Top + 6, trash.Left + 6, trash.Bottom - 2);
-            e.Graphics.DrawLine(pen, trash.Right - 6, trash.Top + 6, trash.Right - 6, trash.Bottom - 2);
+            e.Graphics.DrawLine(pen, trash.Left + ScaleUi(2), trash.Top + ScaleUi(2), trash.Right - ScaleUi(2), trash.Top + ScaleUi(2));       // lid
+            e.Graphics.DrawLine(pen, trash.Left + ScaleUi(5), trash.Top, trash.Right - ScaleUi(5), trash.Top);             // handle
+            e.Graphics.DrawRectangle(pen, trash.Left + ScaleUi(3), trash.Top + ScaleUi(4), trash.Width - ScaleUi(6), trash.Height - ScaleUi(5));
+            e.Graphics.DrawLine(pen, trash.Left + ScaleUi(6), trash.Top + ScaleUi(6), trash.Left + ScaleUi(6), trash.Bottom - ScaleUi(2));
+            e.Graphics.DrawLine(pen, trash.Right - ScaleUi(6), trash.Top + ScaleUi(6), trash.Right - ScaleUi(6), trash.Bottom - ScaleUi(2));
 
             string secondsText = remainingSeconds.ToString("00");
-            using Font smallFont = CreateDpiStablePixelFont(label.Font.FontFamily, Math.Max(6.0f, label.Font.Size - 2.2f), FontStyle.Bold);
+            using Font smallFont = new Font(
+                label.Font.FontFamily,
+                Math.Max(1.0f, label.Font.Size - ScaleUi(2.2f)),
+                FontStyle.Bold,
+                GraphicsUnit.Pixel);
+
             TextRenderer.DrawText(
                 e.Graphics,
                 secondsText,
                 smallFont,
-                new Rectangle(trash.Right + 1, 1, 18, label.Height - 1),
+                secondsRect,
                 accent,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoClipping);
         }
 
         private static int OpenMessageActionsIndicatorWidth()
         {
-            // Airbus uses a slightly wider action cell so the new delete icon is not clipped by
-            // the tighter message area/scrollbar artwork. Boeing keeps the previous tuned width.
-            return DcduStyleManager.IsBoeing ? 65 : 72;
+            // Needs room for delete/open icons and for auto-delete countdown "trash + 00".
+            // Keep it compact, but reserve enough space at 110/120% so the countdown
+            // is not clipped at the right edge.
+            return ScaleUi(DcduStyleManager.IsBoeing ? 74 : 84);
         }
 
         private void ConfigureOpenMessageIndicator(TimerLabel menuLabel)
@@ -19927,12 +22249,50 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             menuLabel.Tag = OpenMessageActionsTag;
             menuLabel.AutoSize = false;
             menuLabel.Width = OpenMessageActionsIndicatorWidth();
-            menuLabel.Height = 18;
+            menuLabel.Height = S(18);
             menuLabel.TextAlign = ContentAlignment.MiddleRight;
             menuLabel.Paint -= OpenMessageIndicator_Paint;
             menuLabel.Paint += OpenMessageIndicator_Paint;
             menuLabel.Invalidate();
         }
+
+        private void ConfigureDeleteOnlyMessageIndicator(TimerLabel menuLabel)
+        {
+            if (menuLabel == null)
+            {
+                return;
+            }
+
+            menuLabel.Text = string.Empty;
+            menuLabel.Tag = DeleteOnlyMessageActionsTag;
+            menuLabel.AutoSize = false;
+            menuLabel.Width = OpenMessageActionsIndicatorWidth();
+            menuLabel.Height = S(18);
+            menuLabel.TextAlign = ContentAlignment.MiddleRight;
+            menuLabel.Paint -= OpenMessageIndicator_Paint;
+            menuLabel.Paint += OpenMessageIndicator_Paint;
+            menuLabel.Invalidate();
+        }
+
+
+        private void ConfigureDirectWilcoMessageIndicator(TimerLabel menuLabel)
+        {
+            if (menuLabel == null)
+            {
+                return;
+            }
+
+            menuLabel.Text = string.Empty;
+            menuLabel.Tag = WilcoMessageActionsTag;
+            menuLabel.AutoSize = false;
+            menuLabel.Width = OpenMessageActionsIndicatorWidth();
+            menuLabel.Height = S(18);
+            menuLabel.TextAlign = ContentAlignment.MiddleRight;
+            menuLabel.Paint -= OpenMessageIndicator_Paint;
+            menuLabel.Paint += OpenMessageIndicator_Paint;
+            menuLabel.Invalidate();
+        }
+
 
         private void OpenMessageIndicator_Paint(object sender, PaintEventArgs e)
         {
@@ -19944,21 +22304,30 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
             Color accent = label.CanFlash ? DcduTheme.Amber : MainPrimaryTextColor();
-            Rectangle trash = OpenMessageDeleteIconBounds(label);
+            bool deleteOnly = IsDeleteOnlyMessageActionsIndicator(label);
+            Rectangle trash = deleteOnly ? DeleteOnlyMessageDeleteIconBounds(label) : OpenMessageDeleteIconBounds(label);
             Rectangle open = OpenMessageOpenIconBounds(label);
 
             using Pen pen = new Pen(accent, DcduStyleManager.IsBoeing ? 1.25f : 1.35f);
             using Pen separatorPen = new Pen(Color.FromArgb(DcduStyleManager.IsBoeing ? 70 : 92, accent), 1.0f);
 
-            int separatorX = Math.Max(0, open.Left - 5);
-            e.Graphics.DrawLine(separatorPen, separatorX, 3, separatorX, Math.Max(3, label.Height - 4));
+            if (!deleteOnly)
+            {
+                int separatorX = Math.Max(0, open.Left - 5);
+                e.Graphics.DrawLine(separatorPen, separatorX, 3, separatorX, Math.Max(3, label.Height - 4));
+            }
 
-            // Left action: delete. This is shown only after the auto-delete timer is gone.
+            // Left/right action: delete. Delete-only rows show only this single icon.
             e.Graphics.DrawLine(pen, trash.Left + 2, trash.Top + 2, trash.Right - 2, trash.Top + 2);       // lid
             e.Graphics.DrawLine(pen, trash.Left + 5, trash.Top, trash.Right - 5, trash.Top);             // handle
             e.Graphics.DrawRectangle(pen, trash.Left + 3, trash.Top + 4, trash.Width - 6, trash.Height - 5);
             e.Graphics.DrawLine(pen, trash.Left + 6, trash.Top + 6, trash.Left + 6, trash.Bottom - 2);
             e.Graphics.DrawLine(pen, trash.Right - 6, trash.Top + 6, trash.Right - 6, trash.Bottom - 2);
+
+            if (deleteOnly)
+            {
+                return;
+            }
 
             // Right action: open message. Keep the existing visual language.
             e.Graphics.DrawRectangle(pen, open.Left, open.Top, open.Width - 5, open.Height - 1);
@@ -19975,17 +22344,53 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             return label != null &&
                    label.Tag is string tag &&
                    (string.Equals(tag, OpenMessageActionsTag, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(tag, WilcoMessageActionsTag, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(tag, DeleteOnlyMessageActionsTag, StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(tag, "OPEN", StringComparison.OrdinalIgnoreCase));
         }
 
         private static Rectangle OpenMessageDeleteIconBounds(TimerLabel label)
         {
-            return new Rectangle(Math.Max(0, label.Width - 43), 2, 13, 14);
+            return new Rectangle(Math.Max(0, label.Width - ScaleUi(48)), ScaleUi(2), ScaleUi(13), ScaleUi(14));
+        }
+
+        private static Rectangle DeleteOnlyMessageDeleteIconBounds(TimerLabel label)
+        {
+            return new Rectangle(Math.Max(0, label.Width - ScaleUi(26)), ScaleUi(2), ScaleUi(13), ScaleUi(14));
         }
 
         private static Rectangle OpenMessageOpenIconBounds(TimerLabel label)
         {
-            return new Rectangle(Math.Max(0, label.Width - 23), 3, 16, 12);
+            return new Rectangle(Math.Max(0, label.Width - ScaleUi(24)), ScaleUi(3), ScaleUi(16), ScaleUi(12));
+        }
+
+        private bool IsDeleteOnlyMessageActionsIndicator(TimerLabel label)
+        {
+            return label != null &&
+                   label.Tag is string tag &&
+                   string.Equals(tag, DeleteOnlyMessageActionsTag, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static Rectangle OpenMessageWilcoTextBounds(TimerLabel label)
+        {
+            return new Rectangle(Math.Max(0, label.Width - 72), 1, 42, Math.Max(1, label.Height - 2));
+        }
+
+        private bool IsWilcoMessageActionsIndicator(TimerLabel label)
+        {
+            return label != null &&
+                   label.Tag is string tag &&
+                   string.Equals(tag, WilcoMessageActionsTag, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsOpenMessageWilcoActionHit(TimerLabel label, Point localPoint)
+        {
+            if (!IsWilcoMessageActionsIndicator(label))
+            {
+                return false;
+            }
+
+            return Rectangle.Inflate(OpenMessageWilcoTextBounds(label), 4, 4).Contains(localPoint);
         }
 
         private bool IsOpenMessageDeleteActionHit(TimerLabel label, Point localPoint)
@@ -19995,7 +22400,11 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 return false;
             }
 
-            return Rectangle.Inflate(OpenMessageDeleteIconBounds(label), 5, 4).Contains(localPoint);
+            Rectangle bounds = IsDeleteOnlyMessageActionsIndicator(label)
+                ? DeleteOnlyMessageDeleteIconBounds(label)
+                : OpenMessageDeleteIconBounds(label);
+
+            return Rectangle.Inflate(bounds, 5, 4).Contains(localPoint);
         }
 
         private bool IsAutoDeleteRequestTimerActive(CPDLCMessage message)
@@ -20014,19 +22423,27 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             autoDeleteActionPopupMenuLabel = null;
         }
 
-        private System.Windows.Forms.Label CreateAutoDeletePopupActionLabel(string text, Color accent, EventHandler onClick)
+                private System.Windows.Forms.Label CreateAutoDeletePopupActionLabel(string text, Color accent, EventHandler onClick)
         {
+            Font actionFont = PopupActionFont();
+            int measuredWidth = TextRenderer.MeasureText(
+                text ?? string.Empty,
+                actionFont,
+                Size.Empty,
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
+
             System.Windows.Forms.Label label = new System.Windows.Forms.Label
             {
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = MainPrimaryTextColor(),
-                Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(7.1f, textFontBold.Size - 2.2f), FontStyle.Bold),
+                Font = actionFont,
                 Text = text,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Cursor = Cursors.Hand,
-                Size = new Size(86, 18),
-                Padding = new Padding(4, 0, 2, 0)
+                Size = new Size(Math.Max(S(106), measuredWidth + S(14)), S(20)),
+                Padding = SPad(new Padding(3, 0, 2, 0)),
+                UseCompatibleTextRendering = false
             };
 
             label.MouseEnter += (_, __) =>
@@ -20043,6 +22460,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             return label;
         }
+
 
         private void ShowAutoDeleteActionPopup(CPDLCMessage message, TimerLabel menuLabel)
         {
@@ -20079,6 +22497,29 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             autoDeleteActionPopupPanel.SuspendLayout();
             autoDeleteActionPopupPanel.Controls.Clear();
 
+            bool canWilco = CanDirectWilcoFromOverview(message);
+            int rowY = S(5);
+            int rowGap = S(21);
+
+            if (canWilco)
+            {
+                System.Windows.Forms.Label wilcoLabel = CreateAutoDeletePopupActionLabel("> WILCO", DcduTheme.Green, (_, __) =>
+                {
+                    CPDLCMessage target = autoDeleteActionPopupMessage;
+                    TimerLabel targetLabel = autoDeleteActionPopupMenuLabel;
+                    HideAutoDeleteActionPopup();
+
+                    if (target != null && !target.IsDisposed && targetLabel != null && !targetLabel.IsDisposed)
+                    {
+                        _ = SendDirectWilcoFromOverviewAsync(target, targetLabel);
+                    }
+                });
+
+                wilcoLabel.Location = new Point(S(8), rowY);
+                autoDeleteActionPopupPanel.Controls.Add(wilcoLabel);
+                rowY += rowGap;
+            }
+
             System.Windows.Forms.Label openLabel = CreateAutoDeletePopupActionLabel("> OPEN", MainAccentColor(), (_, __) =>
             {
                 CPDLCMessage target = autoDeleteActionPopupMessage;
@@ -20107,20 +22548,28 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
             });
 
-            openLabel.Location = new Point(8, 7);
-            deleteLabel.Location = new Point(8, 27);
+            openLabel.Location = new Point(S(8), rowY);
+            rowY += rowGap;
+            deleteLabel.Location = new Point(S(8), rowY);
+            rowY += rowGap;
             autoDeleteActionPopupPanel.Controls.Add(openLabel);
             autoDeleteActionPopupPanel.Controls.Add(deleteLabel);
 
-            Point screenPoint = menuLabel.PointToScreen(new Point(0, menuLabel.Bottom + 2));
+            Point screenPoint = menuLabel.PointToScreen(new Point(0, menuLabel.Bottom + S(2)));
             Point localPoint = screenPanel.PointToClient(screenPoint);
 
-            int popupWidth = 104;
-            int popupHeight = 55;
+            int contentWidth = autoDeleteActionPopupPanel.Controls
+                .OfType<System.Windows.Forms.Label>()
+                .Select(label => label.Width)
+                .DefaultIfEmpty(S(106))
+                .Max();
+
+            int popupWidth = Math.Max(S(124), contentWidth + S(12));
+            int popupHeight = Math.Max(S(52), rowY + S(5));
             autoDeleteActionPopupPanel.Size = new Size(popupWidth, popupHeight);
             autoDeleteActionPopupPanel.Location = new Point(
-                Math.Max(4, Math.Min(localPoint.X - popupWidth + menuLabel.Width, screenPanel.Width - popupWidth - 4)),
-                Math.Max(4, Math.Min(localPoint.Y, screenPanel.Height - popupHeight - 4)));
+                Math.Max(S(4), Math.Min(localPoint.X - popupWidth + menuLabel.Width, screenPanel.Width - popupWidth - S(4))),
+                Math.Max(S(4), Math.Min(localPoint.Y, screenPanel.Height - popupHeight - S(4))));
 
             autoDeleteActionPopupPanel.ResumeLayout();
             autoDeleteActionPopupPanel.Visible = true;
@@ -20174,12 +22623,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = DcduTheme.Amber,
-                Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(7.1f, textFontBold.Size - 2.2f), FontStyle.Bold),
+                Font = PopupActionFont(),
                 Text = "DELETE?",
                 TextAlign = ContentAlignment.MiddleLeft,
-                Size = new Size(86, 18),
-                Location = new Point(8, 6),
-                Padding = new Padding(4, 0, 2, 0)
+                Size = SS(new Size(106, 20)),
+                Location = SP(new Point(8, 6)),
+                Padding = SPad(new Padding(4, 0, 2, 0))
             };
 
             System.Windows.Forms.Label yesLabel = CreateAutoDeletePopupActionLabel("> YES", DcduTheme.Amber, (_, __) =>
@@ -20198,21 +22647,21 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 HideManualDeleteConfirmPopup();
             });
 
-            yesLabel.Location = new Point(8, 25);
-            noLabel.Location = new Point(8, 44);
+            yesLabel.Location = SP(new Point(8, 27));
+            noLabel.Location = SP(new Point(8, 48));
             manualDeleteConfirmPopupPanel.Controls.Add(titleLabel);
             manualDeleteConfirmPopupPanel.Controls.Add(yesLabel);
             manualDeleteConfirmPopupPanel.Controls.Add(noLabel);
 
-            Point screenPoint = menuLabel.PointToScreen(new Point(0, menuLabel.Bottom + 2));
+            Point screenPoint = menuLabel.PointToScreen(new Point(0, menuLabel.Bottom + S(2)));
             Point localPoint = screenPanel.PointToClient(screenPoint);
 
-            int popupWidth = 104;
-            int popupHeight = 72;
+            int popupWidth = S(126);
+            int popupHeight = S(76);
             manualDeleteConfirmPopupPanel.Size = new Size(popupWidth, popupHeight);
             manualDeleteConfirmPopupPanel.Location = new Point(
-                Math.Max(4, Math.Min(localPoint.X - popupWidth + menuLabel.Width, screenPanel.Width - popupWidth - 4)),
-                Math.Max(4, Math.Min(localPoint.Y, screenPanel.Height - popupHeight - 4)));
+                Math.Max(S(4), Math.Min(localPoint.X - popupWidth + menuLabel.Width, screenPanel.Width - popupWidth - S(4))),
+                Math.Max(S(4), Math.Min(localPoint.Y, screenPanel.Height - popupHeight - S(4))));
 
             manualDeleteConfirmPopupPanel.ResumeLayout();
             manualDeleteConfirmPopupPanel.Visible = true;
@@ -20266,6 +22715,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             StopAutoDeleteRequestMessage(message, false);
 
+            TimeSpan requestMessageAutoDeleteDelay = RequestMessageAutoDeleteDelay;
             DateTime dueUtc = DateTime.UtcNow + requestMessageAutoDeleteDelay;
             AutoDeleteCountdownState countdownState = new()
             {
@@ -20369,7 +22819,15 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     if (index >= 0 && index + 1 < outputTable.Controls.Count &&
                         outputTable.Controls[index + 1] is TimerLabel menuLabel)
                     {
-                        ConfigureOpenMessageIndicator(menuLabel);
+                        if (ShouldUseDeleteOnlyOverviewAction(message))
+                        {
+                            ConfigureDeleteOnlyMessageIndicator(menuLabel);
+                        }
+                        else
+                        {
+                            ConfigureOpenMessageIndicator(menuLabel);
+                        }
+
                         menuLabel.ForeColor = MainPrimaryTextColor();
                         menuLabel.CanFlash = false;
                         menuLabel.Invalidate();
@@ -20463,14 +22921,14 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             TimerLabel _message = new()
             {
                 Width = actionWidth,
-                Height = 18,
+                Height = S(18),
                 AutoSize = false,
                 BackColor = Color.Transparent,
                 ForeColor = MainPrimaryTextColor(),
                 Font = textFontBold,
                 Text = _text,
                 BorderStyle = BorderStyle.None,
-                Margin = new Padding(0, 0, 2, 0),
+                Margin = SPad(new Padding(0, 0, 2, 0)),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 TextAlign = ContentAlignment.MiddleRight,
             };
@@ -20636,7 +23094,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private int GetPreviewWrapLength()
         {
-            return DcduStyleManager.IsBoeing ? 52 : 50;
+            // Boeing uses a wider visual font/spacing in the styled preview.
+            // 52 chars can pass the character wrap check but still clip on the
+            // physical DCDU screen, e.g. "... REQUEST BEING PROCESSED STANDBY".
+            return DcduStyleManager.IsBoeing ? 45 : 50;
         }
 
         private string FormatAtisPreviewText(string text)
@@ -20697,7 +23158,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private int GetAtisPreviewWrapLength()
         {
-            return DcduStyleManager.IsBoeing ? 50 : 48;
+            return DcduStyleManager.IsBoeing ? 45 : 48;
         }
 
         private static string InsertAtisPreviewSectionBreaks(string text)
@@ -20748,6 +23209,58 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             return Regex.Replace(result, @"\n{2,}", "\n").Trim();
         }
 
+        private static int GetPreviewVisibleLength(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0;
+            }
+
+            // @...@ markers are formatting markers only. They are not visible
+            // characters on the DCDU and must not affect wrapping.
+            return text.Count(character => character != '@');
+        }
+
+        private static int FindPreviewWrapBreakIndex(string line, int maxVisibleChars)
+        {
+            if (string.IsNullOrEmpty(line))
+            {
+                return -1;
+            }
+
+            int visible = 0;
+            int lastSpaceIndex = -1;
+            int visibleAtLastSpace = 0;
+
+            for (int i = 0; i < line.Length; i++)
+            {
+                char character = line[i];
+
+                if (character != '@')
+                {
+                    visible++;
+                }
+
+                if (character == ' ')
+                {
+                    lastSpaceIndex = i;
+                    visibleAtLastSpace = visible;
+                }
+
+                if (visible > maxVisibleChars)
+                {
+                    if (lastSpaceIndex >= 0 && visibleAtLastSpace >= maxVisibleChars / 2)
+                    {
+                        return lastSpaceIndex;
+                    }
+
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
         private static string WrapPreviewText(string text, int maxChars)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -20768,13 +23281,13 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     continue;
                 }
 
-                while (line.Length > maxChars)
+                while (GetPreviewVisibleLength(line) > maxChars)
                 {
-                    int breakAt = line.LastIndexOf(' ', Math.Min(maxChars, line.Length - 1));
+                    int breakAt = FindPreviewWrapBreakIndex(line, maxChars);
 
-                    if (breakAt < maxChars / 2)
+                    if (breakAt < 1)
                     {
-                        breakAt = Math.Min(maxChars, line.Length);
+                        breakAt = Math.Min(line.Length, maxChars);
                     }
 
                     wrappedLines.Add(line.Substring(0, breakAt).Trim());
@@ -20801,9 +23314,13 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 .Replace("\r\n", "\n")
                 .Replace("\r", "\n")
                 .Replace("@@", " N/A ")
-                .Replace("@", "\n")
                 .Replace("_", " ")
                 .ToUpperInvariant();
+
+            // @...@ marks values for the styled message preview. In the CLR hover
+            // popup these markers must become plain inline text, not hard line breaks.
+            normalized = Regex.Replace(normalized, @"@([^@]+)@", " $1 ");
+            normalized = normalized.Replace("@", " ");
 
             List<string> sourceLines = normalized
                 .Split('\n')
@@ -20825,12 +23342,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             {
                 string line = sourceLine;
 
-                while (line.Length > 34)
+                while (line.Length > 38)
                 {
-                    int split = line.LastIndexOf(' ', Math.Min(34, line.Length - 1));
-                    if (split < 12)
+                    int split = line.LastIndexOf(' ', Math.Min(38, line.Length - 1));
+                    if (split < 14)
                     {
-                        split = Math.Min(34, line.Length);
+                        split = Math.Min(38, line.Length);
                     }
 
                     outputLines.Add(line.Substring(0, split).Trim());
@@ -20984,11 +23501,11 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 {
                     AutoSize = true,
                     BackColor = Color.Transparent,
-                    Font = CreateDpiStablePixelFont(textFontBold.FontFamily, Math.Max(7.2f, textFontBold.Size - 1.9f), FontStyle.Bold),
+                    Font = PopupHeaderFont(),
                     TextAlign = ContentAlignment.TopLeft,
-                    Location = new Point(7, 2),
-                    MaximumSize = new Size(208, 0),
-                    Padding = new Padding(0, 0, 4, 2),
+                    Location = SP(new Point(7, 2)),
+                    MaximumSize = new Size(S(208), 0),
+                    Padding = SPad(new Padding(0, 0, 4, 2)),
                     Cursor = Cursors.Hand
                 };
                 clearanceTimelinePopupLabel.Click += (_, __) => ToggleClearanceTimelinePopup();
@@ -21022,12 +23539,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 Color.FromArgb(42, accent),
                 Color.FromArgb(13, accent),
                 LinearGradientMode.Vertical);
-            using Pen border = new Pen(Color.FromArgb(clearanceTimelinePopupPinned ? 190 : 118, accent), clearanceTimelinePopupPinned ? 1.35f : 1.0f);
+            using Pen border = new Pen(Color.FromArgb(clearanceTimelinePopupPinned ? 190 : 118, accent), clearanceTimelinePopupPinned ? ScaleUi(1.35f) : ScaleUi(1.0f));
             using Pen topLine = new Pen(Color.FromArgb(55, Color.White), 1.0f);
 
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(border, path);
-            e.Graphics.DrawLine(topLine, bounds.Left + 6, bounds.Top + 1, bounds.Right - 6, bounds.Top + 1);
+            e.Graphics.DrawLine(topLine, bounds.Left + S(6), bounds.Top + S(1), bounds.Right - S(6), bounds.Top + S(1));
         }
 
         private void ShowClearanceTimelinePopup(bool pin)
@@ -21284,7 +23801,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                         Size = new Size(Math.Max(2, segmentSize.Width + 12), lineHeight),
                         Margin = Padding.Empty,
                         Padding = Padding.Empty,
-                        UseCompatibleTextRendering = false
+                        UseCompatibleTextRendering = false,
+                        Tag = MessagePreviewTextTag
                     };
 
                     bodyHost.Controls.Add(label);
@@ -21323,8 +23841,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 Margin = Padding.Empty,
                 Padding = Padding.Empty,
                 BorderStyle = BorderStyle.None,
-                Cursor = Cursors.Hand,
-                TabStop = true
+                Cursor = Cursors.Default,
+                TabStop = false,
+                AccessibleDescription = "DCDU_STYLED_MESSAGE_ACTION"
             };
 
             // Display-only: the actual clickspot is the physical side button hotspot.
@@ -21350,7 +23869,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             rightSide = false;
             index = 0;
 
-            if (previewMessage == null ||
+            if (styledMessageReplySendInProgress ||
+                previewMessage == null ||
                 messageFormatPanel == null ||
                 messageFormatPanel.IsDisposed ||
                 !messageFormatPanel.Visible)
@@ -21650,9 +24170,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             Font headerFont = DcduStyleManager.IsBoeing
                 ? CreateDpiStablePointFont("Consolas", 10.8f, FontStyle.Bold)
                 : CreateDpiStablePointFont("Consolas", 11.2f, FontStyle.Bold);
-            Font bodyFont = DcduStyleManager.IsBoeing
-                ? CreateDpiStablePointFont("Consolas", 10.9f, FontStyle.Bold)
-                : CreateDpiStablePointFont("Consolas", 11.2f, FontStyle.Bold);
+            Font bodyFont = GetMessageTextFont(true);
 
             AddStyledPreviewText(page, StyledPreviewHeaderText(message), 20, 4, Math.Max(1, page.Width - 132), 24, DcduTheme.Green, headerFont);
             AddStyledPreviewText(page, "OPEN", page.Width - 96, 4, 88, 24, DcduStyleManager.IsBoeing ? DcduTheme.Cyan : DcduTheme.Cyan, headerFont, ContentAlignment.MiddleRight);
@@ -22277,6 +24795,272 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             return;
         }
 
+        private TimerLabel FindMenuLabelForMessage(CPDLCMessage message)
+        {
+            try
+            {
+                if (message == null || outputTable == null || outputTable.IsDisposed)
+                {
+                    return null;
+                }
+
+                int index = outputTable.Controls.GetChildIndex(message);
+                if (index >= 0 &&
+                    index + 1 < outputTable.Controls.Count &&
+                    outputTable.Controls[index + 1] is TimerLabel menuLabel)
+                {
+                    return menuLabel;
+                }
+            }
+            catch
+            {
+                // Cosmetic lookup only.
+            }
+
+            return null;
+        }
+
+        private void SetInlineCpdlcReplyStatus(CPDLCMessage statusMessage, TimerLabel statusMenuLabel, string statusText, Color color, bool startAutoDelete)
+        {
+            SafeUi(() =>
+            {
+                if (statusMessage == null || statusMessage.IsDisposed)
+                {
+                    return;
+                }
+
+                statusMessage.message = statusText;
+                statusMessage.Text = statusText;
+                statusMessage.ForeColor = color;
+                statusMessage.Invalidate();
+
+                TimerLabel targetMenuLabel = statusMenuLabel ?? FindMenuLabelForMessage(statusMessage);
+                if (targetMenuLabel != null && !targetMenuLabel.IsDisposed)
+                {
+                    targetMenuLabel.Text = string.Empty;
+                    targetMenuLabel.Tag = null;
+                    targetMenuLabel.Paint -= OpenMessageIndicator_Paint;
+                    targetMenuLabel.CanFlash = false;
+                    targetMenuLabel.ForeColor = color;
+                    targetMenuLabel.Invalidate();
+
+                    if (startAutoDelete)
+                    {
+                        StartAutoDeleteRequestMessageIfNeeded(statusMessage, targetMenuLabel);
+                    }
+                }
+
+                ApplyMessageFilter();
+            });
+        }
+
+        private System.Windows.Forms.Timer StartInlineCpdlcReplySpinner(CPDLCMessage statusMessage, TimerLabel statusMenuLabel, string replyText)
+        {
+            string[] frames = { "◷", "◶", "◵", "◴" };
+            int frame = 0;
+            string cleanReply = NormalizeCpdlcOverviewText(replyText);
+            if (cleanReply == "STBY")
+            {
+                cleanReply = "STANDBY";
+            }
+            if (string.IsNullOrWhiteSpace(cleanReply))
+            {
+                cleanReply = "CPDLC";
+            }
+
+            System.Windows.Forms.Timer timer = new()
+            {
+                Interval = 250
+            };
+
+            timer.Tick += (_, __) =>
+            {
+                frame = (frame + 1) % frames.Length;
+                SetInlineCpdlcReplyStatus(statusMessage, statusMenuLabel, frames[frame] + " " + cleanReply, DcduTheme.Amber, false);
+            };
+
+            timer.Start();
+            return timer;
+        }
+
+        private async Task<bool> TrySendCpdlcPacketForInlineStatusAsync(string recipient, string messageType, string packetData)
+        {
+            var connectionValues = new Dictionary<string, string> {
+                {"logon", logonCode ?? String.Empty},
+                {"from", callsign ?? String.Empty},
+                {"to", recipient ?? String.Empty},
+                {"type", messageType ?? String.Empty},
+                {"packet", packetData ?? String.Empty}
+            };
+
+            if (DebugUiPreviewMode)
+            {
+                Logger.Debug(String.Format("DEBUG UI PREVIEW: simulated inline CPDLC send to={0} | type={1} | packetLen={2}", SafeLogValue(recipient), SafeLogValue(messageType), (packetData ?? string.Empty).Length));
+                await Task.Delay(350);
+                return true;
+            }
+
+            try
+            {
+                UpdateSendingProgress(() => SendingProgress.Visible = true);
+                UpdateSendingProgress(() => SendingProgress.Value = 0);
+                UpdateSendingProgress(() => SendingProgress.PerformStep());
+
+                using FormUrlEncodedContent content = new(connectionValues);
+                HttpResponseMessage response = await webclient.PostAsync(HoppieConnectUrl, content);
+
+                UpdateSendingProgress(() => SendingProgress.PerformStep());
+
+                string responseString = await response.Content.ReadAsStringAsync();
+                string printString = responseString.ToString().ToUpper().Trim();
+
+                Logger.Debug(String.Format("INLINE PACKET SENT: to={0} | type={1} | packetLen={2}", SafeLogValue(recipient), SafeLogValue(messageType), (packetData ?? string.Empty).Length));
+                Logger.Debug(String.Format("INLINE HOPPIE RESPONSE: status={0} | length={1}", ClassifyHoppieResponseForLog(responseString), (responseString ?? string.Empty).Length));
+
+                if (IsHoppieNetworkLoadResponse(printString))
+                {
+                    HandleHoppieNetworkLoadResponse(printString);
+                    UpdateSendingProgress(() => SendingProgress.Visible = false);
+                    return false;
+                }
+
+                if (printString.Contains("ERROR") || !response.IsSuccessStatusCode)
+                {
+                    UpdateSendingProgress(() => SendingProgress.Visible = false);
+                    return false;
+                }
+
+                if (isErrorState)
+                {
+                    WriteMessage("HOPPIE CONNECTIVITY RESTORED.", "SYSTEM", "SYSTEM");
+                    isErrorState = false;
+                }
+
+                UpdateSendingProgress(() => SendingProgress.PerformStep());
+
+                if (printString != "OK")
+                {
+                    await TelexParser(printString);
+                }
+
+                UpdateSendingProgress(() => SendingProgress.Visible = false);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("Inline CPDLC send failed: " + ex.Message);
+                UpdateSendingProgress(() => SendingProgress.Visible = false);
+                return false;
+            }
+        }
+
+        private async Task SendDirectWilcoFromOverviewAsync(CPDLCMessage message, TimerLabel menuLabel)
+        {
+            if (!CanDirectWilcoFromOverview(message) || styledMessageReplySendInProgress)
+            {
+                return;
+            }
+
+            CPDLCMessage statusMessage = null;
+            TimerLabel statusMenuLabel = null;
+            System.Windows.Forms.Timer spinnerTimer = null;
+
+            try
+            {
+                styledMessageReplySendInProgress = true;
+
+                if (menuLabel != null && !menuLabel.IsDisposed)
+                {
+                    menuLabel.CanFlash = false;
+                    menuLabel.ForeColor = MainPrimaryTextColor();
+                    ConfigureOpenMessageIndicator(menuLabel);
+                    menuLabel.Invalidate();
+                }
+
+                string replyText = "WILCO";
+                statusMessage = WriteMessage("◷ " + replyText, "CPDLC", message.recipient, true);
+                statusMenuLabel = FindMenuLabelForMessage(statusMessage);
+
+                if (statusMenuLabel != null && !statusMenuLabel.IsDisposed)
+                {
+                    statusMenuLabel.Text = string.Empty;
+                    statusMenuLabel.Tag = null;
+                    statusMenuLabel.Paint -= OpenMessageIndicator_Paint;
+                    statusMenuLabel.CanFlash = false;
+                    statusMenuLabel.Invalidate();
+                }
+
+                spinnerTimer = StartInlineCpdlcReplySpinner(statusMessage, statusMenuLabel, replyText);
+
+                message.header.ResponseID = messageOutCounter;
+                string packet = string.Format(
+                    "/data2/{0}/{1}/N/WILCO",
+                    message.header.ResponseID,
+                    message.header.MessageID);
+
+                TrackClearanceReply(message, replyText);
+
+                Task<bool> sendTask = TrySendCpdlcPacketForInlineStatusAsync(message.recipient, message.type, packet);
+                await Task.WhenAll(sendTask, Task.Delay(900));
+
+                bool sent = sendTask.Result;
+
+                spinnerTimer.Stop();
+                spinnerTimer.Dispose();
+                spinnerTimer = null;
+
+                if (sent)
+                {
+                    message.acknowledged = true;
+                    message.ForeColor = SystemColors.ControlDark;
+                    messageOutCounter += 1;
+
+                    SetInlineCpdlcReplyStatus(statusMessage, statusMenuLabel, BuildCpdlcSentReplyOverviewText(replyText), DcduTheme.Green, true);
+                }
+                else
+                {
+                    SetInlineCpdlcReplyStatus(statusMessage, statusMenuLabel, "✕ " + replyText + " FAILED", CallsignMismatchAlarmColor(), true);
+
+                    if (menuLabel != null && !menuLabel.IsDisposed)
+                    {
+                        menuLabel.ForeColor = CallsignMismatchAlarmColor();
+                        ConfigureOpenMessageIndicator(menuLabel);
+                        menuLabel.Invalidate();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("Direct WILCO from overview failed: " + ex.Message);
+
+                if (spinnerTimer != null)
+                {
+                    spinnerTimer.Stop();
+                    spinnerTimer.Dispose();
+                    spinnerTimer = null;
+                }
+
+                SetInlineCpdlcReplyStatus(statusMessage, statusMenuLabel, "✕ WILCO FAILED", CallsignMismatchAlarmColor(), true);
+
+                if (menuLabel != null && !menuLabel.IsDisposed)
+                {
+                    menuLabel.ForeColor = CallsignMismatchAlarmColor();
+                    ConfigureOpenMessageIndicator(menuLabel);
+                    menuLabel.Invalidate();
+                }
+            }
+            finally
+            {
+                if (spinnerTimer != null)
+                {
+                    spinnerTimer.Stop();
+                    spinnerTimer.Dispose();
+                }
+
+                styledMessageReplySendInProgress = false;
+            }
+        }
+
         public CPDLCMessage WriteMessage(string _response, string _type, string _recipient, bool _outbound = false, CPDLCResponse _header = null)
         {
             if (_outbound && string.Equals(_type, "ATIS", StringComparison.OrdinalIgnoreCase))
@@ -22317,9 +25101,36 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             TrackAutoAtisLetterFromMessage(message);
 
+            if (_outbound &&
+                string.Equals(_type, "CPDLC", StringComparison.OrdinalIgnoreCase))
+            {
+                if (IsCpdlcSentReplyOverviewText(message.message))
+                {
+                    message.ForeColor = DcduTheme.Green;
+                }
+                else if (IsCpdlcSendingReplyOverviewText(message.message))
+                {
+                    message.ForeColor = DcduTheme.Amber;
+                }
+                else if (IsCpdlcFailedReplyOverviewText(message.message))
+                {
+                    message.ForeColor = CallsignMismatchAlarmColor();
+                }
+            }
+
             Logger.Debug("Writing message: " + _response);
 
             TimerLabel menuLabel = CreateTimerLabel(">>", true);
+            if (ShouldUseDeleteOnlyOverviewAction(message))
+            {
+                ConfigureDeleteOnlyMessageIndicator(menuLabel);
+                menuLabel.CanFlash = false;
+            }
+            else if (CanDirectWilcoFromOverview(message))
+            {
+                menuLabel.CanFlash = true;
+            }
+
             if (IsCpdlcStationDetectedText(_response))
             {
                 menuLabel.Tag = null;
@@ -22354,6 +25165,17 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 if (IsOpenMessageDeleteActionHit(clickedMenuLabel, e.Location))
                 {
                     ShowManualDeleteConfirmPopup(message, clickedMenuLabel);
+                    return;
+                }
+
+                if (ShouldUseDeleteOnlyOverviewAction(message))
+                {
+                    return;
+                }
+
+                if (CanDirectWilcoFromOverview(message))
+                {
+                    ShowAutoDeleteActionPopup(message, clickedMenuLabel);
                     return;
                 }
 
@@ -22473,6 +25295,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     }
 
                     callsign = userVATSIMData.callsign;
+                    EnsureFlightPhaseSignature(userVATSIMData);
                     UpdateCallsignDisplay();
                     _ = RefreshVatsimOnlineStatusAsync(true);
 
@@ -22530,6 +25353,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     Logger.Debug("Simbrief Data Retrieved and Parsed");
 
                     reportFixes = simbriefData.fix.Where(x => x.is_sid_star == "0" && !new string[] { "apt" }.Contains(x.type)).Select(x => x.ident).ToArray();
+                    UpdateFlightPhaseBadge();
                     response += " SIMBRIEF OK,";
                 }
 
@@ -22610,6 +25434,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 flightPhaseArrivalSeen = false;
                 flightPhaseDepartureSeen = false;
                 lastFlightPhaseSignature = string.Empty;
+                ResetFlightPhaseTrendTracking();
                 arrivalReloadReminderShown = false;
                 arrivalReloadReminderStartUtc = DateTime.MinValue;
                 arrivalReloadReminderSignature = string.Empty;
@@ -22855,11 +25680,30 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     return !rightSide && index == bottom;
 
                 case EmbeddedSetupPage.Options:
-                    return ((!rightSide || rightSide) && (index == 1 || index == 2 || index == 3 || index == 4)) ||
-                           (!rightSide && index == bottom);
+                    if (!rightSide)
+                    {
+                        return index == bottom;
+                    }
+
+                    if (index == 1 || index == 2)
+                    {
+                        return true;
+                    }
+
+                    if (AutoDeleteRequestMessages)
+                    {
+                        int textSizeRow = DcduStyleManager.IsBoeing ? 5 : bottom;
+                        return index == 3 || index == 4 || index == textSizeRow;
+                    }
+
+                    return index == 3 || index == 4;
+
+                case EmbeddedSetupPage.AutoDeleteTimer:
+                    return (index >= 1 && index <= 4) || (!rightSide && index == bottom);
 
                 case EmbeddedSetupPage.Style:
-                    return !rightSide && (index == 1 || index == 2 || index == bottom);
+                    return (!rightSide && (index == 1 || index == 2 || index == bottom)) ||
+                           (rightSide && index == 3);
 
                 case EmbeddedSetupPage.UpdateRollback:
                     if (!rightSide && index == bottom)
@@ -22913,25 +25757,61 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     break;
 
                 case EmbeddedSetupPage.Options:
-                    if (index == 1)
+                    if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupMainMenu();
+                    }
+                    else if (rightSide && index == 1)
                     {
                         ToggleEmbeddedSetupPlaySound();
                     }
-                    else if (index == 2)
+                    else if (rightSide && index == 2)
                     {
                         ToggleEmbeddedSetupAutoDelete();
                     }
-                    else if (index == 3)
+                    else if (rightSide)
                     {
-                        ToggleEmbeddedSetupFsuipc();
+                        if (AutoDeleteRequestMessages)
+                        {
+                            int textSizeRow = DcduStyleManager.IsBoeing ? 5 : bottom;
+
+                            if (index == 3)
+                            {
+                                CycleEmbeddedSetupAutoDeleteSeconds();
+                            }
+                            else if (index == 4)
+                            {
+                                ToggleEmbeddedSetupFsuipc();
+                            }
+                            else if (index == textSizeRow)
+                            {
+                                CycleEmbeddedSetupMessageTextSize();
+                            }
+                        }
+                        else
+                        {
+                            if (index == 3)
+                            {
+                                ToggleEmbeddedSetupFsuipc();
+                            }
+                            else if (index == 4)
+                            {
+                                CycleEmbeddedSetupMessageTextSize();
+                            }
+                        }
                     }
-                    else if (index == 4)
+                    break;
+
+                case EmbeddedSetupPage.AutoDeleteTimer:
+                    if (!rightSide && index == bottom)
                     {
-                        CycleEmbeddedSetupMessageTextSize();
+                        ShowEmbeddedSetupOptionsPage();
                     }
-                    else if (!rightSide && index == bottom)
+                    else if (index >= 1 && index <= 4)
                     {
-                        ShowEmbeddedSetupMainMenu();
+                        int[] values = EmbeddedSetupAutoDeleteTimerValues();
+                        int offset = rightSide ? 4 : 0;
+                        SetEmbeddedSetupAutoDeleteSeconds(values[offset + index - 1]);
                     }
                     break;
 
@@ -22943,6 +25823,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     else if (!rightSide && index == 2)
                     {
                         SetEmbeddedSetupDisplayStyle(DcduStyleManager.Boeing);
+                    }
+                    else if (rightSide && index == 3)
+                    {
+                        CycleEmbeddedSetupWindowScale();
                     }
                     else if (!rightSide && index == bottom)
                     {
@@ -23002,10 +25886,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             messageFormatPanel.Visible = true;
             messageFormatPanel.Enabled = true;
             messageFormatPanel.BringToFront();
-            messageFormatPanel.Location = new Point(12, 10);
-            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - 24), Math.Max(1, screenPanel.Height - 20));
-            messageFormatPanel.Padding = new Padding(0);
-            messageFormatPanel.Margin = new Padding(0);
+            messageFormatPanel.Location = SP(new Point(12, 10));
+            messageFormatPanel.Size = new Size(Math.Max(1, screenPanel.Width - S(24)), Math.Max(1, screenPanel.Height - S(20)));
+            messageFormatPanel.Padding = SPad(new Padding(0));
+            messageFormatPanel.Margin = SPad(new Padding(0));
             messageFormatPanel.AutoScroll = false;
             messageFormatPanel.FlowDirection = FlowDirection.LeftToRight;
             messageFormatPanel.WrapContents = false;
@@ -23036,10 +25920,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 Font = font ?? EmbeddedSetupMenuFont(),
                 Text = text ?? string.Empty,
                 TextAlign = align,
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                Margin = new Padding(0),
-                Padding = new Padding(0)
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, height)),
+                Size = new Size(ScaleChildWidth(parent, x, width), ScaleChildHeight(parent, y, height)),
+                Margin = SPad(new Padding(0)),
+                Padding = SPad(new Padding(0))
             };
 
             parent.Controls.Add(label);
@@ -23167,23 +26051,85 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             Font menuFont = EmbeddedSetupMenuFont();
             Color color = MainPrimaryTextColor();
 
+            int bottom = EmbeddedSetupBottomIndex();
+            int soundRow = 1;
+            int autoDeleteRow = 2;
+            int timerRow = AutoDeleteRequestMessages ? 3 : -1;
+            int fsuipcRow = AutoDeleteRequestMessages ? 4 : 3;
+            int textSizeRow = AutoDeleteRequestMessages
+                ? (DcduStyleManager.IsBoeing ? 5 : bottom)
+                : 4;
+
             AddEmbeddedSetupLabel(page, "SETUP OPTIONS", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
-            AddEmbeddedSetupLabel(page, "<SOUND ALERT", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(PlaySound), page.Width - 130, EmbeddedSetupRightLskTextY(page, 1), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
 
-            AddEmbeddedSetupLabel(page, "<AUTO DELETE MSG", 4, EmbeddedSetupLskTextY(page, 2), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(AutoDeleteRequestMessages), page.Width - 130, EmbeddedSetupRightLskTextY(page, 2), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "SOUND ALERT", 4, EmbeddedSetupLskTextY(page, soundRow), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(PlaySound) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, soundRow), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
 
-            AddEmbeddedSetupLabel(page, "<USE FSUIPC", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(UseFSUIPC), page.Width - 130, EmbeddedSetupRightLskTextY(page, 3), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "AUTO DELETE MSG", 4, EmbeddedSetupLskTextY(page, autoDeleteRow), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(AutoDeleteRequestMessages) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, autoDeleteRow), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
 
-            AddEmbeddedSetupLabel(page, "<MSG TEXT SIZE", 4, EmbeddedSetupLskTextY(page, 4), 280, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, MessageTextSize.ToUpperInvariant(), page.Width - 190, EmbeddedSetupRightLskTextY(page, 4), 186, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            if (AutoDeleteRequestMessages)
+            {
+                AddEmbeddedSetupLabel(page, "AUTO DELETE TIMER", 4, EmbeddedSetupLskTextY(page, timerRow), 300, 30, ContentAlignment.MiddleLeft, color, menuFont);
+                AddEmbeddedSetupLabel(page, AutoDeleteRequestMessageSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + "S>", page.Width - 130, EmbeddedSetupRightLskTextY(page, timerRow), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            }
 
-            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "USE FSUIPC", 4, EmbeddedSetupLskTextY(page, fsuipcRow), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(UseFSUIPC) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, fsuipcRow), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            int textSizeLabelX = (AutoDeleteRequestMessages && !DcduStyleManager.IsBoeing) ? 150 : 4;
+            int textSizeLabelWidth = (AutoDeleteRequestMessages && !DcduStyleManager.IsBoeing) ? 145 : 280;
+            AddEmbeddedSetupLabel(page, "MSG TEXT SIZE", textSizeLabelX, EmbeddedSetupLskTextY(page, textSizeRow), textSizeLabelWidth, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, MessageTextSize.ToUpperInvariant() + ">", page.Width - 190, EmbeddedSetupRightLskTextY(page, textSizeRow), 186, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, bottom), 140, 30, ContentAlignment.MiddleLeft, color, menuFont);
         }
 
 
+
+        private static int[] EmbeddedSetupAutoDeleteTimerValues()
+        {
+            return new[] { 5, 10, 15, 20, 30, 45, 60, 90 };
+        }
+
+        private void ShowEmbeddedSetupAutoDeleteTimerPage()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.AutoDeleteTimer);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+            int[] values = EmbeddedSetupAutoDeleteTimerValues();
+
+            AddEmbeddedSetupLabel(page, "AUTO DELETE TIMER", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "SELECT DELETE DELAY", 4, 34, page.Width - 8, 18, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+
+            for (int i = 0; i < 4; i++)
+            {
+                int seconds = values[i];
+                Color valueColor = seconds == AutoDeleteRequestMessageSeconds ? DcduTheme.Green : color;
+                AddEmbeddedSetupLabel(page, "<" + seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + " SEC", 4, EmbeddedSetupLskTextY(page, i + 1), 160, 30, ContentAlignment.MiddleLeft, valueColor, menuFont);
+            }
+
+            for (int i = 0; i < 4; i++)
+            {
+                int seconds = values[i + 4];
+                Color valueColor = seconds == AutoDeleteRequestMessageSeconds ? DcduTheme.Green : color;
+                AddEmbeddedSetupLabel(page, seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + " SEC>", page.Width - 160, EmbeddedSetupRightLskTextY(page, i + 1), 156, 30, ContentAlignment.MiddleRight, valueColor, menuFont);
+            }
+
+            AddEmbeddedSetupLabel(page, "<OPTIONS", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 190, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void SetEmbeddedSetupAutoDeleteSeconds(int seconds)
+        {
+            AutoDeleteRequestMessages = true;
+            AutoDeleteRequestMessageSeconds = seconds;
+            Properties.Settings.Default.Save();
+            ReapplyAutoDeleteRequestTimersForCurrentSetting();
+            ShowEmbeddedSetupAutoDeleteTimerPage();
+        }
 
         private void ShowEmbeddedSetupUpdateRollbackPage(bool refresh)
         {
@@ -23195,8 +26141,21 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             Color color = MainPrimaryTextColor();
 
             AddEmbeddedSetupLabel(page, "UPDATE / ROLLBACK", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
-            AddEmbeddedSetupLabel(page, "CURRENT VERSION", 4, 38, 180, 18, ContentAlignment.MiddleLeft, color, captionFont);
-            AddEmbeddedSetupLabel(page, System.Windows.Forms.Application.ProductVersion, page.Width - 210, 38, 206, 18, ContentAlignment.MiddleRight, DcduTheme.Amber, captionFont);
+
+            // Airbus LSK row 1 sits very close to the title area. When rollback
+            // releases are listed, the "CURRENT VERSION" labels overlap behind
+            // the first rollback row. Boeing has enough vertical room, so keep
+            // the current-version line there.
+            bool hideCurrentVersionLineForAirbusRollbackList =
+                !DcduStyleManager.IsBoeing &&
+                !embeddedSetupRollbackLoading &&
+                embeddedSetupRollbackReleases.Count > 0;
+
+            if (!hideCurrentVersionLineForAirbusRollbackList)
+            {
+                AddEmbeddedSetupLabel(page, "CURRENT VERSION", 4, 38, 180, 18, ContentAlignment.MiddleLeft, color, captionFont);
+                AddEmbeddedSetupLabel(page, System.Windows.Forms.Application.ProductVersion, page.Width - 210, 38, 206, 18, ContentAlignment.MiddleRight, DcduTheme.Amber, captionFont);
+            }
 
             if (embeddedSetupRollbackLoading)
             {
@@ -23466,8 +26425,115 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             AddEmbeddedSetupLabel(page, string.Equals(DcduStyleManager.CurrentStyle, DcduStyleManager.Boeing, StringComparison.OrdinalIgnoreCase) ? "ACTIVE" : string.Empty,
                 page.Width - 160, EmbeddedSetupRightLskTextY(page, 2), 156, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
 
-            AddEmbeddedSetupLabel(page, "STYLE APPLIES IMMEDIATELY", 4, EmbeddedSetupLskTextY(page, 4), page.Width - 8, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddEmbeddedSetupLabel(page, "WINDOW SCALE", 4, EmbeddedSetupLskTextY(page, 3), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, WindowScalePercent.ToString(System.Globalization.CultureInfo.InvariantCulture) + "%>", page.Width - 160, EmbeddedSetupRightLskTextY(page, 3), 156, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "STYLE/SCALE APPLIES IMMEDIATELY", 4, EmbeddedSetupLskTextY(page, 4), page.Width - 8, 22, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
             AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void CycleEmbeddedSetupWindowScale()
+        {
+            int[] values = { 100, 110, 120 };
+            int current = WindowScalePercent;
+            int next = values.FirstOrDefault(value => value > current);
+
+            if (next <= 0)
+            {
+                next = values[0];
+            }
+
+            SetEmbeddedSetupWindowScale(next);
+        }
+
+        private void SetEmbeddedSetupWindowScale(int percent)
+        {
+            WindowScalePercent = percent;
+            Properties.Settings.Default.Save();
+            RefreshWindowScaleUi();
+            ShowEmbeddedSetupStylePage();
+        }
+
+        private void ResetScaleSensitivePopups()
+        {
+            void RemovePopupPanel(ref Panel panel)
+            {
+                if (panel == null)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (screenPanel != null && !screenPanel.IsDisposed && screenPanel.Controls.Contains(panel))
+                    {
+                        screenPanel.Controls.Remove(panel);
+                    }
+
+                    panel.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug("Popup reset failed: " + ex.Message);
+                }
+                finally
+                {
+                    panel = null;
+                }
+            }
+
+            HideClearanceTimelinePopup();
+            HideAtisAvailabilityPopup();
+            HideAtisAutoPopup();
+            HideQuickWxPopup();
+            HidePdcQuickActionButton();
+            HideCpdlcLogonPopup();
+            HideAutoDeleteActionPopup();
+            HideManualDeleteConfirmPopup();
+
+            RemovePopupPanel(ref clearanceTimelinePopupPanel);
+            clearanceTimelinePopupLabel = null;
+
+            RemovePopupPanel(ref atisAvailabilityPopupPanel);
+            atisAvailabilityPopupLabel = null;
+
+            RemovePopupPanel(ref atisAutoPopupPanel);
+            atisAutoPopupLabel = null;
+
+            RemovePopupPanel(ref quickWxPopupPanel);
+
+            RemovePopupPanel(ref pdcActionPopupPanel);
+            RemovePopupPanel(ref cpdlcLogonPopupPanel);
+            RemovePopupPanel(ref autoDeleteActionPopupPanel);
+            RemovePopupPanel(ref manualDeleteConfirmPopupPanel);
+
+            autoDeleteActionPopupMessage = null;
+            autoDeleteActionPopupMenuLabel = null;
+            manualDeleteConfirmPopupMessage = null;
+        }
+
+        private void RefreshWindowScaleUi()
+        {
+            try
+            {
+                textFont = CreateDpiStablePointFont("Consolas", 10.5f, FontStyle.Regular);
+                textFontBold = CreateDpiStablePointFont("Consolas", 11.5f, FontStyle.Bold);
+                RefreshMessageTextFonts();
+                controlFont = CreateDpiStablePointFont("Segoe UI", 10.0f, FontStyle.Regular);
+                controlFontBold = CreateDpiStablePointFont("Segoe UI", 10.0f, FontStyle.Bold);
+                dataEntryFont = CreateDpiStablePointFont("Consolas", 13.0f, FontStyle.Bold);
+                Font = controlFont;
+
+                ResetScaleSensitivePopups();
+
+                ApplyDisplayStyle();
+                ApplyMessageFilter();
+                RefreshMainDisplaySurface();
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("Window scale refresh failed: " + ex.Message);
+            }
         }
 
         private void SetEmbeddedSetupDisplayStyle(string style)
@@ -23490,10 +26556,77 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             ShowEmbeddedSetupOptionsPage();
         }
 
+        private string EmbeddedSetupAutoDeleteValueText()
+        {
+            if (!AutoDeleteRequestMessages)
+            {
+                return "OFF";
+            }
+
+            return "ON " +
+                   AutoDeleteRequestMessageSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + "S";
+        }
+
+        private void ReapplyAutoDeleteRequestTimersForCurrentSetting()
+        {
+            SafeUi(() =>
+            {
+                if (outputTable == null || outputTable.IsDisposed)
+                {
+                    return;
+                }
+
+                List<CPDLCMessage> activeTimedMessages = autoDeleteRequestTimers.Keys.ToList();
+                foreach (CPDLCMessage message in activeTimedMessages)
+                {
+                    StopAutoDeleteRequestMessage(message, true);
+                }
+
+                if (!AutoDeleteRequestMessages)
+                {
+                    return;
+                }
+
+                foreach (CPDLCMessage message in outputTable.Controls.OfType<CPDLCMessage>().ToList())
+                {
+                    if (message == null || message.IsDisposed || !ShouldAutoDeleteRequestMessage(message))
+                    {
+                        continue;
+                    }
+
+                    int index = outputTable.Controls.GetChildIndex(message);
+                    if (index >= 0 &&
+                        index + 1 < outputTable.Controls.Count &&
+                        outputTable.Controls[index + 1] is TimerLabel menuLabel)
+                    {
+                        StartAutoDeleteRequestMessageIfNeeded(message, menuLabel);
+                    }
+                }
+            });
+        }
+
+        private void CycleEmbeddedSetupAutoDeleteSeconds()
+        {
+            int[] values = EmbeddedSetupAutoDeleteTimerValues();
+            int current = AutoDeleteRequestMessageSeconds;
+            int next = values.FirstOrDefault(value => value > current);
+
+            if (next <= 0)
+            {
+                next = values[0];
+            }
+
+            AutoDeleteRequestMessageSeconds = next;
+            Properties.Settings.Default.Save();
+            ReapplyAutoDeleteRequestTimersForCurrentSetting();
+            ShowEmbeddedSetupOptionsPage();
+        }
+
         private void ToggleEmbeddedSetupAutoDelete()
         {
             AutoDeleteRequestMessages = !AutoDeleteRequestMessages;
             Properties.Settings.Default.Save();
+            ReapplyAutoDeleteRequestTimersForCurrentSetting();
             ShowEmbeddedSetupOptionsPage();
         }
 
