@@ -396,6 +396,130 @@ namespace EasyCPDLC
             }
         }
 
+        private sealed class ReplyStatusTimeLabel : System.Windows.Forms.Label
+        {
+            public ReplyStatusTimeLabel()
+            {
+                SetStyle(
+                    ControlStyles.UserPaint |
+                    ControlStyles.AllPaintingInWmPaint |
+                    ControlStyles.OptimizedDoubleBuffer |
+                    ControlStyles.ResizeRedraw,
+                    true);
+            }
+
+            public string TimeText { get; set; } = string.Empty;
+
+            public string StatusMarker { get; set; } = "◷";
+
+            public Color StatusMarkerColor { get; set; } = DcduTheme.Amber;
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                string time = string.IsNullOrWhiteSpace(TimeText) ? (Text ?? string.Empty) : TimeText;
+                Font drawFont = Font ?? SystemFonts.DefaultFont;
+                Color timeColor = ForeColor;
+                TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoClipping;
+
+                Rectangle timeRect = new Rectangle(0, 0, Math.Max(1, ClientSize.Width), ClientSize.Height);
+                TextRenderer.DrawText(e.Graphics, time, drawFont, timeRect, timeColor, flags);
+
+                int markerX = TextRenderer.MeasureText(e.Graphics, time + " ", drawFont, Size.Empty, flags).Width + 3;
+                Rectangle markerRect = new Rectangle(markerX, 0, Math.Max(1, ClientSize.Width - markerX), ClientSize.Height);
+                TextRenderer.DrawText(e.Graphics, StatusMarker ?? string.Empty, drawFont, markerRect, StatusMarkerColor, flags);
+            }
+        }
+
+
+        private sealed class ReplyStatusOverviewMessage : CPDLCMessage
+        {
+            private static readonly char[] ReplyStatusMarkers = { '◷', '◶', '◵', '◴', '✓', '✕' };
+
+            public ReplyStatusOverviewMessage(string type, string recipient, string message, bool outbound = false, CPDLCResponse header = null)
+                : base(type, recipient, message, outbound, header)
+            {
+                SetStyle(
+                    ControlStyles.UserPaint |
+                    ControlStyles.AllPaintingInWmPaint |
+                    ControlStyles.OptimizedDoubleBuffer |
+                    ControlStyles.ResizeRedraw |
+                    ControlStyles.Selectable,
+                    true);
+            }
+
+            public Color StatusPrefixColor { get; set; } = DcduTheme.Amber;
+
+            public static bool TrySplitStatusPrefix(string text, out string prefix, out string rest)
+            {
+                prefix = string.Empty;
+                rest = text ?? string.Empty;
+
+                string source = (text ?? string.Empty).TrimStart();
+                if (source.Length >= 2 &&
+                    ReplyStatusMarkers.Contains(source[0]) &&
+                    char.IsWhiteSpace(source[1]))
+                {
+                    prefix = source[0].ToString();
+                    rest = source.Substring(2).TrimStart();
+                    return true;
+                }
+
+                return false;
+            }
+
+            private int StatusPrefixSlotWidth(Font drawFont)
+            {
+                TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoClipping;
+
+                int maxMarkerWidth = 0;
+                foreach (char marker in ReplyStatusMarkers)
+                {
+                    int width = TextRenderer.MeasureText(marker.ToString(), drawFont, Size.Empty, flags).Width;
+                    if (width > maxMarkerWidth)
+                    {
+                        maxMarkerWidth = width;
+                    }
+                }
+
+                return Math.Max(maxMarkerWidth + 8, 18);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                string text = Text ?? string.Empty;
+                Font drawFont = Font ?? SystemFonts.DefaultFont;
+                Color bodyColor = ForeColor;
+
+                if (!TrySplitStatusPrefix(text, out string prefix, out string rest))
+                {
+                    TextRenderer.DrawText(
+                        e.Graphics,
+                        text,
+                        drawFont,
+                        ClientRectangle,
+                        bodyColor,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+                    return;
+                }
+
+                TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoClipping;
+                int prefixSlotWidth = StatusPrefixSlotWidth(drawFont);
+
+                Rectangle prefixRect = new Rectangle(0, 0, Math.Max(1, prefixSlotWidth), ClientSize.Height);
+                TextRenderer.DrawText(e.Graphics, prefix, drawFont, prefixRect, StatusPrefixColor, flags);
+
+                Rectangle restRect = new Rectangle(prefixSlotWidth, 0, Math.Max(1, ClientSize.Width - prefixSlotWidth), ClientSize.Height);
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    rest,
+                    drawFont,
+                    restRect,
+                    bodyColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+            }
+        }
+
+
         public Pilot userVATSIMData;
         private VATSIMRootobject vatsimData;
         private Navlog simbriefData;
@@ -1564,9 +1688,19 @@ private TelexForm tForm;
             }
             set
             {
-                _currentATCUnit = string.IsNullOrWhiteSpace(value)
+                string previousUnit = _currentATCUnit;
+                string newUnit = string.IsNullOrWhiteSpace(value)
                     ? null
                     : value.Trim().ToUpperInvariant();
+
+                if (!string.IsNullOrWhiteSpace(previousUnit) &&
+                    string.IsNullOrWhiteSpace(newUnit) &&
+                    Connected)
+                {
+                    StartCpdlcVerifiedSuggestionCooldown(previousUnit, "current ATS unit cleared");
+                }
+
+                _currentATCUnit = newUnit;
 
                 UpdateCurrentAtcUnitDisplay();
                 UpdateOnlineStatusLabel();
@@ -3113,6 +3247,8 @@ private TelexForm tForm;
         private DateTime cpdlcHandoverStartedUtc = DateTime.MinValue;
         private readonly System.Windows.Forms.Timer cpdlcHandoverBlinkTimer = new();
         private static readonly TimeSpan cpdlcHandoverFrequencyGrace = TimeSpan.FromMinutes(15);
+        private readonly Dictionary<string, DateTime> cpdlcVerifiedSuggestionCooldownUntilUtc = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan cpdlcVerifiedSuggestionCooldown = TimeSpan.FromMinutes(5);
         private string lastCpdlcStationDetectedNotificationKey = string.Empty;
         private DateTime lastCpdlcStationDetectedNotificationUtc = DateTime.MinValue;
         private static readonly TimeSpan cpdlcStationDetectedNotificationCooldown = TimeSpan.FromMinutes(10);
@@ -4089,11 +4225,25 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     else if (isUnread)
                     {
                         message.Font = GetMessageTextFont(true);
-                        message.ForeColor = DcduTheme.Amber;
+
+                        if (MessageNeedsOverviewReplyIndicator(message.type, message.outbound, message.header) && !message.acknowledged)
+                        {
+                            SetReplyStatusTimeLabel(message, "◷", DcduTheme.Amber);
+                            message.ForeColor = MainPrimaryTextColor();
+                        }
+                        else
+                        {
+                            message.ForeColor = DcduTheme.Amber;
+                        }
                     }
                     else if (message.acknowledged)
                     {
                         message.Font = GetMessageTextFont(false);
+                        if (MessageNeedsOverviewReplyIndicator(message.type, message.outbound, message.header))
+                        {
+                            SetReplyStatusTimeLabel(message, "✓", DcduTheme.Green);
+                        }
+
                         message.ForeColor = SystemColors.ControlDark;
                     }
                     else
@@ -4124,6 +4274,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     {
                         timerLabel.ForeColor = MainPrimaryTextColor();
                     }
+                }
+                else if (control is ReplyStatusTimeLabel replyTimeLabel)
+                {
+                    replyTimeLabel.ForeColor = MainPrimaryTextColor();
+                    replyTimeLabel.Invalidate();
                 }
                 else if (control is AccessibleLabel label)
                 {
@@ -5792,6 +5947,145 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             UpdateCpdlcDiscoveryLabel();
         }
 
+        private static string NormalizeCpdlcCooldownKey(string value)
+        {
+            string clean = (value ?? string.Empty).Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return string.Empty;
+            }
+
+            clean = Regex.Replace(clean, @"[^A-Z0-9_]", string.Empty);
+            return clean;
+        }
+
+        private static IEnumerable<string> CpdlcCooldownAliases(string codeOrController)
+        {
+            string clean = NormalizeCpdlcCooldownKey(codeOrController);
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                yield break;
+            }
+
+            yield return clean;
+
+            string prefix = clean.Split('_').FirstOrDefault() ?? string.Empty;
+            prefix = Regex.Replace(prefix, @"[^A-Z0-9]", string.Empty);
+            if (!string.IsNullOrWhiteSpace(prefix) && !string.Equals(prefix, clean, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return prefix;
+            }
+        }
+
+        private void StartCpdlcVerifiedSuggestionCooldown(string codeOrController, string reason)
+        {
+            List<string> aliases = CpdlcCooldownAliases(codeOrController)
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (aliases.Count == 0)
+            {
+                return;
+            }
+
+            DateTime until = DateTime.UtcNow + cpdlcVerifiedSuggestionCooldown;
+
+            foreach (string alias in aliases)
+            {
+                cpdlcVerifiedSuggestionCooldownUntilUtc[alias] = until;
+            }
+
+            lastCpdlcStationDetectedNotificationKey = string.Empty;
+            lastCpdlcStationDetectedNotificationUtc = DateTime.MinValue;
+
+            Logger.Debug("CPDLC verified suggestion cooldown: " + string.Join(",", aliases) + " until " + until.ToString("HH:mm:ss") + "Z" +
+                (string.IsNullOrWhiteSpace(reason) ? string.Empty : " (" + reason + ")"));
+        }
+
+        private void StartCpdlcVerifiedSuggestionCooldownForCurrentConnection(string reason, string sender = null)
+        {
+            if (!string.IsNullOrWhiteSpace(_currentATCUnit))
+            {
+                StartCpdlcVerifiedSuggestionCooldown(_currentATCUnit, reason);
+            }
+
+            if (!string.IsNullOrWhiteSpace(sender))
+            {
+                StartCpdlcVerifiedSuggestionCooldown(sender, reason);
+                string senderCode = ExtractCpdlcLogonCode(sender, string.Empty);
+                if (!string.IsNullOrWhiteSpace(senderCode))
+                {
+                    StartCpdlcVerifiedSuggestionCooldown(senderCode, reason);
+                }
+            }
+        }
+
+        private void PruneCpdlcVerifiedSuggestionCooldowns()
+        {
+            if (cpdlcVerifiedSuggestionCooldownUntilUtc.Count == 0)
+            {
+                return;
+            }
+
+            DateTime now = DateTime.UtcNow;
+            foreach (string key in cpdlcVerifiedSuggestionCooldownUntilUtc
+                .Where(pair => pair.Value <= now)
+                .Select(pair => pair.Key)
+                .ToList())
+            {
+                cpdlcVerifiedSuggestionCooldownUntilUtc.Remove(key);
+            }
+        }
+
+        private bool IsCpdlcVerifiedSuggestionCooldownActive(string code, string controller, out string remainingText)
+        {
+            remainingText = string.Empty;
+            PruneCpdlcVerifiedSuggestionCooldowns();
+
+            DateTime newestUntil = DateTime.MinValue;
+
+            foreach (string alias in CpdlcCooldownAliases(code).Concat(CpdlcCooldownAliases(controller)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (cpdlcVerifiedSuggestionCooldownUntilUtc.TryGetValue(alias, out DateTime until) && until > DateTime.UtcNow)
+                {
+                    if (until > newestUntil)
+                    {
+                        newestUntil = until;
+                    }
+                }
+            }
+
+            if (newestUntil == DateTime.MinValue)
+            {
+                return false;
+            }
+
+            TimeSpan remaining = newestUntil - DateTime.UtcNow;
+            remainingText = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes)).ToString(System.Globalization.CultureInfo.InvariantCulture) + " min";
+            return true;
+        }
+
+        private static bool IsCpdlcGoodbyeOrUnicomInstruction(string message)
+        {
+            string clean = NormalizeCpdlcOverviewText(message);
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return false;
+            }
+
+            bool goodbye = clean.Contains("GOODBYE") || clean.Contains("GOOD BYE");
+            bool advisory = clean.Contains("MONITOR ADVISORY") ||
+                            clean.Contains("MONITOR UNICOM") ||
+                            clean.Contains("UNICOM") ||
+                            clean.Contains("122.8") ||
+                            clean.Contains("122800") ||
+                            clean.Contains("122 800");
+
+            return goodbye && advisory;
+        }
+
         private string GetActiveCpdlcVerificationCode()
         {
             if (!string.IsNullOrWhiteSpace(cpdlcHandoverTargetCode))
@@ -5838,6 +6132,11 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 !IsAirborneNowForPhase() ||
                 string.IsNullOrWhiteSpace(targetCode) ||
                 IsVatsimTransceiverDataStale())
+            {
+                return false;
+            }
+
+            if (IsCpdlcVerifiedSuggestionCooldownActive(targetCode, targetCode, out _))
             {
                 return false;
             }
@@ -7121,6 +7420,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             // but should not spam the message list.
             candidates = candidates
                 .Where(candidate => candidate.IsTunedFrequencyMatch)
+                .Where(candidate => !IsCpdlcVerifiedSuggestionCooldownActive(candidate.Code, candidate.Controller, out _))
                 .ToList();
 
             if (candidates.Count == 0)
@@ -7490,6 +7790,12 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 if (!IsHoppieLogonOnline(code))
                 {
                     Logger.Debug("CPDLC discovery skip " + callsign + ": logon " + code + " not online on Hoppie.");
+                    continue;
+                }
+
+                if (IsCpdlcVerifiedSuggestionCooldownActive(code, callsign, out string cooldownRemaining))
+                {
+                    Logger.Debug("CPDLC discovery skip " + callsign + " / " + code + ": verified suggestion cooldown active for " + cooldownRemaining + ".");
                     continue;
                 }
 
@@ -10948,7 +11254,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 .Where(candidate => candidate != null &&
                                     candidate.Possible &&
                                     !string.IsNullOrWhiteSpace(candidate.Code) &&
-                                    IsHoppieLogonOnline(candidate.Code))
+                                    IsHoppieLogonOnline(candidate.Code) &&
+                                    !IsCpdlcVerifiedSuggestionCooldownActive(candidate.Code, candidate.Controller, out _))
                 .Select(candidate => VerifyCandidateAgainstActiveFrequency(candidate, currentPilotFreqs))
                 .GroupBy(candidate => candidate.Code.Trim().ToUpperInvariant() + "|" + (candidate.Controller ?? string.Empty).Trim().ToUpperInvariant())
                 .Select(group => group.OrderBy(GetCpdlcCandidateSortScore).First())
@@ -17468,7 +17775,15 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             }
 
             message.Font = GetMessageTextFont(true);
-            message.ForeColor = DcduTheme.Amber;
+            if (MessageNeedsOverviewReplyIndicator(message.type, message.outbound, message.header))
+            {
+                message.ForeColor = MainPrimaryTextColor();
+                SetReplyStatusTimeLabel(message, "◷", DcduTheme.Amber);
+            }
+            else
+            {
+                message.ForeColor = DcduTheme.Amber;
+            }
 
             if (menuLabel != null)
             {
@@ -17524,11 +17839,25 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                     }
                     else
                     {
+                        if (message is ReplyStatusOverviewMessage replyStatusMessage)
+                        {
+                            replyStatusMessage.StatusPrefixColor = HasSuccessfulOverviewReplyStatus(message)
+                                ? DcduTheme.Green
+                                : DcduTheme.Amber;
+                        }
+
                         message.ForeColor = message.acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
                     }
                 }
                 else
                 {
+                    if (message is ReplyStatusOverviewMessage replyStatusMessage)
+                    {
+                        replyStatusMessage.StatusPrefixColor = HasSuccessfulOverviewReplyStatus(message)
+                            ? DcduTheme.Green
+                            : DcduTheme.Amber;
+                    }
+
                     message.ForeColor = message.acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
                 }
             }
@@ -17549,8 +17878,15 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                         else
                         {
                             ConfigureOpenMessageIndicator(menuLabel);
-                            menuLabel.CanFlash = ShouldFlashForReply(message);
+                            menuLabel.CanFlash = ShouldFlashForReply(message) ||
+                                CanDirectWilcoFromOverview(message) ||
+                                CanDirectRogerFromOverview(message);
                         }
+                        if (MessageNeedsOverviewReplyIndicator(message.type, message.outbound, message.header))
+                        {
+                            SetReplyStatusTimeLabel(message, message.acknowledged ? "✓" : "◷", message.acknowledged ? DcduTheme.Green : DcduTheme.Amber);
+                        }
+
                         if (!menuLabel.CanFlash)
                         {
                             menuLabel.ForeColor = MainPrimaryTextColor();
@@ -19714,10 +20050,27 @@ catch {
                         if (index >= 0 && index + 1 < outputTable.Controls.Count && outputTable.Controls[index + 1] is TimerLabel timerLabel)
                         {
                             timerLabel.CanFlash = false;
-                            timerLabel.ForeColor = controlFrontColor;
+                            timerLabel.ForeColor = string.Equals(reply, "WILCO", StringComparison.OrdinalIgnoreCase)
+                                ? DcduTheme.Green
+                                : controlFrontColor;
                         }
 
-                        message.ForeColor = SystemColors.ControlDark;
+                        unreadMessages.Remove(message);
+                        if (unreadMessages.Count == 0)
+                        {
+                            unreadReminderTimer.Stop();
+                        }
+
+                        if (string.Equals(reply, "WILCO", StringComparison.OrdinalIgnoreCase))
+                        {
+                            SetOriginalOverviewReplyStatus(message, index >= 0 && index + 1 < outputTable.Controls.Count ? outputTable.Controls[index + 1] as TimerLabel : null, "✓", DcduTheme.Green, true);
+                        }
+                        else
+                        {
+                            message.Font = GetMessageTextFont(false);
+                            message.ForeColor = SystemColors.ControlDark;
+                            message.Invalidate();
+                        }
                     }
 
                     messageOutCounter += 1;
@@ -20833,6 +21186,168 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             return !IsCpdlcDirectStatusText(message.message);
         }
 
+        private static bool IsCpdlcInformationalStatusText(string text)
+        {
+            string clean = NormalizeCpdlcOverviewText(text);
+
+            if (string.IsNullOrWhiteSpace(clean))
+            {
+                return false;
+            }
+
+            bool clearanceConfirmed =
+                (clean.Contains("CDA RECEIVED") ||
+                 clean.Contains("CLEARANCE RECEIVED") ||
+                 clean.Contains("CLEARENCE RECEIVED")) &&
+                (clean.Contains("CLEARANCE CONFIRMED") ||
+                 clean.Contains("CLEARENCE CONFIRMED") ||
+                 clean.Contains("CONFIRMED"));
+
+            return clearanceConfirmed;
+        }
+
+        private static string StripOverviewReplyStatusPrefix(string text)
+        {
+            if (ReplyStatusOverviewMessage.TrySplitStatusPrefix(text, out _, out string rest))
+            {
+                return rest;
+            }
+
+            return (text ?? string.Empty).TrimStart();
+        }
+
+        private static bool HasOverviewReplyStatusPrefix(CPDLCMessage message)
+        {
+            return message != null &&
+                   ReplyStatusOverviewMessage.TrySplitStatusPrefix(message.Text, out _, out _);
+        }
+
+        private static bool HasSuccessfulOverviewReplyStatus(CPDLCMessage message)
+        {
+            return message != null &&
+                   ReplyStatusOverviewMessage.TrySplitStatusPrefix(message.Text, out string prefix, out _) &&
+                   string.Equals(prefix, "✓", StringComparison.Ordinal);
+        }
+
+        private static bool MessageNeedsOverviewReplyIndicator(string messageType, bool outbound, CPDLCResponse header)
+        {
+            return !outbound &&
+                   string.Equals(messageType ?? string.Empty, "CPDLC", StringComparison.OrdinalIgnoreCase) &&
+                   header != null &&
+                   !string.Equals(header.Responses ?? string.Empty, "NE", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void SetOriginalOverviewReplyStatus(CPDLCMessage message, TimerLabel menuLabel, string marker, Color markerColor, bool acknowledged)
+        {
+            SafeUi(() =>
+            {
+                if (message == null || message.IsDisposed)
+                {
+                    return;
+                }
+
+                message.Text = StripOverviewReplyStatusPrefix(message.Text);
+                message.Font = GetMessageTextFont(false);
+                message.ForeColor = acknowledged ? SystemColors.ControlDark : MainPrimaryTextColor();
+                SetReplyStatusTimeLabel(message, marker, markerColor);
+
+                if (acknowledged)
+                {
+                    message.acknowledged = true;
+                }
+
+                unreadMessages.Remove(message);
+                if (unreadMessages.Count == 0)
+                {
+                    unreadReminderTimer.Stop();
+                }
+
+                if (menuLabel != null && !menuLabel.IsDisposed)
+                {
+                    ConfigureOpenMessageIndicator(menuLabel);
+                    menuLabel.CanFlash = false;
+                    menuLabel.ForeColor = markerColor;
+                    menuLabel.Invalidate();
+                }
+
+                message.Invalidate();
+                ApplyMessageFilter();
+            });
+        }
+
+        private System.Windows.Forms.Timer StartOriginalOverviewReplySpinner(CPDLCMessage message, TimerLabel menuLabel)
+        {
+            string[] frames = { "◷", "◶", "◵", "◴" };
+            int frame = 0;
+
+            System.Windows.Forms.Timer timer = new()
+            {
+                Interval = 250
+            };
+
+            timer.Tick += (_, __) =>
+            {
+                frame = (frame + 1) % frames.Length;
+                SetOriginalOverviewReplyStatus(message, menuLabel, frames[frame], DcduTheme.Amber, false);
+            };
+
+            timer.Start();
+            return timer;
+        }
+
+        private void MarkOriginalMessageRepliedFromOverview(CPDLCMessage message, TimerLabel menuLabel, string reply)
+        {
+            string cleanReply = NormalizeCpdlcOverviewText(reply);
+            bool successfulWilco = cleanReply == "WILCO";
+
+            SetOriginalOverviewReplyStatus(
+                message,
+                menuLabel,
+                successfulWilco ? "✓" : "✓",
+                successfulWilco ? DcduTheme.Green : SystemColors.ControlDark,
+                true);
+        }
+
+        private static bool IsCpdlcAtcProcessingStatusText(string text)
+        {
+            string clean = NormalizeCpdlcOverviewText(text);
+
+            return clean.Contains("RCD RECEIVED") &&
+                   clean.Contains("REQUEST BEING PROCESSED") &&
+                   clean.Contains("STANDBY");
+        }
+
+        private bool CanDirectRogerFromOverview(CPDLCMessage message)
+        {
+            if (message == null ||
+                message.outbound ||
+                message.acknowledged ||
+                !string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase) ||
+                message.header == null)
+            {
+                return false;
+            }
+
+            string responseCode = (message.header.Responses ?? string.Empty).Trim().ToUpperInvariant();
+            return string.Equals(responseCode, "R", StringComparison.OrdinalIgnoreCase) &&
+                   IsCpdlcAtcProcessingStatusText(message.message);
+        }
+
+        private bool ShouldShowOverviewActionPopup(CPDLCMessage message)
+        {
+            if (message == null)
+            {
+                return false;
+            }
+
+            return CanDirectWilcoFromOverview(message) ||
+                   CanDirectRogerFromOverview(message) ||
+                   (!message.outbound &&
+                    string.Equals(message.type, "CPDLC", StringComparison.OrdinalIgnoreCase) &&
+                    (IsCpdlcAtcProcessingStatusText(message.message) ||
+                     IsCpdlcInformationalStatusText(message.message)));
+        }
+
         private bool CanDirectWilcoFromOverview(CPDLCMessage message)
         {
             if (message == null ||
@@ -21766,6 +22281,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 !listText.Contains("\n") &&
                 Regex.IsMatch(listText, @"\bATIS\s+[A-Z?]\s+RECEIVED\b");
 
+            bool needsReplyIndicator = MessageNeedsOverviewReplyIndicator(previewType, _outbound, _header);
+
             CPDLCMessage _message = emphasizeAtisLetter
                 ? new AtisOverviewMessage(_type, _recipient, _contents, _outbound, _header)
                 : new CPDLCMessage(_type, _recipient, _contents, _outbound, _header);
@@ -21799,6 +22316,70 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             _message.Margin = SPad(new Padding(0, 3, 0, 0));
 
             return _message;
+        }
+
+        private Control CreateOverviewTimeLabel(string timeText, CPDLCMessage message)
+        {
+            if (MessageNeedsOverviewReplyIndicator(message?.type, message?.outbound ?? false, message?.header))
+            {
+                ReplyStatusTimeLabel label = new()
+                {
+                    AutoSize = false,
+                    Width = S(70),
+                    Height = S(18),
+                    BackColor = Color.Transparent,
+                    ForeColor = MainPrimaryTextColor(),
+                    Font = textFont,
+                    Text = timeText,
+                    TimeText = timeText,
+                    StatusMarker = "◷",
+                    StatusMarkerColor = DcduTheme.Amber,
+                    BorderStyle = BorderStyle.None,
+                    Margin = SPad(new Padding(5, 3, 0, 0)),
+                    TabStop = false
+                };
+
+                return label;
+            }
+
+            return CreateLabel(timeText);
+        }
+
+        private ReplyStatusTimeLabel FindReplyStatusTimeLabelForMessage(CPDLCMessage message)
+        {
+            if (message == null || outputTable == null || outputTable.IsDisposed)
+            {
+                return null;
+            }
+
+            try
+            {
+                TableLayoutPanelCellPosition pos = outputTable.GetPositionFromControl(message);
+                if (pos.Row >= 0 && outputTable.GetControlFromPosition(0, pos.Row) is ReplyStatusTimeLabel label)
+                {
+                    return label;
+                }
+            }
+            catch
+            {
+                // Visual helper only.
+            }
+
+            return null;
+        }
+
+        private void SetReplyStatusTimeLabel(CPDLCMessage message, string marker, Color markerColor)
+        {
+            ReplyStatusTimeLabel label = FindReplyStatusTimeLabelForMessage(message);
+            if (label == null || label.IsDisposed)
+            {
+                return;
+            }
+
+            label.StatusMarker = marker ?? string.Empty;
+            label.StatusMarkerColor = markerColor;
+            label.ForeColor = MainPrimaryTextColor();
+            label.Invalidate();
         }
 
         private AccessibleLabel CreateLabel(string _text, bool _useMaxSize = true)
@@ -22498,6 +23079,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             autoDeleteActionPopupPanel.Controls.Clear();
 
             bool canWilco = CanDirectWilcoFromOverview(message);
+            bool canRoger = CanDirectRogerFromOverview(message);
             int rowY = S(5);
             int rowGap = S(21);
 
@@ -22517,6 +23099,25 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
                 wilcoLabel.Location = new Point(S(8), rowY);
                 autoDeleteActionPopupPanel.Controls.Add(wilcoLabel);
+                rowY += rowGap;
+            }
+
+            if (canRoger)
+            {
+                System.Windows.Forms.Label rogerLabel = CreateAutoDeletePopupActionLabel("> ROGER", DcduTheme.Green, (_, __) =>
+                {
+                    CPDLCMessage target = autoDeleteActionPopupMessage;
+                    TimerLabel targetLabel = autoDeleteActionPopupMenuLabel;
+                    HideAutoDeleteActionPopup();
+
+                    if (target != null && !target.IsDisposed && targetLabel != null && !targetLabel.IsDisposed)
+                    {
+                        _ = SendDirectRogerFromOverviewAsync(target, targetLabel);
+                    }
+                });
+
+                rogerLabel.Location = new Point(S(8), rowY);
+                autoDeleteActionPopupPanel.Controls.Add(rogerLabel);
                 rowY += rowGap;
             }
 
@@ -24779,6 +25380,15 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             if (message.Contains("LOGOFF"))
             {
+                StartCpdlcVerifiedSuggestionCooldownForCurrentConnection("CPDLC logoff received", _sender);
+                CurrentATCUnit = null;
+                pendingLogon = null;
+                ClearNextAtcUnitDisplay();
+                StopCpdlcHandoverFrequencyWatch();
+            }
+            else if (IsCpdlcGoodbyeOrUnicomInstruction(message))
+            {
+                StartCpdlcVerifiedSuggestionCooldownForCurrentConnection("CPDLC goodbye / monitor advisory", _sender);
                 CurrentATCUnit = null;
                 pendingLogon = null;
                 ClearNextAtcUnitDisplay();
@@ -24961,8 +25571,6 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 return;
             }
 
-            CPDLCMessage statusMessage = null;
-            TimerLabel statusMenuLabel = null;
             System.Windows.Forms.Timer spinnerTimer = null;
 
             try
@@ -24972,25 +25580,14 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 if (menuLabel != null && !menuLabel.IsDisposed)
                 {
                     menuLabel.CanFlash = false;
-                    menuLabel.ForeColor = MainPrimaryTextColor();
+                    menuLabel.ForeColor = DcduTheme.Amber;
                     ConfigureOpenMessageIndicator(menuLabel);
                     menuLabel.Invalidate();
                 }
 
                 string replyText = "WILCO";
-                statusMessage = WriteMessage("◷ " + replyText, "CPDLC", message.recipient, true);
-                statusMenuLabel = FindMenuLabelForMessage(statusMessage);
-
-                if (statusMenuLabel != null && !statusMenuLabel.IsDisposed)
-                {
-                    statusMenuLabel.Text = string.Empty;
-                    statusMenuLabel.Tag = null;
-                    statusMenuLabel.Paint -= OpenMessageIndicator_Paint;
-                    statusMenuLabel.CanFlash = false;
-                    statusMenuLabel.Invalidate();
-                }
-
-                spinnerTimer = StartInlineCpdlcReplySpinner(statusMessage, statusMenuLabel, replyText);
+                SetOriginalOverviewReplyStatus(message, menuLabel, "◷", DcduTheme.Amber, false);
+                spinnerTimer = StartOriginalOverviewReplySpinner(message, menuLabel);
 
                 message.header.ResponseID = messageOutCounter;
                 string packet = string.Format(
@@ -25011,15 +25608,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
                 if (sent)
                 {
-                    message.acknowledged = true;
-                    message.ForeColor = SystemColors.ControlDark;
+                    MarkOriginalMessageRepliedFromOverview(message, menuLabel, replyText);
                     messageOutCounter += 1;
-
-                    SetInlineCpdlcReplyStatus(statusMessage, statusMenuLabel, BuildCpdlcSentReplyOverviewText(replyText), DcduTheme.Green, true);
                 }
                 else
                 {
-                    SetInlineCpdlcReplyStatus(statusMessage, statusMenuLabel, "✕ " + replyText + " FAILED", CallsignMismatchAlarmColor(), true);
+                    SetOriginalOverviewReplyStatus(message, menuLabel, "✕", CallsignMismatchAlarmColor(), false);
 
                     if (menuLabel != null && !menuLabel.IsDisposed)
                     {
@@ -25040,7 +25634,98 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     spinnerTimer = null;
                 }
 
-                SetInlineCpdlcReplyStatus(statusMessage, statusMenuLabel, "✕ WILCO FAILED", CallsignMismatchAlarmColor(), true);
+                SetOriginalOverviewReplyStatus(message, menuLabel, "✕", CallsignMismatchAlarmColor(), false);
+
+                if (menuLabel != null && !menuLabel.IsDisposed)
+                {
+                    menuLabel.ForeColor = CallsignMismatchAlarmColor();
+                    ConfigureOpenMessageIndicator(menuLabel);
+                    menuLabel.Invalidate();
+                }
+            }
+            finally
+            {
+                if (spinnerTimer != null)
+                {
+                    spinnerTimer.Stop();
+                    spinnerTimer.Dispose();
+                }
+
+                styledMessageReplySendInProgress = false;
+            }
+        }
+
+        private async Task SendDirectRogerFromOverviewAsync(CPDLCMessage message, TimerLabel menuLabel)
+        {
+            if (!CanDirectRogerFromOverview(message) || styledMessageReplySendInProgress)
+            {
+                return;
+            }
+
+            System.Windows.Forms.Timer spinnerTimer = null;
+
+            try
+            {
+                styledMessageReplySendInProgress = true;
+
+                if (menuLabel != null && !menuLabel.IsDisposed)
+                {
+                    menuLabel.CanFlash = false;
+                    menuLabel.ForeColor = DcduTheme.Amber;
+                    ConfigureOpenMessageIndicator(menuLabel);
+                    menuLabel.Invalidate();
+                }
+
+                string replyText = "ROGER";
+                SetOriginalOverviewReplyStatus(message, menuLabel, "◷", DcduTheme.Amber, false);
+                spinnerTimer = StartOriginalOverviewReplySpinner(message, menuLabel);
+
+                message.header.ResponseID = messageOutCounter;
+                string packet = string.Format(
+                    "/data2/{0}/{1}/N/ROGER",
+                    message.header.ResponseID,
+                    message.header.MessageID);
+
+                TrackClearanceReply(message, replyText);
+
+                Task<bool> sendTask = TrySendCpdlcPacketForInlineStatusAsync(message.recipient, message.type, packet);
+                await Task.WhenAll(sendTask, Task.Delay(900));
+
+                bool sent = sendTask.Result;
+
+                spinnerTimer.Stop();
+                spinnerTimer.Dispose();
+                spinnerTimer = null;
+
+                if (sent)
+                {
+                    MarkOriginalMessageRepliedFromOverview(message, menuLabel, replyText);
+                    messageOutCounter += 1;
+                }
+                else
+                {
+                    SetOriginalOverviewReplyStatus(message, menuLabel, "✕", CallsignMismatchAlarmColor(), false);
+
+                    if (menuLabel != null && !menuLabel.IsDisposed)
+                    {
+                        menuLabel.ForeColor = CallsignMismatchAlarmColor();
+                        ConfigureOpenMessageIndicator(menuLabel);
+                        menuLabel.Invalidate();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("Direct ROGER from overview failed: " + ex.Message);
+
+                if (spinnerTimer != null)
+                {
+                    spinnerTimer.Stop();
+                    spinnerTimer.Dispose();
+                    spinnerTimer = null;
+                }
+
+                SetOriginalOverviewReplyStatus(message, menuLabel, "✕", CallsignMismatchAlarmColor(), false);
 
                 if (menuLabel != null && !menuLabel.IsDisposed)
                 {
@@ -25126,9 +25811,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 ConfigureDeleteOnlyMessageIndicator(menuLabel);
                 menuLabel.CanFlash = false;
             }
-            else if (CanDirectWilcoFromOverview(message))
+            else if (ShouldShowOverviewActionPopup(message))
             {
-                menuLabel.CanFlash = true;
+                menuLabel.CanFlash = CanDirectWilcoFromOverview(message) || CanDirectRogerFromOverview(message);
             }
 
             if (IsCpdlcStationDetectedText(_response))
@@ -25173,7 +25858,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     return;
                 }
 
-                if (CanDirectWilcoFromOverview(message))
+                if (ShouldShowOverviewActionPopup(message))
                 {
                     ShowAutoDeleteActionPopup(message, clickedMenuLabel);
                     return;
@@ -25191,7 +25876,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     return;
                 }
 
-                outputTable.Controls.Add(CreateLabel(DateTime.Now.ToString("HH:mm")), 0, outputTable.RowCount - 1);
+                outputTable.Controls.Add(CreateOverviewTimeLabel(DateTime.Now.ToString("HH:mm"), message), 0, outputTable.RowCount - 1);
                 outputTable.Controls.Add(message, 1, outputTable.RowCount - 1);
                 outputTable.Controls.Add(menuLabel, 2, outputTable.RowCount - 1);
                 outputTable.RowCount += 1;
