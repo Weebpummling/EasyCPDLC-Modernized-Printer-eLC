@@ -5,14 +5,38 @@
 ![Network](https://img.shields.io/badge/network-VATSIM%20%2B%20Hoppie-blue)
 ![Status](https://img.shields.io/badge/status-community%20fork-orange)
 
-A modernized and visually refreshed fork of **EasyCPDLC**, the lightweight CPDLC client for pilots flying on **VATSIM** via the **Hoppie ACARS** network.
+A printer- and datalink-integration-focused public fork of **EasyCPDLC Modernized**, the lightweight CPDLC client for pilots flying on **VATSIM** via the **Hoppie ACARS** network.
 
-This fork updates EasyCPDLC for **.NET 10** and adds a cockpit-style DCDU interface, Airbus/Boeing visual styles, smarter flight-plan handling, ATIS/METAR quick actions, callsign-change protection, MSFS/Flow Pro support, and many day-to-day workflow improvements for online flying.
+It retains the existing **.NET 10** cockpit-style DCDU, Airbus/Boeing visual styles, flight-plan handling, ATIS/METAR actions, callsign protection, and MSFS/Flow Pro support, while keeping this fork's own additions deliberately narrow.
+
+## Purpose and limited scope of this fork
+
+`EasyCPDLC-Modernized-Printer-eLC` exists to add a realistic, review-first printing workflow around the existing EasyCPDLC Modernized client. It is not intended to become a separate all-purpose dispatch suite or a replacement datalink network.
+
+The goals of this fork are limited to:
+
+- printing the message currently displayed on either the Airbus- or Boeing-style DCDU
+- supporting ordinary Windows printer queues, vendor-neutral raw ESC/POS, and mock-to-file testing, with 80 mm / Rongta RP326-compatible defaults
+- requesting an eLoadControl textual loadsheet inside EasyCPDLC using the pilot's own securely stored API key, SimBrief data, and a user-confirmed cabin-class passenger split
+- receiving supported vPilot/vTDLS PDC messages through the optional local bridge so the pilot can review and manually print them
+- preventing reconnect, polling, or duplicate-event behavior from creating duplicate automatic print jobs or duplicate imported vPilot messages
+- preserving the established Hoppie, CPDLC, airport PDC/DCL discovery, and click-only `REQ CLR` behavior
+
+The following are explicitly outside this fork's goals:
+
+- replacing eLoadControl's website, PDF output, dispatch planning, or weight-and-balance engine
+- inventing a KUSA/Hoppie login for vTDLS, treating vPilot PDC as CPDLC, or scraping controller systems outside supported client/plugin interfaces
+- bridging all vPilot private chat or automatically replying to controllers
+- writing directly to USB devices or assuming a USB receipt printer is a COM port
+- adding a Rongta-only SDK while the standard Windows RAW spooler remains adequate
+- certification or use for real-world flight operations
+- unrelated redesigns of the existing EasyCPDLC Modernized ATC and datalink behavior
 
 ---
 
 ## Index
 
+- [Purpose and limited scope of this fork](#purpose-and-limited-scope-of-this-fork)
 - [Screenshots](#screenshots)
 - [What is EasyCPDLC?](#what-is-easycpdlc)
 - [What changed in this fork?](#what-changed-in-this-fork)
@@ -27,7 +51,7 @@ This fork updates EasyCPDLC for **.NET 10** and adds a cockpit-style DCDU interf
 - [Clearance workflow and auto-confirm](#clearance-workflow-and-auto-confirm)
 - [Status indicators](#status-indicators)
 - [Smart message handling](#smart-message-handling)
-- [eLoadControl Boeing DCDU printer](#eloadcontrol-boeing-dcdu-printer)
+- [eLoadControl loadsheets and DCDU printer](#eloadcontrol-loadsheets-and-dcdu-printer)
 - [vPilot / vTDLS PDC bridge](#vpilot--vtdls-pdc-bridge)
 - [MSFS / Flow Pro integration](#msfs--flow-pro-integration)
 - [Flow Pro setup](#flow-pro-setup)
