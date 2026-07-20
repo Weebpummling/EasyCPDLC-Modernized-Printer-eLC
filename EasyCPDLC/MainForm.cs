@@ -17170,6 +17170,8 @@ airbusAocSendLabel = null;
                 return;
             }
 
+            previewMessage = message;
+            MarkMessageRead(message);
             activeMessageFilter = "LOADSHEET";
             ApplyMessageFilter();
             ShowStyledMessagePreview(message, new List<System.Windows.Forms.Label>());
@@ -25169,13 +25171,15 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 return;
             }
 
-            if (!rightSide && row1 && DatalinkPrinter.IsPrintableMessage(message))
+            if (IsStyledPreviewPrintLsk(DcduStyleManager.IsBoeing, rightSide, index) &&
+                DatalinkPrinter.IsPrintableMessage(message))
             {
                 PrintDatalinkMessage(message);
                 return;
             }
 
-            if (!rightSide && row2 && latestPrintedDatalinkPrintJob != null)
+            if (IsStyledPreviewReprintLsk(DcduStyleManager.IsBoeing, rightSide, index) &&
+                latestPrintedDatalinkPrintJob != null)
             {
                 ReprintButton_Click(boeingReprintButton, EventArgs.Empty);
                 return;
@@ -25191,6 +25195,16 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             {
                 ClearPreview();
             }
+        }
+
+        internal static bool IsStyledPreviewPrintLsk(bool isBoeing, bool rightSide, int index)
+        {
+            return !rightSide && index == (isBoeing ? 5 : 4);
+        }
+
+        internal static bool IsStyledPreviewReprintLsk(bool isBoeing, bool rightSide, int index)
+        {
+            return !rightSide && index == (isBoeing ? 6 : 5);
         }
 
         private void AddStyledPreviewActions(Control page, CPDLCMessage message, int separatorY)

@@ -518,6 +518,8 @@ Incoming messages receive a stable print identifier. Hoppie CPDLC message IDs ar
 
 The Boeing lower bezel provides separate `PRINT` and `REPRINT` keys. `PRINT` sends the latest printable inbound datalink message, while `REPRINT` repeats the last successfully submitted job. Printable message previews in both DCDU styles expose these actions, and `PRINT` always targets the message currently open on screen.
 
+The Airbus `DCDU_Main_V15.png` artwork has five physical line-select keys on each side. On a non-reply message preview, `PRINT` is mapped to left LSK 4 and `REPRINT` to left LSK 5; `DELETE` and `CLOSE` remain on right LSK 4 and 5. This uses the existing Airbus panel buttons and does not place Boeing-only bezel controls over the Airbus artwork.
+
 Direct API loadsheets are review-first: they do not invoke automatic printing even if TELEX/AOC auto-print is enabled. This prevents a generation response from reaching paper before the crew reviews it. Manual `PRINT` submits the reviewed item to the printer selected under `SETUP > PRINTER`.
 
 ### Windows 11 and Rongta RP326 setup
