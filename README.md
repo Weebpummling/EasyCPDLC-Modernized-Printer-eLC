@@ -475,9 +475,20 @@ Unread messages are highlighted and can trigger a reminder sound.
 
 ---
 
-## eLoadControl Boeing DCDU printer
+## eLoadControl loadsheets and DCDU printer
 
-The Boeing-style DCDU includes a native ACARS printer for eLoadControl loadsheets and other inbound datalink messages. It prints the textual Hoppie message instead of scaling an eLoadControl PDF to receipt paper, keeping 80 mm output readable.
+EasyCPDLC can request an eLoadControl loadsheet without opening a browser. In either DCDU style, open the AOC/TELEX menu and select `LOADSHEET`. The returned textual `acarsMessage` is added to the normal EasyCPDLC message list and opened for review. Printing uses that text instead of scaling the full-page loadsheet to receipt paper, keeping 80 mm output readable.
+
+The direct workflow is intentionally separate from ATC and PDC/DCL:
+
+1. Enter the pilot's eLoadControl Pro API key and SimBrief user identifier.
+2. Choose `LOAD SIMBRIEF + AVAILABLE CONFIGS`. This fetches the latest SimBrief OFP and eLoadControl aircraft/format reference data; it does not generate a loadsheet.
+3. Select the aircraft variant, cabin configuration, and loadsheet format.
+4. Review the passenger allocation. A single-class cabin is prefilled with the full SimBrief passenger count. A multi-class cabin is split proportionally to class capacity and remains editable; the confirmed class total must equal the SimBrief total.
+5. Choose `CONFIRM + GENERATE`. The confirmation states that exactly one eLoadControl loadsheet-generation request will be sent.
+6. Review the returned `LOADSHEET` message in the DCDU and use its on-screen `PRINT` action when ready.
+
+The API key follows eLoadControl's BYOK model. When saved, it is encrypted with Windows DPAPI for the current Windows user in `%LOCALAPPDATA%\EasyCPDLCModernized\user.config`; it is never written to application logs. If DPAPI protection is unavailable, EasyCPDLC refuses to persist the key rather than falling back to plaintext. HTTP 429 is reported as a monthly-quota error. Existing loadsheets received through Hoppie remain supported and printable.
 
 Three safe printer modes are available:
 
@@ -505,15 +516,9 @@ The RP326-compatible raw sequence initializes the printer, selects left alignmen
 
 Incoming messages receive a stable print identifier. Hoppie CPDLC message IDs are used when available; other messages use a SHA-256 identifier derived from normalized type, sender, callsign, and body. Automatic printing suppresses a repeated identifier for six hours, including reconnect/poll duplicates. A failed submission is removed from the duplicate cache so it can be retried. Manual `PRINT` and `REPRINT` remain deliberate overrides.
 
-The Boeing lower bezel provides separate `PRINT` and `REPRINT` keys. `PRINT` sends the latest printable inbound datalink message, while `REPRINT` repeats the last successfully submitted job. Printable message previews also expose these actions.
+The Boeing lower bezel provides separate `PRINT` and `REPRINT` keys. `PRINT` sends the latest printable inbound datalink message, while `REPRINT` repeats the last successfully submitted job. Printable message previews in both DCDU styles expose these actions, and `PRINT` always targets the message currently open on screen.
 
-Typical flow:
-
-1. Generate a loadsheet in eLoadControl using the pilot's own Pro License Key.
-2. Send the returned `acarsMessage` with eLoadControl's `/api/v1/send-acars` endpoint, using the pilot's Hoppie logon code, airline operator code, and flight number.
-3. Keep EasyCPDLC connected under the matching flight callsign. The normal Hoppie poll receives and displays the message.
-4. In Boeing mode, open the loadsheet and choose `PRINT`, or press the physical-style `PRINT` button on the lower DCDU bezel. The button becomes available after a printable message is received.
-5. The job is sent directly to the printer selected under `SETUP > PRINTER`.
+Direct API loadsheets are review-first: they do not invoke automatic printing even if TELEX/AOC auto-print is enabled. This prevents a generation response from reaching paper before the crew reviews it. Manual `PRINT` submits the reviewed item to the printer selected under `SETUP > PRINTER`.
 
 ### Windows 11 and Rongta RP326 setup
 
@@ -537,9 +542,9 @@ The implementation uses built-in .NET Windows printing plus `winspool.drv`; ther
 
 Physical hardware is still required to verify the RP326 driver's actual RAW pass-through, the firmware's `ESC t 0` code-table mapping, status reporting while unplugged or out of paper, exact darkness/line spacing, and the cutter's mechanical response. Those behaviors cannot be proven by the mock stream or Windows spooler alone.
 
-EasyCPDLC does not store or transmit an eLoadControl API key. The integration follows eLoadControl's BYOK model: API authentication remains in eLoadControl or the dispatch tool, while the DCDU receives the resulting ACARS message through Hoppie.
-
 Loadsheet recognition accepts explicit eLoadControl/loadsheet markers and common weight fields such as `ZFW`, `TOW`, `LDW`, and `%MAC`. Sandbox-watermarked messages remain printable and retain their watermark. Raw ESC/POS mode should only be selected for a printer that understands ESC/POS commands.
+
+The eLoadControl module does not read or write `pdcDiscoveryLogonCode`, the PDC availability badge, the current ATC unit, CPDLC sequence state, or the Hoppie `REQ CLR` path. Generating a loadsheet therefore cannot make PDC/DCL appear available or send a clearance request.
 
 ---
 
@@ -554,7 +559,9 @@ vTDLS/controller -> VATSIM private message -> vPilot plugin
                  -> current-user local pipe -> EasyCPDLC PDC message/printer
 ```
 
-Only messages classified as PDC/clearance traffic are imported. Ordinary vPilot private messages stay in vPilot. The callsign supplied by vPilot must match the EasyCPDLC flight callsign when both are available. Imported messages are labeled `SOURCE VATSIM/VTDLS`, can use the existing PDC/DCL automatic-print option, and are deduplicated from normalized content for six hours so a vTDLS reconnect resend does not print twice. They set the clearance-received state but do not create CPDLC sequence numbers or expose CPDLC `WILCO` actions.
+Only messages classified as PDC/clearance traffic are imported. Ordinary vPilot private messages stay in vPilot. The callsign supplied by vPilot must match the EasyCPDLC flight callsign when both are available. Imported messages are labeled `SOURCE VATSIM/VTDLS` and are deduplicated from normalized content for six hours so a vTDLS reconnect resend does not create or print a second copy. Use `AOC/TELEX > VPILOT PDC` to open the filtered inbox, select the desired message, review it, and choose its on-screen `PRINT` action. vPilot imports are review-first and do not auto-print.
+
+An imported vTDLS PDC may set the ordinary clearance-received indication, but it does not participate in airport service discovery, does not turn the PDC availability badge green, does not supply a DCL logon code, and cannot enable or send `REQ CLR`. It also does not create CPDLC sequence numbers or expose CPDLC `WILCO` actions.
 
 ### Install the bridge
 
@@ -576,7 +583,7 @@ The installer builds against the plugin API in the installed vPilot directory an
 - If vPilot's `.debug` output does not show the plugin, close vPilot and rerun the installer. Check that `RossCarlson.Vatsim.Vpilot.Plugins.dll` exists in the vPilot install directory.
 - If EasyCPDLC does not import a clearance, confirm both applications run under the same Windows account and use the same callsign. The pipe ACL rejects other user accounts.
 - A normal chat/private message is deliberately ignored. For a controlled offline integration test, use the unit-test fake pipe; for a live test, the received text must contain recognizable PDC and clearance markers.
-- Reconnecting vPilot may cause vTDLS to resend the PDC. EasyCPDLC should retain one displayed/printed copy during the six-hour duplicate window.
+- Reconnecting vPilot may cause vTDLS to resend the PDC. EasyCPDLC should retain one displayed copy during the six-hour duplicate window; printing remains a manual action from the reviewed message.
 
 The local protocol, classifier, callsign guard, duplicate suppression, and duplex pipe behavior are covered by automated tests. A live VATSIM connection and controller-issued vTDLS PDC are still required to verify the exact sender name and message wording produced by the current network service. vPilot's general private-message behavior is documented in the [official vPilot manual](https://vpilot.rosscarlson.dev/Documentation).
 

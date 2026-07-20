@@ -3263,7 +3263,7 @@ private TelexForm tForm;
         private string lastCpdlcStationDetectedNotificationKey = string.Empty;
         private DateTime lastCpdlcStationDetectedNotificationUtc = DateTime.MinValue;
         private static readonly TimeSpan cpdlcStationDetectedNotificationCooldown = TimeSpan.FromMinutes(10);
-        private readonly string[] messageFilterOrder = { "ALL", "NEW", "ATIS", "METAR", "CPDLC", "TELEX", "SYSTEM" };
+        private readonly string[] messageFilterOrder = { "ALL", "NEW", "LOADSHEET", "VPILOT", "ATIS", "METAR", "CPDLC", "TELEX", "SYSTEM" };
 
         private readonly System.Windows.Forms.Timer vatsimOnlineTimer = new();
         private DateTime lastVatsimOnlineRefreshUtc = DateTime.MinValue;
@@ -5564,6 +5564,10 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             {
                 "ALL" => true,
                 "NEW" => unreadMessages.Contains(message),
+                "LOADSHEET" => string.Equals(type, "LOADSHEET", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(message.transport, "ELOADCONTROL API", StringComparison.OrdinalIgnoreCase) ||
+                               DatalinkPrinter.IsELoadControlLoadsheet(message),
+                "VPILOT" => string.Equals(message.transport, "VATSIM/VTDLS", StringComparison.OrdinalIgnoreCase),
                 "ATIS" => looksAtis,
                 "METAR" => looksMetar,
                 "CPDLC" => string.Equals(type, "CPDLC", StringComparison.OrdinalIgnoreCase) && !looksAtis && !looksMetar,
@@ -13126,8 +13130,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             switch (airbusAocPage)
             {
                 case AirbusAocPage.MainMenu:
-                    return (!rightSide && (index == 1 || index == 2 || index == 5)) ||
-                           (rightSide && (index == 1 || index == 2));
+                    return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 5)) ||
+                           (rightSide && (index == 1 || index == 2 || index == 3));
 
                 case AirbusAocPage.AtcRequestMenu:
                     return !rightSide && (index == 1 || index == 2 || index == 5);
@@ -13213,6 +13217,14 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     else if (rightSide && index == 2)
                     {
                         ShowAirbusAocFreeTextRequest();
+                    }
+                    else if (!rightSide && index == 3)
+                    {
+                        OpenELoadControlWorkflow();
+                    }
+                    else if (rightSide && index == 3)
+                    {
+                        OpenSourceMessageList("VPILOT");
                     }
                     else if (!rightSide && index == 5)
                     {
@@ -13442,7 +13454,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             switch (boeingTelexPage)
             {
                 case BoeingTelexPage.Menu:
-                    return !rightSide && (index == 1 || index == 2 || index == 3 || index == 6);
+                    return !rightSide && (index == 1 || index == 2 || index == 3 || index == 4 || index == 5 || index == 6);
 
                 case BoeingTelexPage.AtcMainMenu:
                     return (!rightSide && (index == 1 || index == 2 || index == 3 || index == 4 || index == 6)) ||
@@ -13489,6 +13501,14 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                     else if (!rightSide && index == 3)
                     {
                         ShowBoeingTelexAtisRequest();
+                    }
+                    else if (!rightSide && index == 4)
+                    {
+                        OpenELoadControlWorkflow();
+                    }
+                    else if (!rightSide && index == 5)
+                    {
+                        OpenSourceMessageList("VPILOT");
                     }
                     else if (!rightSide && index == 6)
                     {
@@ -13953,6 +13973,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             AddBoeingTelexLabel(page, "<FREE TEXT", 4, BoeingTelexLskTextY(page, 1), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<METAR REQUEST", 4, BoeingTelexLskTextY(page, 2), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<ATIS REQUEST", 4, BoeingTelexLskTextY(page, 3), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<LOADSHEET", 4, BoeingTelexLskTextY(page, 4), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<VPILOT PDC", 4, BoeingTelexLskTextY(page, 5), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<RETURN", 4, BoeingTelexLskTextY(page, 6), 180, 30, ContentAlignment.MiddleLeft, color, menuFont);
         }
 
@@ -16261,6 +16283,8 @@ airbusAocSendLabel = null;
             AddAirbusAocLabel(page, "WX REQUEST>", rightMenuX, AirbusAocRightLskTextY(page, 1), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
             AddAirbusAocLabel(page, "<ATIS REQUEST", leftMenuX, AirbusAocLskTextY(page, 2), 260, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
             AddAirbusAocLabel(page, "FREE TEXT>", rightMenuX, AirbusAocRightLskTextY(page, 2), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
+            AddAirbusAocLabel(page, "<LOADSHEET", leftMenuX, AirbusAocLskTextY(page, 3), 260, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
+            AddAirbusAocLabel(page, "VPILOT PDC>", rightMenuX, AirbusAocRightLskTextY(page, 3), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
             AddAirbusAocLabel(page, "<RETURN", leftMenuX, AirbusAocLskTextY(page, 5), 190, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
         }
 
@@ -17087,6 +17111,70 @@ airbusAocSendLabel = null;
             RestoreMainScreenFromEmbeddedPage();
         }
 
+        private void OpenSourceMessageList(string filter)
+        {
+            if (DcduStyleManager.IsBoeing)
+            {
+                CloseBoeingTelexPages();
+            }
+            else
+            {
+                CloseAirbusAocPages();
+            }
+
+            activeMessageFilter = string.IsNullOrWhiteSpace(filter) ? "ALL" : filter.Trim().ToUpperInvariant();
+            ApplyMessageFilter();
+        }
+
+        private void OpenELoadControlWorkflow()
+        {
+            if (DcduStyleManager.IsBoeing)
+            {
+                CloseBoeingTelexPages();
+            }
+            else
+            {
+                CloseAirbusAocPages();
+            }
+
+            using ELoadControlForm form = new(this, callsign ?? string.Empty);
+            form.ShowDialog(this);
+        }
+
+        internal void ReceiveELoadControlLoadsheet(ELoadLoadsheetResult result, SimbriefLoadsheetData flight)
+        {
+            string body = string.IsNullOrWhiteSpace(result?.AcarsMessage)
+                ? result?.Loadsheet
+                : result.AcarsMessage;
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                throw new InvalidOperationException("ELOADCONTROL DID NOT RETURN A PRINTABLE LOADSHEET MESSAGE.");
+            }
+
+            string messageCallsign = string.IsNullOrWhiteSpace(callsign)
+                ? ((flight?.Airline ?? string.Empty) + (flight?.FlightNumber ?? string.Empty)).Trim()
+                : callsign.Trim();
+
+            CPDLCMessage message = WriteMessage(
+                DatalinkPrinter.NormalizeLineEndings(body).Trim(),
+                "LOADSHEET",
+                "ELOADCONTROL",
+                false,
+                null,
+                "ELOADCONTROL API",
+                messageCallsign,
+                true);
+
+            if (message == null)
+            {
+                return;
+            }
+
+            activeMessageFilter = "LOADSHEET";
+            ApplyMessageFilter();
+            ShowStyledMessagePreview(message, new List<System.Windows.Forms.Label>());
+        }
+
         private void ConfigureMainFrameButtonHotspots()
         {
             mainMinimizeButton.Name = "mainMinimizeButton";
@@ -17106,6 +17194,40 @@ airbusAocSendLabel = null;
             boeingReprintButton.AccessibleName = "Reprint last ACARS print job";
 
             UpdateMainFrameButtonHotspots(DcduStyleManager.IsBoeing);
+        }
+
+        private const string ELoadControlApiKeySettingName = "ELoadControlApiKey";
+
+        public static string SavedELoadControlApiKey
+        {
+            get
+            {
+                string storedValue = ReadFixedStringSetting(ELoadControlApiKeySettingName, string.Empty);
+                return TryReadProtectedSetting(storedValue, "eLoadControl API key", out string decryptedValue)
+                    ? decryptedValue
+                    : string.Empty;
+            }
+            set
+            {
+                string cleanedValue = (value ?? string.Empty).Trim();
+                if (cleanedValue.Length == 0)
+                {
+                    SaveFixedStringSetting(ELoadControlApiKeySettingName, string.Empty);
+                    return;
+                }
+
+                if (!TryProtectStringForCurrentUser(cleanedValue, out string protectedValue))
+                {
+                    throw new InvalidOperationException("WINDOWS COULD NOT SECURELY SAVE THE ELOADCONTROL API KEY.");
+                }
+
+                string storedValue = DpapiProtectedSettingPrefix + protectedValue;
+                SaveFixedStringSetting(ELoadControlApiKeySettingName, storedValue);
+                if (!string.Equals(ReadFixedStringSetting(ELoadControlApiKeySettingName, string.Empty), storedValue, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("ELOADCONTROL API KEY COULD NOT BE SAVED TO THE USER PROFILE.");
+                }
+            }
         }
 
         private static DatalinkPrinterMode PrinterMode
@@ -17311,7 +17433,7 @@ airbusAocSendLabel = null;
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
-        private void RememberDatalinkPrintJob(CPDLCMessage message)
+        private void RememberDatalinkPrintJob(CPDLCMessage message, bool allowAutomaticPrint = true)
         {
             if (!DatalinkPrinter.IsPrintableMessage(message))
             {
@@ -17322,7 +17444,7 @@ airbusAocSendLabel = null;
             latestDatalinkPrintJob = job;
             RefreshPrinterButtonState();
 
-            if (!DebugUiPreviewMode && DatalinkPrinter.ShouldAutoPrint(job, CurrentPrinterSettings()))
+            if (allowAutomaticPrint && !DebugUiPreviewMode && DatalinkPrinter.ShouldAutoPrint(job, CurrentPrinterSettings()))
             {
                 if (automaticPrintDeduplicator.TryRegister(job.StableMessageId, DateTime.UtcNow))
                 {
@@ -17475,7 +17597,7 @@ airbusAocSendLabel = null;
                 return;
             }
 
-            WriteMessage(message, "PDC", sender, false, null, "VATSIM/VTDLS", bridgeCallsign);
+            WriteMessage(message, "PDC", sender, false, null, "VATSIM/VTDLS", bridgeCallsign, true);
             Logger.Info("vTDLS/vPilot PDC received through bridge: from=" + SafeLogValue(sender) +
                 " id=" + ShortMessageId(stableId));
         }
@@ -25047,6 +25169,18 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 return;
             }
 
+            if (!rightSide && row1 && DatalinkPrinter.IsPrintableMessage(message))
+            {
+                PrintDatalinkMessage(message);
+                return;
+            }
+
+            if (!rightSide && row2 && latestPrintedDatalinkPrintJob != null)
+            {
+                ReprintButton_Click(boeingReprintButton, EventArgs.Empty);
+                return;
+            }
+
             if (rightSide && row1)
             {
                 DeleteElement(EventArgs.Empty, message);
@@ -25130,7 +25264,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
             }
 
-            if (DcduStyleManager.IsBoeing && DatalinkPrinter.IsPrintableMessage(message))
+            if (DatalinkPrinter.IsPrintableMessage(message))
             {
                 AddStyledMessageAction(page, "*PRINT", leftX, leftRow1, leftW, actionH, ContentAlignment.MiddleLeft, () => PrintDatalinkMessage(message));
                 if (latestPrintedDatalinkPrintJob != null)
@@ -26179,7 +26313,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             bool _outbound = false,
             CPDLCResponse _header = null,
             string _transport = null,
-            string _aircraftCallsign = null)
+            string _aircraftCallsign = null,
+            bool _deferAutomaticPrint = false)
         {
             if (_outbound && string.Equals(_type, "ATIS", StringComparison.OrdinalIgnoreCase))
             {
@@ -26221,7 +26356,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             message.aircraftCallsign = (_aircraftCallsign ?? string.Empty).Trim();
 
             TrackAutoAtisLetterFromMessage(message);
-            RememberDatalinkPrintJob(message);
+            RememberDatalinkPrintJob(message, !_deferAutomaticPrint);
 
             if (_outbound &&
                 string.Equals(_type, "CPDLC", StringComparison.OrdinalIgnoreCase))
