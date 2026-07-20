@@ -28,8 +28,6 @@ The following are explicitly outside this fork's goals:
 - inventing a KUSA/Hoppie login for vTDLS, treating vPilot PDC as CPDLC, or scraping controller systems outside supported client/plugin interfaces
 - bridging all vPilot private chat or automatically replying to controllers
 - writing directly to USB devices or assuming a USB receipt printer is a COM port
-- adding a Rongta-only SDK while the standard Windows RAW spooler remains adequate
-- certification or use for real-world flight operations
 - unrelated redesigns of the existing EasyCPDLC Modernized ATC and datalink behavior
 
 ---
