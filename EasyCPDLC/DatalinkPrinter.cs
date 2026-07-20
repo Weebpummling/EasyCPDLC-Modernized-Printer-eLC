@@ -331,6 +331,10 @@ namespace EasyCPDLC
             string printerName = ResolvePrinterName(settings.PrinterName);
             if (string.IsNullOrWhiteSpace(printerName))
             {
+                if (!string.IsNullOrWhiteSpace(settings.PrinterName))
+                {
+                    return Failed("THE SELECTED PRINTER IS NOT INSTALLED: " + settings.PrinterName.Trim());
+                }
                 return Failed("NO WINDOWS PRINTER IS INSTALLED OR SELECTED.");
             }
 
@@ -374,7 +378,9 @@ namespace EasyCPDLC
                 document.DocumentName = "EasyCPDLC ACARS " + job.MessageType;
                 document.PrintController = new StandardPrintController();
                 document.PrinterSettings.PrinterName = printerName;
-                document.DefaultPageSettings.Margins = new Margins(35, 35, 35, 35);
+                // Keep a narrow physical margin for receipt printers. Font sizing below
+                // still adapts to the actual MarginBounds reported by the selected driver.
+                document.DefaultPageSettings.Margins = new Margins(10, 10, 10, 10);
 
                 if (!document.PrinterSettings.IsValid)
                 {
@@ -383,21 +389,29 @@ namespace EasyCPDLC
 
                 document.PrintPage += (_, e) =>
                 {
-                    using Font bodyFont = new("Consolas", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
-                    using Font headingFont = new("Consolas", 13.5f, FontStyle.Bold, GraphicsUnit.Point);
-                    float lineHeight = bodyFont.GetHeight(e.Graphics) + 1f;
-                    int linesPerPage = Math.Max(1, (int)Math.Floor(e.MarginBounds.Height / lineHeight));
-                    int pageLine = 0;
+                    using Font bodyFont = CreateWindowsBodyFont(e.Graphics, e.MarginBounds.Width, settings.Columns);
+                    using Font headingFont = new(
+                        "Consolas",
+                        Math.Max(bodyFont.Size + 2f, bodyFont.Size * 1.45f),
+                        FontStyle.Bold,
+                        GraphicsUnit.Point);
+                    float currentY = e.MarginBounds.Top;
 
-                    while (nextLine < lines.Count && pageLine < linesPerPage)
+                    while (nextLine < lines.Count)
                     {
-                        string line = lines[nextLine];
+                        string line = nextLine == 0 ? lines[nextLine].Trim() : lines[nextLine].TrimEnd();
                         Font font = nextLine == 0 ? headingFont : bodyFont;
+                        float lineHeight = font.GetHeight(e.Graphics) + 1f;
+                        if (currentY + lineHeight > e.MarginBounds.Bottom && currentY > e.MarginBounds.Top)
+                        {
+                            break;
+                        }
+
                         RectangleF lineBounds = new(
                             e.MarginBounds.Left,
-                            e.MarginBounds.Top + (pageLine * lineHeight),
+                            currentY,
                             e.MarginBounds.Width,
-                            Math.Max(lineHeight, font.GetHeight(e.Graphics) + 1f));
+                            lineHeight);
 
                         using StringFormat format = new()
                         {
@@ -405,9 +419,9 @@ namespace EasyCPDLC
                             LineAlignment = StringAlignment.Near,
                             Trimming = StringTrimming.None
                         };
-                        e.Graphics.DrawString(line.TrimEnd(), font, Brushes.Black, lineBounds, format);
+                        e.Graphics.DrawString(line, font, Brushes.Black, lineBounds, format);
                         nextLine++;
-                        pageLine++;
+                        currentY += lineHeight;
                     }
 
                     e.HasMorePages = nextLine < lines.Count;
@@ -420,6 +434,36 @@ namespace EasyCPDLC
             {
                 return Failed("WINDOWS PRINT FAILED: " + ex.Message);
             }
+        }
+
+        private static Font CreateWindowsBodyFont(Graphics graphics, float printableWidth, int requestedColumns)
+        {
+            int columns = NormalizeColumns(requestedColumns);
+            float pointSize = columns == 64 ? 6.5f : 8.0f;
+            const float minimumPointSize = 5.0f;
+
+            using StringFormat measureFormat = (StringFormat)StringFormat.GenericTypographic.Clone();
+            measureFormat.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
+            string measurementLine = new string('-', columns);
+
+            while (pointSize > minimumPointSize)
+            {
+                Font candidate = new("Consolas", pointSize, FontStyle.Regular, GraphicsUnit.Point);
+                float measuredWidth = graphics.MeasureString(
+                    measurementLine,
+                    candidate,
+                    int.MaxValue,
+                    measureFormat).Width;
+                if (measuredWidth <= printableWidth)
+                {
+                    return candidate;
+                }
+
+                candidate.Dispose();
+                pointSize -= 0.25f;
+            }
+
+            return new Font("Consolas", minimumPointSize, FontStyle.Regular, GraphicsUnit.Point);
         }
 
         private static DatalinkPrintResult PrintRawEscPos(string printerName, DatalinkPrintJob job, DatalinkPrinterSettings settings)
@@ -503,10 +547,12 @@ namespace EasyCPDLC
             Add(bytes, 0x1D, 0x21, 0x00);       // Normal size.
             Add(bytes, 0x1B, 0x45, 0x00);       // Bold off.
             Add(bytes, 0x1B, 0x61, 0x00);       // Left.
+            Add(bytes, 0x1B, 0x4D, columns == 64 ? (byte)0x01 : (byte)0x00); // Font B for 64 columns.
 
             string receipt = FormatReceiptText(job, columns);
             string body = string.Join("\n", receipt.Split('\n').Skip(1));
             AddAscii(bytes, body + "\n");
+            Add(bytes, 0x1B, 0x4D, 0x00);       // Restore Font A before feed/cut.
 
             int feeds = Math.Max(0, Math.Min(12, settings.FeedLines));
             if (feeds > 0)
@@ -557,10 +603,12 @@ namespace EasyCPDLC
             string configured = (configuredPrinterName ?? string.Empty).Trim();
             IReadOnlyList<string> installed = GetInstalledPrinterNames();
 
-            string match = installed.FirstOrDefault(name => string.Equals(name, configured, StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrWhiteSpace(match))
+            if (!string.IsNullOrWhiteSpace(configured))
             {
-                return match;
+                // Fail closed when an explicitly selected queue disappears or is renamed.
+                // Silently falling back could send an ACARS message to an unrelated printer.
+                return installed.FirstOrDefault(name => string.Equals(name, configured, StringComparison.OrdinalIgnoreCase))
+                    ?? string.Empty;
             }
 
             string defaultPrinter = GetDefaultPrinterName();
