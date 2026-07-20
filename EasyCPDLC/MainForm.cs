@@ -39,6 +39,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Security.Cryptography;
 using FSUIPC;
+using EasyCPDLC.VPilotBridge.Protocol;
 
 namespace EasyCPDLC
 {
@@ -899,6 +900,7 @@ private TelexForm tForm;
         private const string PrinterAutoTelexAocSettingName = "PrinterAutoTelexAoc";
         private const string PrinterAutoAtisSettingName = "PrinterAutoAtis";
         private const string PrinterAutoCutSettingName = "PrinterAutoCut";
+        private const string PrinterCutModeSettingName = "PrinterCutMode";
         private const string PrinterFeedLinesSettingName = "PrinterFeedLines";
         private const string MessagePreviewTextTag = "EASYCPDLC_MESSAGE_PREVIEW_TEXT";
 
@@ -3400,6 +3402,10 @@ private TelexForm tForm;
         private readonly DcduHotspotButton boeingReprintButton = new();
         private DatalinkPrintJob latestDatalinkPrintJob;
         private DatalinkPrintJob latestPrintedDatalinkPrintJob;
+        private readonly DatalinkPrintDeduplicator automaticPrintDeduplicator = new();
+        private readonly DatalinkPrintDeduplicator vpilotPdcDeduplicator = new(TimeSpan.FromHours(6));
+        private VpilotBridgeClient vpilotBridgeClient;
+        private string vpilotBridgeCallsign = string.Empty;
         private string embeddedPrinterStatus = string.Empty;
         private bool arrivalReloadReminderShown = false;
         private DateTime arrivalReloadReminderStartUtc = DateTime.MinValue;
@@ -3641,6 +3647,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             this.ShowInTaskbar = false;
             ConfigureTrayIcon();
             ConfigureMainFrameButtonHotspots();
+            StartVpilotBridge();
             dcduFrame.Paint += DcduFrame_PaintPrinterButton;
             this.TopMost = true;
             this.FormBorderStyle = FormBorderStyle.None;
@@ -17105,14 +17112,24 @@ airbusAocSendLabel = null;
         {
             get
             {
-                string value = ReadFixedStringSetting(PrinterModeSettingName, "WINDOWS");
+                string value = ReadFixedStringSetting(PrinterModeSettingName, "ESC/POS");
+                if (value.Contains("MOCK", StringComparison.OrdinalIgnoreCase) || value.Contains("FILE", StringComparison.OrdinalIgnoreCase))
+                {
+                    return DatalinkPrinterMode.MockFile;
+                }
                 return value.Contains("ESC", StringComparison.OrdinalIgnoreCase)
                     ? DatalinkPrinterMode.RawEscPos
                     : DatalinkPrinterMode.Windows;
             }
             set
             {
-                SaveFixedStringSetting(PrinterModeSettingName, value == DatalinkPrinterMode.RawEscPos ? "ESC/POS" : "WINDOWS");
+                string stored = value switch
+                {
+                    DatalinkPrinterMode.RawEscPos => "ESC/POS",
+                    DatalinkPrinterMode.MockFile => "MOCK FILE",
+                    _ => "WINDOWS"
+                };
+                SaveFixedStringSetting(PrinterModeSettingName, stored);
             }
         }
 
@@ -17158,6 +17175,26 @@ airbusAocSendLabel = null;
             set => SaveFixedStringSetting(PrinterAutoCutSettingName, value ? "true" : "false");
         }
 
+        private static DatalinkCutMode PrinterCutMode
+        {
+            get
+            {
+                string value = ReadFixedStringSetting(PrinterCutModeSettingName, string.Empty).Trim();
+                if (value.Length == 0)
+                {
+                    return DatalinkCutMode.Partial;
+                }
+                if (value.Equals("FULL", StringComparison.OrdinalIgnoreCase)) return DatalinkCutMode.Full;
+                if (value.Equals("OFF", StringComparison.OrdinalIgnoreCase)) return DatalinkCutMode.Off;
+                return DatalinkCutMode.Partial;
+            }
+            set
+            {
+                SaveFixedStringSetting(PrinterCutModeSettingName, value.ToString().ToUpperInvariant());
+                PrinterAutoCut = value != DatalinkCutMode.Off;
+            }
+        }
+
         public static int PrinterFeedLines
         {
             get => NormalizePrinterFeedLines(ReadFixedStringSetting(PrinterFeedLinesSettingName, "3"));
@@ -17191,7 +17228,7 @@ airbusAocSendLabel = null;
                 AutoPrintCpdlc = PrinterAutoCpdlc,
                 AutoPrintTelexAoc = PrinterAutoTelexAoc,
                 AutoPrintAtis = PrinterAutoAtis,
-                AutoCut = PrinterAutoCut,
+                CutMode = PrinterCutMode,
                 FeedLines = PrinterFeedLines
             };
         }
@@ -17281,28 +17318,41 @@ airbusAocSendLabel = null;
                 return;
             }
 
-            DatalinkPrintJob job = DatalinkPrintJob.FromMessage(message);
+            DatalinkPrintJob job = DatalinkPrintJob.FromMessage(message, callsign);
             latestDatalinkPrintJob = job;
             RefreshPrinterButtonState();
 
             if (!DebugUiPreviewMode && DatalinkPrinter.ShouldAutoPrint(job, CurrentPrinterSettings()))
             {
-                SafeUi(() => ExecuteDatalinkPrintJob(job, true));
+                if (automaticPrintDeduplicator.TryRegister(job.StableMessageId, DateTime.UtcNow))
+                {
+                    SafeUi(() =>
+                    {
+                        if (!ExecuteDatalinkPrintJob(job, true))
+                        {
+                            automaticPrintDeduplicator.Forget(job.StableMessageId);
+                        }
+                    });
+                }
+                else
+                {
+                    Logger.Info("Duplicate automatic ACARS print suppressed: " + ShortMessageId(job.StableMessageId));
+                }
             }
 
-            Logger.Info("Printable ACARS message received: " + job.Category + ".");
+            Logger.Info("Printable ACARS message received: " + job.Category + " / " + ShortMessageId(job.StableMessageId) + ".");
         }
 
         private void PrintDatalinkMessage(CPDLCMessage message)
         {
             DatalinkPrintJob job = message != null && DatalinkPrinter.IsPrintableMessage(message)
-                ? DatalinkPrintJob.FromMessage(message)
+                ? DatalinkPrintJob.FromMessage(message, callsign)
                 : latestDatalinkPrintJob;
 
             ExecuteDatalinkPrintJob(job, false);
         }
 
-        private void ExecuteDatalinkPrintJob(DatalinkPrintJob job, bool automatic)
+        private bool ExecuteDatalinkPrintJob(DatalinkPrintJob job, bool automatic)
         {
             DatalinkPrintResult result = DatalinkPrinter.Print(job, CurrentPrinterSettings());
             embeddedPrinterStatus = result.Message ?? string.Empty;
@@ -17312,7 +17362,7 @@ airbusAocSendLabel = null;
                 latestPrintedDatalinkPrintJob = job;
                 RefreshPrinterButtonState();
                 Logger.Info((automatic ? "Automatic" : "Manual") + " printer job succeeded: " + result.Message);
-                return;
+                return true;
             }
 
             Logger.Warn((automatic ? "Automatic" : "Manual") + " printer job failed: " + result.Message);
@@ -17324,6 +17374,13 @@ airbusAocSendLabel = null;
             {
                 MessageBox.Show(this, result.Message, "DCDU PRINTER", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+            return false;
+        }
+
+        private static string ShortMessageId(string stableMessageId)
+        {
+            string value = (stableMessageId ?? string.Empty).Trim();
+            return value.Length <= 24 ? value : value.Substring(0, 24);
         }
 
         private void RefreshPrinterButtonState()
@@ -17344,6 +17401,83 @@ airbusAocSendLabel = null;
         private void ReprintButton_Click(object sender, EventArgs e)
         {
             ExecuteDatalinkPrintJob(latestPrintedDatalinkPrintJob, false);
+        }
+
+        private void StartVpilotBridge()
+        {
+            try
+            {
+                vpilotBridgeClient = new VpilotBridgeClient();
+                vpilotBridgeClient.ConnectionChanged += (_, connected) =>
+                    Logger.Info("vPilot PDC bridge " + (connected ? "connected." : "waiting for vPilot plugin."));
+                vpilotBridgeClient.PacketReceived += VpilotBridgePacketReceived;
+                vpilotBridgeClient.Start();
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("vPilot PDC bridge could not start: " + ex.Message);
+            }
+        }
+
+        private void VpilotBridgePacketReceived(object sender, VpilotBridgePacket packet)
+        {
+            if (packet == null)
+            {
+                return;
+            }
+
+            if (packet.Kind == VpilotBridgePacketKind.NetworkConnected)
+            {
+                vpilotBridgeCallsign = (packet.Callsign ?? string.Empty).Trim().ToUpperInvariant();
+                Logger.Info("vPilot PDC bridge network session detected for " + SafeLogValue(vpilotBridgeCallsign) + ".");
+                return;
+            }
+
+            if (packet.Kind == VpilotBridgePacketKind.NetworkDisconnected)
+            {
+                vpilotBridgeCallsign = string.Empty;
+                Logger.Info("vPilot PDC bridge network session disconnected.");
+                return;
+            }
+
+            if (packet.Kind == VpilotBridgePacketKind.PrivateMessage)
+            {
+                SafeUi(() => HandleVpilotPrivateMessage(packet));
+            }
+        }
+
+        private void HandleVpilotPrivateMessage(VpilotBridgePacket packet)
+        {
+            string sender = string.IsNullOrWhiteSpace(packet.Peer) ? "ACARS" : packet.Peer.Trim().ToUpperInvariant();
+            string message = DatalinkPrinter.NormalizeLineEndings(packet.Message).Trim();
+            string bridgeCallsign = (packet.Callsign ?? vpilotBridgeCallsign ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (!VpilotPdcClassifier.IsPdc(sender, message))
+            {
+                Logger.Debug("vPilot private message left in vPilot because it is not a PDC: from=" + SafeLogValue(sender));
+                return;
+            }
+
+            string easyCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(easyCallsign) &&
+                !string.IsNullOrWhiteSpace(bridgeCallsign) &&
+                !string.Equals(easyCallsign, bridgeCallsign, StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Warn("vPilot PDC ignored because callsigns differ: EasyCPDLC=" + SafeLogValue(easyCallsign) +
+                    " vPilot=" + SafeLogValue(bridgeCallsign));
+                return;
+            }
+
+            string stableId = DatalinkPrinter.DeriveStableMessageId("PDC", sender, bridgeCallsign, message);
+            if (!vpilotPdcDeduplicator.TryRegister(stableId, DateTime.UtcNow))
+            {
+                Logger.Info("Duplicate vTDLS/vPilot PDC suppressed: " + ShortMessageId(stableId));
+                return;
+            }
+
+            WriteMessage(message, "PDC", sender, false, null, "VATSIM/VTDLS", bridgeCallsign);
+            Logger.Info("vTDLS/vPilot PDC received through bridge: from=" + SafeLogValue(sender) +
+                " id=" + ShortMessageId(stableId));
         }
 
         private async void ReloadFlightPlanButton_Click(object sender, EventArgs e)
@@ -17875,7 +18009,8 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                    normalizedType == "INFO" ||
                    normalizedType == "INFOREQ" ||
                    normalizedType == "METAR" ||
-                   normalizedType == "ATIS";
+                   normalizedType == "ATIS" ||
+                   normalizedType == "PDC";
         }
 
 
@@ -26037,7 +26172,14 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
         }
 
-        public CPDLCMessage WriteMessage(string _response, string _type, string _recipient, bool _outbound = false, CPDLCResponse _header = null)
+        public CPDLCMessage WriteMessage(
+            string _response,
+            string _type,
+            string _recipient,
+            bool _outbound = false,
+            CPDLCResponse _header = null,
+            string _transport = null,
+            string _aircraftCallsign = null)
         {
             if (_outbound && string.Equals(_type, "ATIS", StringComparison.OrdinalIgnoreCase))
             {
@@ -26075,6 +26217,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
             }
 
+            message.transport = (_transport ?? string.Empty).Trim();
+            message.aircraftCallsign = (_aircraftCallsign ?? string.Empty).Trim();
+
             TrackAutoAtisLetterFromMessage(message);
             RememberDatalinkPrintJob(message);
 
@@ -26095,7 +26240,12 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
             }
 
-            Logger.Debug("Writing message: " + _response);
+            Logger.Debug(
+                "Writing message metadata: type=" + (_type ?? string.Empty) +
+                ", recipient=" + (_recipient ?? string.Empty) +
+                ", outbound=" + _outbound +
+                ", length=" + (_response?.Length ?? 0) +
+                ", transport=" + (_transport ?? string.Empty));
 
             TimerLabel menuLabel = CreateTimerLabel(">>", true);
             if (ShouldUseDeleteOnlyOverviewAction(message))
@@ -26467,6 +26617,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             try
             {
                 protocolPipeCancellationTokenSource?.Cancel();
+                vpilotBridgeClient?.Dispose();
+                vpilotBridgeClient = null;
                 DisposeTrayIcon();
             }
             catch
@@ -26834,7 +26986,13 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 case EmbeddedSetupPage.PrinterDevice:
                     if (rightSide && index == 1)
                     {
-                        PrinterMode = PrinterMode == DatalinkPrinterMode.Windows ? DatalinkPrinterMode.RawEscPos : DatalinkPrinterMode.Windows;
+                        PrinterMode = PrinterMode switch
+                        {
+                            DatalinkPrinterMode.RawEscPos => DatalinkPrinterMode.Windows,
+                            DatalinkPrinterMode.Windows => DatalinkPrinterMode.MockFile,
+                            _ => DatalinkPrinterMode.RawEscPos
+                        };
+                        embeddedPrinterStatus = CurrentPrinterStatus();
                         ShowEmbeddedSetupPrinterDevicePage(false);
                     }
                     else if (!rightSide && index == 4)
@@ -26863,7 +27021,15 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 case EmbeddedSetupPage.PrinterFormat:
                     if (rightSide && index == 1) PrinterColumns = PrinterColumns == 48 ? 64 : 48;
                     else if (rightSide && index == 2) PrinterFeedLines = PrinterFeedLines >= 8 ? 0 : PrinterFeedLines + 1;
-                    else if (rightSide && index == 3) PrinterAutoCut = !PrinterAutoCut;
+                    else if (rightSide && index == 3)
+                    {
+                        PrinterCutMode = PrinterCutMode switch
+                        {
+                            DatalinkCutMode.Partial => DatalinkCutMode.Full,
+                            DatalinkCutMode.Full => DatalinkCutMode.Off,
+                            _ => DatalinkCutMode.Partial
+                        };
+                    }
                     else if (!rightSide && index == bottom)
                     {
                         ShowEmbeddedSetupPrinterMenu();
@@ -27029,32 +27195,28 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 MaxDropDownItems = 12
             };
 
+            const string selectPrinter = "<SELECT PRINTER>";
+            selector.Items.Add(selectPrinter);
             foreach (string printer in printers)
             {
                 selector.Items.Add(printer);
             }
 
             string configured = SelectedPrinterName;
-            string selected = printers.FirstOrDefault(name => string.Equals(name, configured, StringComparison.OrdinalIgnoreCase))
-                ?? DatalinkPrinter.GetDefaultPrinterName();
+            string selected = printers.FirstOrDefault(name => string.Equals(name, configured, StringComparison.OrdinalIgnoreCase));
 
-            if (!string.IsNullOrWhiteSpace(selected) && selector.Items.Contains(selected))
+            if (!string.IsNullOrWhiteSpace(selected))
             {
                 selector.SelectedItem = selected;
             }
-            else if (selector.Items.Count > 0)
+            else
             {
-                selector.SelectedIndex = 0;
-            }
-
-            if (selector.SelectedItem is string initialPrinter)
-            {
-                SelectedPrinterName = initialPrinter;
+                selector.SelectedItem = selectPrinter;
             }
 
             selector.SelectedIndexChanged += (_, __) =>
             {
-                if (selector.SelectedItem is string printerName)
+                if (selector.SelectedItem is string printerName && printers.Contains(printerName))
                 {
                     SelectedPrinterName = printerName;
                     embeddedPrinterStatus = DatalinkPrinter.GetPrinterStatus(printerName).Message;
@@ -27207,7 +27369,19 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private static string PrinterModeDisplayText()
         {
-            return PrinterMode == DatalinkPrinterMode.RawEscPos ? "ESC/POS" : "WINDOWS";
+            return PrinterMode switch
+            {
+                DatalinkPrinterMode.RawEscPos => "ESC/POS",
+                DatalinkPrinterMode.MockFile => "MOCK FILE",
+                _ => "WINDOWS"
+            };
+        }
+
+        private static string CurrentPrinterStatus()
+        {
+            return PrinterMode == DatalinkPrinterMode.MockFile
+                ? "MOCK FILE READY"
+                : DatalinkPrinter.GetPrinterStatus(SelectedPrinterName).Message;
         }
 
         private static string ShortPrinterStatus(string status)
@@ -27251,7 +27425,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             if (refreshStatus || string.IsNullOrWhiteSpace(embeddedPrinterStatus))
             {
-                embeddedPrinterStatus = DatalinkPrinter.GetPrinterStatus(SelectedPrinterName).Message;
+                embeddedPrinterStatus = CurrentPrinterStatus();
             }
 
             AddEmbeddedSetupLabel(page, "PRINTER DEVICE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
@@ -27305,18 +27479,19 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             AddEmbeddedSetupLabel(page, "FEED LINES", 4, EmbeddedSetupLskTextY(page, 2), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddEmbeddedSetupLabel(page, PrinterFeedLines + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 2), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
             AddEmbeddedSetupLabel(page, "AUTO CUT", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(PrinterAutoCut) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 3), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterCutMode.ToString().ToUpperInvariant() + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 3), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
             AddEmbeddedSetupLabel(page, "CUT/FEED ARE ESC/POS COMMANDS", 4, EmbeddedSetupLskTextY(page, 4), page.Width - 8, 24, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
             AddEmbeddedSetupLabel(page, "<PRINTER MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
         }
 
         private void RunEmbeddedPrinterTest()
         {
-            DatalinkPrintResult result = DatalinkPrinter.Print(DatalinkPrinter.CreateTestJob(), CurrentPrinterSettings());
+            DatalinkPrintJob testJob = DatalinkPrinter.CreateTestJob();
+            DatalinkPrintResult result = DatalinkPrinter.Print(testJob, CurrentPrinterSettings());
             embeddedPrinterStatus = result.Message;
             if (result.Success)
             {
-                latestPrintedDatalinkPrintJob = DatalinkPrinter.CreateTestJob();
+                latestPrintedDatalinkPrintJob = testJob;
                 RefreshPrinterButtonState();
             }
             ShowEmbeddedSetupPrinterMenu();

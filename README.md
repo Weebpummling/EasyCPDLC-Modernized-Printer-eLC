@@ -28,6 +28,7 @@ This fork updates EasyCPDLC for **.NET 10** and adds a cockpit-style DCDU interf
 - [Status indicators](#status-indicators)
 - [Smart message handling](#smart-message-handling)
 - [eLoadControl Boeing DCDU printer](#eloadcontrol-boeing-dcdu-printer)
+- [vPilot / vTDLS PDC bridge](#vpilot--vtdls-pdc-bridge)
 - [MSFS / Flow Pro integration](#msfs--flow-pro-integration)
 - [Flow Pro setup](#flow-pro-setup)
 - [Free text cooldown](#free-text-cooldown)
@@ -478,26 +479,31 @@ Unread messages are highlighted and can trigger a reminder sound.
 
 The Boeing-style DCDU includes a native ACARS printer for eLoadControl loadsheets and other inbound datalink messages. It prints the textual Hoppie message instead of scaling an eLoadControl PDF to receipt paper, keeping 80 mm output readable.
 
-Two printer modes are available:
+Three safe printer modes are available:
 
 - **Windows** sends a formatted document through the selected Windows printer queue and works with normal desktop, receipt, and virtual printers.
-- **ESC/POS** sends raw commands through the Windows spooler with `OpenPrinter` / `WritePrinter`. It supports bold and double-size headings, alignment, line feeds, and automatic cutting on compatible receipt printers.
+- **ESC/POS** (default) sends raw bytes to the selected Windows printer queue with `OpenPrinter` / `StartDocPrinter` / `WritePrinter` and the `RAW` spool data type. It does not open a COM port and does not write directly to a USB device.
+- **MOCK FILE** generates the same ESC/POS `.bin`, hexadecimal dump, and text preview without opening any printer. Files are saved under `%LOCALAPPDATA%\EasyCPDLCModernized\PrinterMock`.
 
-The default format is **48 columns**. A **64-column** option is available for printers and paper widths that support it.
+The default format is **48 columns** using ESC/POS Font A. The **64-column** option selects Font B. On a 203 dpi printer with 576 printable dots, both modes use the 72.1 mm effective print width: `48 × 12` dots or `64 × 9` dots. Receipt text is encoded as CP437 after `ESC t 0`; characters not available in CP437 are safely replaced with `?`.
 
 Printer setup is available from Boeing `SETUP > PRINTER` and includes:
 
-- installed-printer dropdown
-- Windows or raw ESC/POS mode
+- installed-Windows-printer dropdown with persistent selection
+- Windows, raw ESC/POS, or mock-file mode
 - 48- or 64-column formatting
 - automatic print for PDC/DCL
 - automatic print for CPDLC
 - automatic print for TELEX/AOC, including eLoadControl
 - automatic print for ATIS
-- ESC/POS auto-cut toggle
+- partial cut (default), full cut, or cutter disabled
 - feed-lines-after-print setting
 - printer status refresh with offline, paper-out, paused, door-open, and attention states
 - print-test action
+
+The RP326-compatible raw sequence initializes the printer, selects left alignment and CP437, selects Font A or B, prints the formatted message, feeds the configured number of lines, and by default sends `GS V 66 0` for a partial cut. Full cut uses `GS V 65 0`. The sample 48-column job and complete byte dump are in [`docs/samples/rp326-ci7752-job.hex.txt`](docs/samples/rp326-ci7752-job.hex.txt).
+
+Incoming messages receive a stable print identifier. Hoppie CPDLC message IDs are used when available; other messages use a SHA-256 identifier derived from normalized type, sender, callsign, and body. Automatic printing suppresses a repeated identifier for six hours, including reconnect/poll duplicates. A failed submission is removed from the duplicate cache so it can be retried. Manual `PRINT` and `REPRINT` remain deliberate overrides.
 
 The Boeing lower bezel provides separate `PRINT` and `REPRINT` keys. `PRINT` sends the latest printable inbound datalink message, while `REPRINT` repeats the last successfully submitted job. Printable message previews also expose these actions.
 
@@ -509,9 +515,70 @@ Typical flow:
 4. In Boeing mode, open the loadsheet and choose `PRINT`, or press the physical-style `PRINT` button on the lower DCDU bezel. The button becomes available after a printable message is received.
 5. The job is sent directly to the printer selected under `SETUP > PRINTER`.
 
+### Windows 11 and Rongta RP326 setup
+
+1. Install the current RP326 Windows x64 driver from Rongta or the printer distributor. Connect the printer by USB and confirm that Windows creates a normal queue such as `Rongta RP326`; no COM port is required.
+2. In Windows **Settings > Bluetooth & devices > Printers & scanners**, open the RP326 queue and print the Windows test page. Confirm the queue is not paused and its paper size is the driver's 80 mm receipt size.
+3. In EasyCPDLC Boeing mode, open `SETUP > PRINTER > DEVICE / MODE`, select the exact RP326 queue, and choose `ESC/POS`. The queue name is saved in `%LOCALAPPDATA%\EasyCPDLCModernized\user.config`.
+4. Under `FORMAT / CUT`, start with `48` columns, `3` feed lines, and `PARTIAL` cut.
+5. Choose `PRINT TEST`. The receipt should show the CI7752 sample loadsheet, advance three lines, and partially cut.
+6. Before consuming paper, select `MOCK FILE` and use `PRINT TEST`. Inspect the `.preview.txt` and `.hex.txt` files in the mock directory, then switch back to `ESC/POS`.
+
+### Troubleshooting
+
+- **Selected printer not installed:** EasyCPDLC fails closed and does not fall back to the Windows default printer. Re-select the exact queue after a driver reinstall or queue rename.
+- **Offline, paused, paper out, door open, or attention:** correct the Windows queue/printer state and refresh status. All printer exceptions are caught and logged without logging the message body or Hoppie credentials.
+- **Readable text but no cut:** confirm `PARTIAL` is selected. If a different ESC/POS model requires full cut, select `FULL`; otherwise select `OFF` and use the printer's feed key.
+- **ESC/POS commands print as text:** the installed queue/driver is not passing RAW data through. Try the manufacturer's receipt/ESC-POS driver rather than a generic text or class driver. Keep using the Windows queue; do not switch to direct USB or COM access.
+- **Accented characters are wrong:** confirm the RP326's active table maps `ESC t 0` to CP437. Some regional firmware uses a different table index even though it supports CP437.
+- **Windows-rendered output is clipped:** use the raw ESC/POS mode for the RP326. Windows mode adapts its monospaced font to the driver's reported margins, but driver paper definitions still vary.
+
+The implementation uses built-in .NET Windows printing plus `winspool.drv`; there is no npm, Python, OPOS, vendor SDK, serial-port, or direct-USB printing dependency. These APIs are supported on Windows 11 and work with USB-attached printers exposed as Windows queues. OPOS compatibility is not required.
+
+Physical hardware is still required to verify the RP326 driver's actual RAW pass-through, the firmware's `ESC t 0` code-table mapping, status reporting while unplugged or out of paper, exact darkness/line spacing, and the cutter's mechanical response. Those behaviors cannot be proven by the mock stream or Windows spooler alone.
+
 EasyCPDLC does not store or transmit an eLoadControl API key. The integration follows eLoadControl's BYOK model: API authentication remains in eLoadControl or the dispatch tool, while the DCDU receives the resulting ACARS message through Hoppie.
 
 Loadsheet recognition accepts explicit eLoadControl/loadsheet markers and common weight fields such as `ZFW`, `TOW`, `LDW`, and `%MAC`. Sandbox-watermarked messages remain printable and retain their watermark. Raw ESC/POS mode should only be selected for a printer that understands ESC/POS commands.
+
+---
+
+## vPilot / vTDLS PDC bridge
+
+vTDLS clearance delivery is intentionally kept separate from Hoppie CPDLC. According to the [vTDLS controller documentation](https://docs.virtualnas.net/vtdls/), a controller sends a PDC to the pilot's VATSIM client; vTDLS may resend it after a network reconnect. The [VATSIM UK PDC documentation](https://docs.vatsim.uk/General/Use%20of%20Software/Issuing%20PDC/) also distinguishes direct pilot-client PDC from Hoppie delivery. EasyCPDLC therefore does not invent a KUSA logon or treat a vTDLS PDC as a live CPDLC connection.
+
+The optional `EasyCPDLC.VPilotBridge` plugin uses vPilot's supported plugin API and a current-Windows-user named pipe:
+
+```text
+vTDLS/controller -> VATSIM private message -> vPilot plugin
+                 -> current-user local pipe -> EasyCPDLC PDC message/printer
+```
+
+Only messages classified as PDC/clearance traffic are imported. Ordinary vPilot private messages stay in vPilot. The callsign supplied by vPilot must match the EasyCPDLC flight callsign when both are available. Imported messages are labeled `SOURCE VATSIM/VTDLS`, can use the existing PDC/DCL automatic-print option, and are deduplicated from normalized content for six hours so a vTDLS reconnect resend does not print twice. They set the clearance-received state but do not create CPDLC sequence numbers or expose CPDLC `WILCO` actions.
+
+### Install the bridge
+
+1. Install the current stable [vPilot](https://vpilot.rosscarlson.dev/Download) for the current Windows user.
+2. Close vPilot.
+3. From the repository root, run:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\Install-VPilotBridge.ps1
+   ```
+
+4. Restart vPilot and enter `.debug`. Confirm that `EasyCPDLC vPilot PDC Bridge` is listed as loaded.
+5. Start EasyCPDLC with the same aircraft callsign used in vPilot. The bridge itself does not perform a KUSA, CPDLC, or Hoppie logon; existing EasyCPDLC startup/login behavior is unchanged.
+
+The installer builds against the plugin API in the installed vPilot directory and copies only `EasyCPDLC.VPilotBridge.dll` into vPilot's `Plugins` folder. It does not need administrator access. The bridge accepts an optional outbound private-message command for future isolated integrations, but receipt of a PDC never sends an automatic acknowledgement or controller reply.
+
+### Bridge troubleshooting and test plan
+
+- If vPilot's `.debug` output does not show the plugin, close vPilot and rerun the installer. Check that `RossCarlson.Vatsim.Vpilot.Plugins.dll` exists in the vPilot install directory.
+- If EasyCPDLC does not import a clearance, confirm both applications run under the same Windows account and use the same callsign. The pipe ACL rejects other user accounts.
+- A normal chat/private message is deliberately ignored. For a controlled offline integration test, use the unit-test fake pipe; for a live test, the received text must contain recognizable PDC and clearance markers.
+- Reconnecting vPilot may cause vTDLS to resend the PDC. EasyCPDLC should retain one displayed/printed copy during the six-hour duplicate window.
+
+The local protocol, classifier, callsign guard, duplicate suppression, and duplex pipe behavior are covered by automated tests. A live VATSIM connection and controller-issued vTDLS PDC are still required to verify the exact sender name and message wording produced by the current network service. vPilot's general private-message behavior is documented in the [official vPilot manual](https://vpilot.rosscarlson.dev/Documentation).
 
 ---
 

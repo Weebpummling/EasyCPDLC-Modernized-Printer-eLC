@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <OutputType>Library</OutputType>
+    <AssemblyName>EasyCPDLC.VPilotBridge</AssemblyName>
+    <RootNamespace>EasyCPDLC.VPilotBridge</RootNamespace>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <VPilotInstallDir Condition="'$(VPilotInstallDir)' == ''">$(LOCALAPPDATA)\vPilot</VPilotInstallDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="RossCarlson.Vatsim.Vpilot.Plugins">
+      <HintPath>$(VPilotInstallDir)\RossCarlson.Vatsim.Vpilot.Plugins.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Compile Include="..\Shared\VpilotBridgeProtocol.cs" Link="Protocol\VpilotBridgeProtocol.cs" />
+  </ItemGroup>
+
+  <Target Name="ValidateVPilotPluginApi" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(VPilotInstallDir)\RossCarlson.Vatsim.Vpilot.Plugins.dll')"
+           Text="vPilot plugin API not found. Install vPilot or build with -p:VPilotInstallDir=&quot;path-to-vPilot&quot;." />
+  </Target>
+</Project>

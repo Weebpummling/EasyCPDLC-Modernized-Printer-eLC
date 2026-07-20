@@ -22,6 +22,7 @@ using System.Runtime.InteropServices;
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
 [assembly: Guid("b9ca396a-4cb3-4d9a-b985-946443322ab9")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("EasyCPDLC.Tests")]
 
 // Version information for an assembly consists of the following four values:
 //

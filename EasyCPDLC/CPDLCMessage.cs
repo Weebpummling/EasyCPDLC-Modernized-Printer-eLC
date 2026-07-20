@@ -12,6 +12,8 @@ namespace EasyCPDLC
         public string recipient;
         public string message;
         public bool outbound;
+        public string transport = string.Empty;
+        public string aircraftCallsign = string.Empty;
         private string storedText;
 
         public CPDLCResponse header;

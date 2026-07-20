@@ -4,15 +4,25 @@ using System.Drawing;
 using System.Drawing.Printing;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.IO;
 
 namespace EasyCPDLC
 {
     internal enum DatalinkPrinterMode
     {
         Windows,
-        RawEscPos
+        RawEscPos,
+        MockFile
+    }
+
+    internal enum DatalinkCutMode
+    {
+        Off,
+        Partial,
+        Full
     }
 
     internal enum DatalinkMessageCategory
@@ -26,15 +36,16 @@ namespace EasyCPDLC
 
     internal sealed class DatalinkPrinterSettings
     {
-        public DatalinkPrinterMode Mode { get; init; } = DatalinkPrinterMode.Windows;
+        public DatalinkPrinterMode Mode { get; init; } = DatalinkPrinterMode.RawEscPos;
         public string PrinterName { get; init; } = string.Empty;
         public int Columns { get; init; } = 48;
         public bool AutoPrintPdcDcl { get; init; }
         public bool AutoPrintCpdlc { get; init; }
         public bool AutoPrintTelexAoc { get; init; }
         public bool AutoPrintAtis { get; init; }
-        public bool AutoCut { get; init; }
+        public DatalinkCutMode CutMode { get; init; } = DatalinkCutMode.Partial;
         public int FeedLines { get; init; } = 3;
+        public string MockOutputDirectory { get; init; } = string.Empty;
     }
 
     internal sealed class DatalinkPrintJob
@@ -42,16 +53,28 @@ namespace EasyCPDLC
         public string Sender { get; init; } = "UNKNOWN";
         public string MessageType { get; init; } = "TELEX";
         public string Message { get; init; } = string.Empty;
+        public string AircraftCallsign { get; init; } = string.Empty;
+        public string TransportSource { get; init; } = string.Empty;
+        public string StableMessageId { get; init; } = string.Empty;
         public DateTime ReceivedLocalTime { get; init; } = DateTime.Now;
         public DatalinkMessageCategory Category { get; init; } = DatalinkMessageCategory.Other;
 
-        public static DatalinkPrintJob FromMessage(CPDLCMessage message)
+        public static DatalinkPrintJob FromMessage(CPDLCMessage message, string aircraftCallsign = null)
         {
+            string sender = string.IsNullOrWhiteSpace(message?.recipient) ? "UNKNOWN" : message.recipient.Trim();
+            string messageType = string.IsNullOrWhiteSpace(message?.type) ? "TELEX" : message.type.Trim();
+            string body = DatalinkPrinter.NormalizeLineEndings(message?.message ?? string.Empty).TrimEnd();
+            string cleanCallsign = !string.IsNullOrWhiteSpace(message?.aircraftCallsign)
+                ? message.aircraftCallsign.Trim()
+                : (aircraftCallsign ?? string.Empty).Trim();
             return new DatalinkPrintJob
             {
-                Sender = string.IsNullOrWhiteSpace(message?.recipient) ? "UNKNOWN" : message.recipient.Trim(),
-                MessageType = string.IsNullOrWhiteSpace(message?.type) ? "TELEX" : message.type.Trim(),
-                Message = message?.message?.Trim() ?? string.Empty,
+                Sender = sender,
+                MessageType = messageType,
+                Message = body,
+                AircraftCallsign = cleanCallsign,
+                TransportSource = (message?.transport ?? string.Empty).Trim(),
+                StableMessageId = DatalinkPrinter.DeriveStableMessageId(message, cleanCallsign),
                 ReceivedLocalTime = DateTime.Now,
                 Category = DatalinkPrinter.ClassifyMessage(message)
             };
@@ -68,10 +91,12 @@ namespace EasyCPDLC
     {
         public bool Success { get; init; }
         public string Message { get; init; } = string.Empty;
+        public string OutputPath { get; init; } = string.Empty;
     }
 
     internal static class DatalinkPrinter
     {
+        private static readonly Encoding PrinterEncoding;
         private const uint PrinterStatusPaused = 0x00000001;
         private const uint PrinterStatusError = 0x00000002;
         private const uint PrinterStatusPaperOut = 0x00000010;
@@ -87,6 +112,15 @@ namespace EasyCPDLC
         private static readonly Regex ClearancePattern = new(
             @"\b(?:PDC|DCL|PREDEP|PRE-DEPARTURE|CLEARANCE|CLRD|CLD)\b",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        static DatalinkPrinter()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            PrinterEncoding = Encoding.GetEncoding(
+                437,
+                new EncoderReplacementFallback("?"),
+                new DecoderReplacementFallback("?"));
+        }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct DocInfo1
@@ -258,20 +292,39 @@ namespace EasyCPDLC
 
         public static DatalinkPrintJob CreateTestJob()
         {
-            return new DatalinkPrintJob
+            DatalinkPrintJob job = new()
             {
-                Sender = "ELOADCONTROL",
-                MessageType = "TELEX",
+                Sender = "DISPATCH",
+                MessageType = "LOADSHEET",
+                AircraftCallsign = "B-18662",
+                TransportSource = "HOPPIE",
                 Category = DatalinkMessageCategory.TelexAoc,
                 ReceivedLocalTime = new DateTime(2026, 7, 20, 18, 42, 0, DateTimeKind.Utc).ToLocalTime(),
                 Message =
-                    "FLT UAL123       A/C B737-800\n" +
-                    "FROM KSFO        TO   KLAX\n" +
-                    "FINAL LOADSHEET\n" +
-                    "PAX  154\n" +
-                    "ZFW  137.4\n" +
-                    "TOW  151.8\n" +
-                    "TRIM 5.3 UNITS"
+                    "FROM: DISPATCH\n" +
+                    "TO: B-18662\n" +
+                    "FLT: CI7752\n" +
+                    "SFO-SNA\n" +
+                    "PAX 155\n" +
+                    "ZFW 129393\n" +
+                    "TOW 143115\n" +
+                    "LDW 136053\n" +
+                    "BLOCK FUEL 14500\n" +
+                    "TRIP FUEL 7062\n" +
+                    "MACZFW 25.9\n" +
+                    "MACTOW 27.0\n" +
+                    "END OF LOADSHEET"
+            };
+            return new DatalinkPrintJob
+            {
+                Sender = job.Sender,
+                MessageType = job.MessageType,
+                AircraftCallsign = job.AircraftCallsign,
+                TransportSource = job.TransportSource,
+                Category = job.Category,
+                ReceivedLocalTime = job.ReceivedLocalTime,
+                Message = job.Message,
+                StableMessageId = DeriveStableMessageId(job.MessageType, job.Sender, job.AircraftCallsign, job.Message)
             };
         }
 
@@ -328,6 +381,11 @@ namespace EasyCPDLC
             }
 
             settings ??= new DatalinkPrinterSettings();
+            if (settings.Mode == DatalinkPrinterMode.MockFile)
+            {
+                return PrintMockFile(job, settings);
+            }
+
             string printerName = ResolvePrinterName(settings.PrinterName);
             if (string.IsNullOrWhiteSpace(printerName))
             {
@@ -344,9 +402,11 @@ namespace EasyCPDLC
                 return Failed("PRINTER " + status.Message + ": " + printerName);
             }
 
-            return settings.Mode == DatalinkPrinterMode.RawEscPos
-                ? PrintRawEscPos(printerName, job, settings)
-                : PrintWindows(printerName, job, settings);
+            return settings.Mode switch
+            {
+                DatalinkPrinterMode.RawEscPos => PrintRawEscPos(printerName, job, settings),
+                _ => PrintWindows(printerName, job, settings)
+            };
         }
 
         public static string FormatReceiptText(DatalinkPrintJob job, int requestedColumns)
@@ -358,13 +418,57 @@ namespace EasyCPDLC
                 new string('-', columns)
             };
 
-            string metadata = "TYPE " + SafeToken(job?.MessageType, "TELEX") + "  FROM " + SafeToken(job?.Sender, "UNKNOWN");
-            lines.AddRange(WrapLines(metadata, columns));
+            lines.AddRange(WrapLines("TYPE " + SafeToken(job?.MessageType, "TELEX"), columns));
+            if (!string.IsNullOrWhiteSpace(job?.TransportSource))
+            {
+                lines.AddRange(WrapLines("SOURCE " + SafeToken(job.TransportSource, string.Empty), columns));
+            }
+            lines.Add("UTC " + (job?.ReceivedLocalTime ?? DateTime.Now).ToUniversalTime().ToString("ddMMMyy HHmm'Z'").ToUpperInvariant());
+            if (!string.IsNullOrWhiteSpace(job?.AircraftCallsign))
+            {
+                lines.AddRange(WrapLines("A/C " + SafeToken(job.AircraftCallsign, string.Empty), columns));
+            }
+            if (!string.IsNullOrWhiteSpace(job?.Sender))
+            {
+                lines.AddRange(WrapLines("FROM " + SafeToken(job.Sender, "UNKNOWN"), columns));
+            }
             lines.Add(new string('-', columns));
             lines.AddRange(WrapLines(job?.Message ?? string.Empty, columns));
             lines.Add(new string('-', columns));
-            lines.Add(Center((job?.ReceivedLocalTime ?? DateTime.Now).ToUniversalTime().ToString("ddMMMyy HHmm'Z'").ToUpperInvariant(), columns));
             return string.Join("\n", lines);
+        }
+
+        private static DatalinkPrintResult PrintMockFile(DatalinkPrintJob job, DatalinkPrinterSettings settings)
+        {
+            try
+            {
+                string directory = string.IsNullOrWhiteSpace(settings.MockOutputDirectory)
+                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EasyCPDLCModernized", "PrinterMock")
+                    : Path.GetFullPath(settings.MockOutputDirectory);
+                Directory.CreateDirectory(directory);
+
+                byte[] payload = BuildEscPosPayload(job, settings);
+                string id = SanitizeFileToken(job.StableMessageId);
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    id = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff");
+                }
+                string basePath = Path.Combine(directory, "ACARS-" + id);
+                string binaryPath = UniquePath(basePath, ".bin");
+                File.WriteAllBytes(binaryPath, payload);
+                File.WriteAllText(Path.ChangeExtension(binaryPath, ".hex.txt"), ToHexDump(payload), Encoding.ASCII);
+                File.WriteAllText(Path.ChangeExtension(binaryPath, ".preview.txt"), FormatReceiptText(job, settings.Columns), Encoding.UTF8);
+                return new DatalinkPrintResult
+                {
+                    Success = true,
+                    Message = "MOCK ESC/POS JOB SAVED: " + binaryPath,
+                    OutputPath = binaryPath
+                };
+            }
+            catch (Exception ex)
+            {
+                return Failed("MOCK PRINT FAILED: " + ex.Message);
+            }
         }
 
         private static DatalinkPrintResult PrintWindows(string printerName, DatalinkPrintJob job, DatalinkPrinterSettings settings)
@@ -534,16 +638,18 @@ namespace EasyCPDLC
             }
         }
 
-        private static byte[] BuildEscPosPayload(DatalinkPrintJob job, DatalinkPrinterSettings settings)
+        internal static byte[] BuildEscPosPayload(DatalinkPrintJob job, DatalinkPrinterSettings settings)
         {
             int columns = NormalizeColumns(settings.Columns);
             List<byte> bytes = new();
 
             Add(bytes, 0x1B, 0x40);             // Initialize.
-            Add(bytes, 0x1B, 0x61, 0x01);       // Center.
+            Add(bytes, 0x1B, 0x61, 0x00);       // Required default: left alignment.
+            Add(bytes, 0x1B, 0x74, 0x00);       // ESC t 0: CP437 on Epson-compatible printers.
+            Add(bytes, 0x1B, 0x61, 0x01);       // Center heading only.
             Add(bytes, 0x1B, 0x45, 0x01);       // Bold on.
             Add(bytes, 0x1D, 0x21, 0x11);       // Double width and height.
-            AddAscii(bytes, "ACARS\n");
+            AddPrinterText(bytes, "ACARS\n");
             Add(bytes, 0x1D, 0x21, 0x00);       // Normal size.
             Add(bytes, 0x1B, 0x45, 0x00);       // Bold off.
             Add(bytes, 0x1B, 0x61, 0x00);       // Left.
@@ -551,7 +657,7 @@ namespace EasyCPDLC
 
             string receipt = FormatReceiptText(job, columns);
             string body = string.Join("\n", receipt.Split('\n').Skip(1));
-            AddAscii(bytes, body + "\n");
+            AddPrinterText(bytes, body + "\n");
             Add(bytes, 0x1B, 0x4D, 0x00);       // Restore Font A before feed/cut.
 
             int feeds = Math.Max(0, Math.Min(12, settings.FeedLines));
@@ -560,9 +666,13 @@ namespace EasyCPDLC
                 Add(bytes, 0x1B, 0x64, (byte)feeds); // Feed n lines.
             }
 
-            if (settings.AutoCut)
+            if (settings.CutMode == DatalinkCutMode.Partial)
             {
-                Add(bytes, 0x1D, 0x56, 0x00); // Full cut.
+                Add(bytes, 0x1D, 0x56, 0x42, 0x00); // GS V 66 0: partial cut.
+            }
+            else if (settings.CutMode == DatalinkCutMode.Full)
+            {
+                Add(bytes, 0x1D, 0x56, 0x41, 0x00); // GS V 65 0: full cut.
             }
 
             return bytes.ToArray();
@@ -640,10 +750,10 @@ namespace EasyCPDLC
             return new string(' ', left) + cleaned;
         }
 
-        private static IEnumerable<string> WrapLines(string text, int width)
+        internal static IEnumerable<string> WrapLines(string text, int width)
         {
             List<string> output = new();
-            foreach (string rawLine in (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            foreach (string rawLine in NormalizeLineEndings(text).Split('\n'))
             {
                 string remaining = rawLine.TrimEnd();
                 if (remaining.Length == 0)
@@ -654,18 +764,81 @@ namespace EasyCPDLC
 
                 while (remaining.Length > width)
                 {
-                    int splitAt = remaining.LastIndexOf(' ', width);
+                    int splitAt = remaining.LastIndexOf(' ', width - 1, width);
                     if (splitAt < 1)
                     {
                         splitAt = width;
+                        output.Add(remaining.Substring(0, splitAt));
+                        remaining = remaining.Substring(splitAt);
+                        continue;
                     }
 
                     output.Add(remaining.Substring(0, splitAt).TrimEnd());
-                    remaining = remaining.Substring(splitAt).TrimStart();
+                    // Remove only the single word-separator used for wrapping. Do not
+                    // TrimStart: additional leading spaces may be intentional alignment.
+                    remaining = remaining.Substring(splitAt + 1);
                 }
                 output.Add(remaining);
             }
             return output;
+        }
+
+        internal static string NormalizeLineEndings(string value)
+        {
+            return (value ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+
+        internal static byte[] EncodePrinterText(string value)
+        {
+            return PrinterEncoding.GetBytes(value ?? string.Empty);
+        }
+
+        internal static string DeriveStableMessageId(CPDLCMessage message, string aircraftCallsign)
+        {
+            if (message?.header?.MessageID > 0)
+            {
+                return "HOPPIE-" + SafeToken(message.type, "TELEX") + "-" +
+                    SafeToken(message.recipient, "UNKNOWN") + "-" + message.header.MessageID;
+            }
+
+            return DeriveStableMessageId(message?.type, message?.recipient, aircraftCallsign, message?.message);
+        }
+
+        internal static string DeriveStableMessageId(string messageType, string sender, string aircraftCallsign, string message)
+        {
+            string canonical = SafeToken(messageType, "TELEX") + "\n" +
+                SafeToken(sender, "UNKNOWN") + "\n" +
+                SafeToken(aircraftCallsign, string.Empty) + "\n" +
+                NormalizeLineEndings(message).TrimEnd();
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
+            return "SHA256-" + Convert.ToHexString(hash);
+        }
+
+        internal static string ToHexDump(byte[] payload)
+        {
+            if (payload == null || payload.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder result = new();
+            for (int offset = 0; offset < payload.Length; offset += 16)
+            {
+                int count = Math.Min(16, payload.Length - offset);
+                result.Append(offset.ToString("X4")).Append("  ");
+                for (int index = 0; index < 16; index++)
+                {
+                    result.Append(index < count ? payload[offset + index].ToString("X2") : "  ").Append(' ');
+                }
+                result.Append(" | ");
+                for (int index = 0; index < count; index++)
+                {
+                    byte value = payload[offset + index];
+                    result.Append(value >= 0x20 && value <= 0x7E ? (char)value : '.');
+                }
+                result.AppendLine();
+            }
+            return result.ToString();
         }
 
         private static void Add(List<byte> target, params byte[] values)
@@ -673,9 +846,28 @@ namespace EasyCPDLC
             target.AddRange(values);
         }
 
-        private static void AddAscii(List<byte> target, string value)
+        private static void AddPrinterText(List<byte> target, string value)
         {
-            target.AddRange(Encoding.ASCII.GetBytes(value ?? string.Empty));
+            target.AddRange(EncodePrinterText(value));
+        }
+
+        private static string SanitizeFileToken(string value)
+        {
+            string token = new((value ?? string.Empty)
+                .Where(character => char.IsLetterOrDigit(character) || character == '-' || character == '_')
+                .Take(48)
+                .ToArray());
+            return token.Trim('-');
+        }
+
+        private static string UniquePath(string basePath, string extension)
+        {
+            string candidate = basePath + extension;
+            for (int index = 1; File.Exists(candidate); index++)
+            {
+                candidate = basePath + "-" + index + extension;
+            }
+            return candidate;
         }
 
         private static DatalinkPrintResult Succeeded(string message)
