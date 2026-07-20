@@ -327,6 +327,7 @@ namespace EasyCPDLC
             }
 
             DrawHotspotHighlight(e.Graphics);
+            base.OnPaint(e);
         }
 
         private void DrawHotspotHighlight(Graphics g)

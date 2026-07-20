@@ -891,6 +891,15 @@ private TelexForm tForm;
         private const string MessageTextSizeSettingName = "MessageTextSize";
         private const string AutoDeleteRequestSecondsSettingName = "AutoDeleteRequestSeconds";
         private const string WindowScalePercentSettingName = "WindowScalePercent";
+        private const string PrinterModeSettingName = "PrinterMode";
+        private const string PrinterNameSettingName = "PrinterName";
+        private const string PrinterColumnsSettingName = "PrinterColumns";
+        private const string PrinterAutoPdcDclSettingName = "PrinterAutoPdcDcl";
+        private const string PrinterAutoCpdlcSettingName = "PrinterAutoCpdlc";
+        private const string PrinterAutoTelexAocSettingName = "PrinterAutoTelexAoc";
+        private const string PrinterAutoAtisSettingName = "PrinterAutoAtis";
+        private const string PrinterAutoCutSettingName = "PrinterAutoCut";
+        private const string PrinterFeedLinesSettingName = "PrinterFeedLines";
         private const string MessagePreviewTextTag = "EASYCPDLC_MESSAGE_PREVIEW_TEXT";
 
         public static int WindowScalePercent
@@ -3388,6 +3397,10 @@ private TelexForm tForm;
         private ContextMenuStrip trayMenu;
         private readonly DcduHotspotButton mainMinimizeButton = new();
         private readonly DcduHotspotButton mainReloadFlightPlanButton = new();
+        private readonly DcduHotspotButton boeingReprintButton = new();
+        private DatalinkPrintJob latestDatalinkPrintJob;
+        private DatalinkPrintJob latestPrintedDatalinkPrintJob;
+        private string embeddedPrinterStatus = string.Empty;
         private bool arrivalReloadReminderShown = false;
         private DateTime arrivalReloadReminderStartUtc = DateTime.MinValue;
         private string arrivalReloadReminderSignature = string.Empty;
@@ -3490,6 +3503,10 @@ private TelexForm tForm;
             Account,
             Options,
             AutoDeleteTimer,
+            PrinterMenu,
+            PrinterDevice,
+            PrinterAuto,
+            PrinterFormat,
             Style,
             UpdateRollback,
             RollbackConfirm
@@ -3624,6 +3641,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             this.ShowInTaskbar = false;
             ConfigureTrayIcon();
             ConfigureMainFrameButtonHotspots();
+            dcduFrame.Paint += DcduFrame_PaintPrinterButton;
             this.TopMost = true;
             this.FormBorderStyle = FormBorderStyle.None;
             this.DoubleBuffered = true;
@@ -3772,6 +3790,14 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                         "EDGG");
 
                     WriteMessage("DEPART REQUEST STATUS\nFSM 1302 250727 EDMM\nDLH06F RCD REQUEST\nBEING PROCESSED\nSTANDBY", "TELEX", "EDMM", false, null);
+
+                    WriteMessage(
+                        "ELOADCONTROL LOADSHEET\nDLH06F EDDF-EDDN\nZFW 61240 KG  MACZFW 25.4\nTOW 68490 KG  MACTOW 24.1\nLDW 63310 KG  MACLDW 24.8\nLOAD PLANNING CPT 2 1044 / CPT 3 1566",
+                        "TELEX",
+                        "ELOADCONTROL",
+                        false,
+                        null);
+
                 }
             }
             catch (Exception ex)
@@ -17066,7 +17092,108 @@ airbusAocSendLabel = null;
             mainReloadFlightPlanButton.BackColor = Color.Transparent;
             mainReloadFlightPlanButton.Enabled = true;
 
+            refreshButtonVisual.Name = "boeingPrintButton";
+            refreshButtonVisual.AccessibleName = "Print latest ACARS message";
+
+            boeingReprintButton.Name = "boeingReprintButton";
+            boeingReprintButton.AccessibleName = "Reprint last ACARS print job";
+
             UpdateMainFrameButtonHotspots(DcduStyleManager.IsBoeing);
+        }
+
+        private static DatalinkPrinterMode PrinterMode
+        {
+            get
+            {
+                string value = ReadFixedStringSetting(PrinterModeSettingName, "WINDOWS");
+                return value.Contains("ESC", StringComparison.OrdinalIgnoreCase)
+                    ? DatalinkPrinterMode.RawEscPos
+                    : DatalinkPrinterMode.Windows;
+            }
+            set
+            {
+                SaveFixedStringSetting(PrinterModeSettingName, value == DatalinkPrinterMode.RawEscPos ? "ESC/POS" : "WINDOWS");
+            }
+        }
+
+        public static string SelectedPrinterName
+        {
+            get => ReadFixedStringSetting(PrinterNameSettingName, string.Empty).Trim();
+            set => SaveFixedStringSetting(PrinterNameSettingName, (value ?? string.Empty).Trim());
+        }
+
+        public static int PrinterColumns
+        {
+            get => NormalizePrinterColumns(ReadFixedStringSetting(PrinterColumnsSettingName, "48"));
+            set => SaveFixedStringSetting(PrinterColumnsSettingName, NormalizePrinterColumns(value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        public static bool PrinterAutoPdcDcl
+        {
+            get => ReadFixedBoolSetting(PrinterAutoPdcDclSettingName, false);
+            set => SaveFixedStringSetting(PrinterAutoPdcDclSettingName, value ? "true" : "false");
+        }
+
+        public static bool PrinterAutoCpdlc
+        {
+            get => ReadFixedBoolSetting(PrinterAutoCpdlcSettingName, false);
+            set => SaveFixedStringSetting(PrinterAutoCpdlcSettingName, value ? "true" : "false");
+        }
+
+        public static bool PrinterAutoTelexAoc
+        {
+            get => ReadFixedBoolSetting(PrinterAutoTelexAocSettingName, false);
+            set => SaveFixedStringSetting(PrinterAutoTelexAocSettingName, value ? "true" : "false");
+        }
+
+        public static bool PrinterAutoAtis
+        {
+            get => ReadFixedBoolSetting(PrinterAutoAtisSettingName, false);
+            set => SaveFixedStringSetting(PrinterAutoAtisSettingName, value ? "true" : "false");
+        }
+
+        public static bool PrinterAutoCut
+        {
+            get => ReadFixedBoolSetting(PrinterAutoCutSettingName, false);
+            set => SaveFixedStringSetting(PrinterAutoCutSettingName, value ? "true" : "false");
+        }
+
+        public static int PrinterFeedLines
+        {
+            get => NormalizePrinterFeedLines(ReadFixedStringSetting(PrinterFeedLinesSettingName, "3"));
+            set => SaveFixedStringSetting(PrinterFeedLinesSettingName, NormalizePrinterFeedLines(value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        private static bool ReadFixedBoolSetting(string name, bool defaultValue)
+        {
+            string value = ReadFixedStringSetting(name, defaultValue ? "true" : "false");
+            return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) || value == "1" || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int NormalizePrinterColumns(string value)
+        {
+            return int.TryParse((value ?? string.Empty).Trim(), out int columns) && columns >= 56 ? 64 : 48;
+        }
+
+        private static int NormalizePrinterFeedLines(string value)
+        {
+            return int.TryParse((value ?? string.Empty).Trim(), out int lines) ? Math.Max(0, Math.Min(12, lines)) : 3;
+        }
+
+        private static DatalinkPrinterSettings CurrentPrinterSettings()
+        {
+            return new DatalinkPrinterSettings
+            {
+                Mode = PrinterMode,
+                PrinterName = SelectedPrinterName,
+                Columns = PrinterColumns,
+                AutoPrintPdcDcl = PrinterAutoPdcDcl,
+                AutoPrintCpdlc = PrinterAutoCpdlc,
+                AutoPrintTelexAoc = PrinterAutoTelexAoc,
+                AutoPrintAtis = PrinterAutoAtis,
+                AutoCut = PrinterAutoCut,
+                FeedLines = PrinterFeedLines
+            };
         }
 
         private void UpdateMainFrameButtonHotspots(bool isBoeing)
@@ -17078,6 +17205,145 @@ airbusAocSendLabel = null;
             mainReloadFlightPlanButton.Bounds = isBoeing
                 ? SR(new Rectangle(166, 379, 55, 28))
                 : SR(new Rectangle(311, 318, 48, 20));
+
+            refreshButtonVisual.Bounds = isBoeing
+                ? SR(new Rectangle(267, 343, 56, 28))
+                : SR(new Rectangle(-200, -200, 1, 1));
+            refreshButtonVisual.Enabled = isBoeing && latestDatalinkPrintJob != null;
+
+            boeingReprintButton.Bounds = isBoeing
+                ? SR(new Rectangle(332, 343, 70, 28))
+                : SR(new Rectangle(-200, -200, 1, 1));
+            boeingReprintButton.Enabled = isBoeing && latestPrintedDatalinkPrintJob != null;
+        }
+
+        private void DcduFrame_PaintPrinterButton(object sender, PaintEventArgs e)
+        {
+            if (!DcduStyleManager.IsBoeing)
+            {
+                return;
+            }
+
+            DrawBoeingPrinterButton(e.Graphics, refreshButtonVisual, "PRINT", 7.2f);
+            DrawBoeingPrinterButton(e.Graphics, boeingReprintButton, "REPRINT", 6.6f);
+        }
+
+        private void DrawBoeingPrinterButton(Graphics graphics, DcduHotspotButton button, string text, float fontSize)
+        {
+            if (graphics == null || button == null || button.Bounds.Width <= 1)
+            {
+                return;
+            }
+
+            Rectangle bounds = button.Bounds;
+            Rectangle shadowBounds = new(bounds.X, bounds.Y + S(2), bounds.Width, bounds.Height - S(1));
+            Rectangle faceBounds = Rectangle.Inflate(bounds, -S(3), -S(3));
+            Color top = button.Enabled ? Color.FromArgb(79, 84, 87) : Color.FromArgb(61, 65, 67);
+            Color bottom = button.Enabled ? Color.FromArgb(34, 37, 39) : Color.FromArgb(39, 42, 44);
+
+            using GraphicsPath shadowPath = RoundedButtonRect(shadowBounds, S(4));
+            using GraphicsPath bezelPath = RoundedButtonRect(bounds, S(4));
+            using GraphicsPath facePath = RoundedButtonRect(faceBounds, S(2));
+            using SolidBrush shadow = new(Color.FromArgb(165, 8, 9, 10));
+            using SolidBrush bezel = new(Color.FromArgb(20, 22, 23));
+            using LinearGradientBrush face = new(faceBounds, top, bottom, LinearGradientMode.Vertical);
+            using Pen bezelEdge = new(Color.FromArgb(8, 9, 10), Math.Max(1f, S(1)));
+            using Pen faceEdge = new(Color.FromArgb(112, 118, 120), Math.Max(1f, S(1)));
+            using Pen topHighlight = new(Color.FromArgb(126, 132, 134), Math.Max(1f, S(1)));
+            using Font font = CreateDpiStablePointFont("Consolas", fontSize, FontStyle.Bold);
+            Color textColor = button.Enabled ? Color.WhiteSmoke : Color.FromArgb(137, 141, 143);
+
+            graphics.FillPath(shadow, shadowPath);
+            graphics.FillPath(bezel, bezelPath);
+            graphics.DrawPath(bezelEdge, bezelPath);
+            graphics.FillPath(face, facePath);
+            graphics.DrawPath(faceEdge, facePath);
+            graphics.DrawLine(
+                topHighlight,
+                faceBounds.Left + S(3),
+                faceBounds.Top + S(1),
+                faceBounds.Right - S(3),
+                faceBounds.Top + S(1));
+
+            TextRenderer.DrawText(
+                graphics,
+                text,
+                font,
+                bounds,
+                textColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+
+        private void RememberDatalinkPrintJob(CPDLCMessage message)
+        {
+            if (!DatalinkPrinter.IsPrintableMessage(message))
+            {
+                return;
+            }
+
+            DatalinkPrintJob job = DatalinkPrintJob.FromMessage(message);
+            latestDatalinkPrintJob = job;
+            RefreshPrinterButtonState();
+
+            if (!DebugUiPreviewMode && DatalinkPrinter.ShouldAutoPrint(job, CurrentPrinterSettings()))
+            {
+                SafeUi(() => ExecuteDatalinkPrintJob(job, true));
+            }
+
+            Logger.Info("Printable ACARS message received: " + job.Category + ".");
+        }
+
+        private void PrintDatalinkMessage(CPDLCMessage message)
+        {
+            DatalinkPrintJob job = message != null && DatalinkPrinter.IsPrintableMessage(message)
+                ? DatalinkPrintJob.FromMessage(message)
+                : latestDatalinkPrintJob;
+
+            ExecuteDatalinkPrintJob(job, false);
+        }
+
+        private void ExecuteDatalinkPrintJob(DatalinkPrintJob job, bool automatic)
+        {
+            DatalinkPrintResult result = DatalinkPrinter.Print(job, CurrentPrinterSettings());
+            embeddedPrinterStatus = result.Message ?? string.Empty;
+
+            if (result.Success)
+            {
+                latestPrintedDatalinkPrintJob = job;
+                RefreshPrinterButtonState();
+                Logger.Info((automatic ? "Automatic" : "Manual") + " printer job succeeded: " + result.Message);
+                return;
+            }
+
+            Logger.Warn((automatic ? "Automatic" : "Manual") + " printer job failed: " + result.Message);
+            if (automatic)
+            {
+                WriteMessage("AUTO PRINT FAILED: " + result.Message, "SYSTEM", "PRINTER");
+            }
+            else
+            {
+                MessageBox.Show(this, result.Message, "DCDU PRINTER", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void RefreshPrinterButtonState()
+        {
+            SafeUi(() =>
+            {
+                refreshButtonVisual.Enabled = DcduStyleManager.IsBoeing && latestDatalinkPrintJob != null;
+                boeingReprintButton.Enabled = DcduStyleManager.IsBoeing && latestPrintedDatalinkPrintJob != null;
+                dcduFrame?.Invalidate(Rectangle.Union(refreshButtonVisual.Bounds, boeingReprintButton.Bounds));
+            });
+        }
+
+        private void PrintButton_Click(object sender, EventArgs e)
+        {
+            PrintDatalinkMessage(null);
+        }
+
+        private void ReprintButton_Click(object sender, EventArgs e)
+        {
+            ExecuteDatalinkPrintJob(latestPrintedDatalinkPrintJob, false);
         }
 
         private async void ReloadFlightPlanButton_Click(object sender, EventArgs e)
@@ -17511,6 +17777,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 exitButton.Location = SP(new Point(561, 343));
                 exitButton.Size = SS(new Size(53, 24));
                 UpdateMainFrameButtonHotspots(isBoeing);
+                dcduFrame?.Invalidate();
                 return;
             }
 
@@ -17543,6 +17810,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             mainMinimizeButton.BringToFront();
             exitButton.BringToFront();
             UpdateMainFrameButtonHotspots(isBoeing);
+            dcduFrame?.Invalidate();
         }
 
         private void ConfigureSoundPlayers()
@@ -18058,6 +18326,18 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 return;
             }
 
+            if (HitDcduButton(refreshButtonVisual, e.Location))
+            {
+                PrintButton_Click(refreshButtonVisual, EventArgs.Empty);
+                return;
+            }
+
+            if (HitDcduButton(boeingReprintButton, e.Location))
+            {
+                ReprintButton_Click(boeingReprintButton, EventArgs.Empty);
+                return;
+            }
+
             if (HitDcduButton(mainMinimizeButton, e.Location))
             {
                 Hide();
@@ -18090,6 +18370,8 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 atcButton,
                 settingsButton,
                 mainReloadFlightPlanButton,
+                refreshButtonVisual,
+                boeingReprintButton,
                 mainMinimizeButton,
                 helpButton,
                 exitButton
@@ -24713,6 +24995,15 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 }
             }
 
+            if (DcduStyleManager.IsBoeing && DatalinkPrinter.IsPrintableMessage(message))
+            {
+                AddStyledMessageAction(page, "*PRINT", leftX, leftRow1, leftW, actionH, ContentAlignment.MiddleLeft, () => PrintDatalinkMessage(message));
+                if (latestPrintedDatalinkPrintJob != null)
+                {
+                    AddStyledMessageAction(page, "*REPRINT", leftX, leftRow2, leftW, actionH, ContentAlignment.MiddleLeft, () => ReprintButton_Click(boeingReprintButton, EventArgs.Empty));
+                }
+            }
+
             AddStyledMessageAction(page, "DELETE*", rightX, rightRow1, rightW, actionH, ContentAlignment.MiddleRight, () => DeleteElement(EventArgs.Empty, message));
             AddStyledMessageAction(page, "CLOSE*", rightX, rightRow2, rightW, actionH, ContentAlignment.MiddleRight, () => ClearPreview());
         }
@@ -25785,6 +26076,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             }
 
             TrackAutoAtisLetterFromMessage(message);
+            RememberDatalinkPrintJob(message);
 
             if (_outbound &&
                 string.Equals(_type, "CPDLC", StringComparison.OrdinalIgnoreCase))
@@ -26359,7 +26651,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             switch (embeddedSetupPage)
             {
                 case EmbeddedSetupPage.MainMenu:
-                    return !rightSide && (index == 1 || index == 2 || index == 3 || index == 4 || index == bottom);
+                    return !rightSide && ((index >= 1 && index <= (DcduStyleManager.IsBoeing ? 5 : 4)) || index == bottom);
 
                 case EmbeddedSetupPage.Account:
                     return !rightSide && index == bottom;
@@ -26385,6 +26677,18 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
                 case EmbeddedSetupPage.AutoDeleteTimer:
                     return (index >= 1 && index <= 4) || (!rightSide && index == bottom);
+
+                case EmbeddedSetupPage.PrinterMenu:
+                    return !rightSide && ((index >= 1 && index <= 4) || index == bottom);
+
+                case EmbeddedSetupPage.PrinterDevice:
+                    return (rightSide && index == 1) || (!rightSide && (index == 4 || index == bottom));
+
+                case EmbeddedSetupPage.PrinterAuto:
+                    return (rightSide && index >= 1 && index <= 4) || (!rightSide && index == bottom);
+
+                case EmbeddedSetupPage.PrinterFormat:
+                    return (rightSide && index >= 1 && index <= 3) || (!rightSide && index == bottom);
 
                 case EmbeddedSetupPage.Style:
                     return (!rightSide && (index == 1 || index == 2 || index == bottom)) ||
@@ -26420,11 +26724,15 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     {
                         ShowEmbeddedSetupOptionsPage();
                     }
-                    else if (!rightSide && index == 3)
+                    else if (!rightSide && index == 3 && DcduStyleManager.IsBoeing)
+                    {
+                        ShowEmbeddedSetupPrinterMenu();
+                    }
+                    else if (!rightSide && index == (DcduStyleManager.IsBoeing ? 4 : 3))
                     {
                         ShowEmbeddedSetupStylePage();
                     }
-                    else if (!rightSide && index == 4)
+                    else if (!rightSide && index == (DcduStyleManager.IsBoeing ? 5 : 4))
                     {
                         ShowEmbeddedSetupUpdateRollbackPage(true);
                     }
@@ -26498,6 +26806,70 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                         int offset = rightSide ? 4 : 0;
                         SetEmbeddedSetupAutoDeleteSeconds(values[offset + index - 1]);
                     }
+                    break;
+
+                case EmbeddedSetupPage.PrinterMenu:
+                    if (!rightSide && index == 1)
+                    {
+                        ShowEmbeddedSetupPrinterDevicePage(true);
+                    }
+                    else if (!rightSide && index == 2)
+                    {
+                        ShowEmbeddedSetupPrinterAutoPage();
+                    }
+                    else if (!rightSide && index == 3)
+                    {
+                        ShowEmbeddedSetupPrinterFormatPage();
+                    }
+                    else if (!rightSide && index == 4)
+                    {
+                        RunEmbeddedPrinterTest();
+                    }
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupMainMenu();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.PrinterDevice:
+                    if (rightSide && index == 1)
+                    {
+                        PrinterMode = PrinterMode == DatalinkPrinterMode.Windows ? DatalinkPrinterMode.RawEscPos : DatalinkPrinterMode.Windows;
+                        ShowEmbeddedSetupPrinterDevicePage(false);
+                    }
+                    else if (!rightSide && index == 4)
+                    {
+                        ShowEmbeddedSetupPrinterDevicePage(true);
+                    }
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupPrinterMenu();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.PrinterAuto:
+                    if (rightSide && index == 1) PrinterAutoPdcDcl = !PrinterAutoPdcDcl;
+                    else if (rightSide && index == 2) PrinterAutoCpdlc = !PrinterAutoCpdlc;
+                    else if (rightSide && index == 3) PrinterAutoTelexAoc = !PrinterAutoTelexAoc;
+                    else if (rightSide && index == 4) PrinterAutoAtis = !PrinterAutoAtis;
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupPrinterMenu();
+                        break;
+                    }
+                    ShowEmbeddedSetupPrinterAutoPage();
+                    break;
+
+                case EmbeddedSetupPage.PrinterFormat:
+                    if (rightSide && index == 1) PrinterColumns = PrinterColumns == 48 ? 64 : 48;
+                    else if (rightSide && index == 2) PrinterFeedLines = PrinterFeedLines >= 8 ? 0 : PrinterFeedLines + 1;
+                    else if (rightSide && index == 3) PrinterAutoCut = !PrinterAutoCut;
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupPrinterMenu();
+                        break;
+                    }
+                    ShowEmbeddedSetupPrinterFormatPage();
                     break;
 
                 case EmbeddedSetupPage.Style:
@@ -26641,6 +27013,59 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             return box;
         }
 
+        private ComboBox AddEmbeddedSetupPrinterDropdown(Control parent, int x, int y, int width)
+        {
+            IReadOnlyList<string> printers = DatalinkPrinter.GetInstalledPrinterNames();
+            ComboBox selector = new()
+            {
+                Name = "embeddedSetup_PrinterName",
+                BackColor = Color.FromArgb(3, 8, 15),
+                ForeColor = MainPrimaryTextColor(),
+                FlatStyle = FlatStyle.Popup,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = CreateDpiStablePointFont("Consolas", DcduStyleManager.IsBoeing ? 7.3f : 7.7f, FontStyle.Bold),
+                Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, 25)),
+                Size = new Size(ScaleChildWidth(parent, x, width), S(25)),
+                MaxDropDownItems = 12
+            };
+
+            foreach (string printer in printers)
+            {
+                selector.Items.Add(printer);
+            }
+
+            string configured = SelectedPrinterName;
+            string selected = printers.FirstOrDefault(name => string.Equals(name, configured, StringComparison.OrdinalIgnoreCase))
+                ?? DatalinkPrinter.GetDefaultPrinterName();
+
+            if (!string.IsNullOrWhiteSpace(selected) && selector.Items.Contains(selected))
+            {
+                selector.SelectedItem = selected;
+            }
+            else if (selector.Items.Count > 0)
+            {
+                selector.SelectedIndex = 0;
+            }
+
+            if (selector.SelectedItem is string initialPrinter)
+            {
+                SelectedPrinterName = initialPrinter;
+            }
+
+            selector.SelectedIndexChanged += (_, __) =>
+            {
+                if (selector.SelectedItem is string printerName)
+                {
+                    SelectedPrinterName = printerName;
+                    embeddedPrinterStatus = DatalinkPrinter.GetPrinterStatus(printerName).Message;
+                }
+            };
+
+            parent.Controls.Add(selector);
+            selector.BringToFront();
+            return selector;
+        }
+
         private string EmbeddedSetupOnOff(bool value)
         {
             return value ? "ON" : "OFF";
@@ -26697,9 +27122,19 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             AddEmbeddedSetupLabel(page, "SETUP MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
             AddEmbeddedSetupLabel(page, "<ACCOUNT / LOGIN", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddEmbeddedSetupLabel(page, "<OPTIONS", 4, EmbeddedSetupLskTextY(page, 2), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, "<DCDU STYLE", 4, EmbeddedSetupLskTextY(page, 3), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, DcduStyleManager.CurrentStyle.ToUpperInvariant(), page.Width - 180, EmbeddedSetupRightLskTextY(page, 3), 176, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
-            AddEmbeddedSetupLabel(page, "<UPDATE / ROLLBACK", 4, EmbeddedSetupLskTextY(page, 4), 310, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            if (DcduStyleManager.IsBoeing)
+            {
+                AddEmbeddedSetupLabel(page, "<PRINTER", 4, EmbeddedSetupLskTextY(page, 3), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
+                AddEmbeddedSetupLabel(page, "<DCDU STYLE", 4, EmbeddedSetupLskTextY(page, 4), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
+                AddEmbeddedSetupLabel(page, DcduStyleManager.CurrentStyle.ToUpperInvariant(), page.Width - 180, EmbeddedSetupRightLskTextY(page, 4), 176, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+                AddEmbeddedSetupLabel(page, "<UPDATE / ROLLBACK", 4, EmbeddedSetupLskTextY(page, 5), 310, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            }
+            else
+            {
+                AddEmbeddedSetupLabel(page, "<DCDU STYLE", 4, EmbeddedSetupLskTextY(page, 3), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
+                AddEmbeddedSetupLabel(page, DcduStyleManager.CurrentStyle.ToUpperInvariant(), page.Width - 180, EmbeddedSetupRightLskTextY(page, 3), 176, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+                AddEmbeddedSetupLabel(page, "<UPDATE / ROLLBACK", 4, EmbeddedSetupLskTextY(page, 4), 310, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            }
             AddEmbeddedSetupLabel(page, "<RETURN", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 190, 30, ContentAlignment.MiddleLeft, color, menuFont);
         }
 
@@ -26768,6 +27203,123 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             AddEmbeddedSetupLabel(page, MessageTextSize.ToUpperInvariant() + ">", page.Width - 190, EmbeddedSetupRightLskTextY(page, textSizeRow), 186, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
 
             AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, bottom), 140, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private static string PrinterModeDisplayText()
+        {
+            return PrinterMode == DatalinkPrinterMode.RawEscPos ? "ESC/POS" : "WINDOWS";
+        }
+
+        private static string ShortPrinterStatus(string status)
+        {
+            string cleaned = (status ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim().ToUpperInvariant();
+            return cleaned.Length <= 42 ? cleaned : cleaned.Substring(0, 39) + "...";
+        }
+
+        private void ShowEmbeddedSetupPrinterMenu()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.PrinterMenu);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "DCDU PRINTER", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "<DEVICE / MODE", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterModeDisplayText(), page.Width - 150, EmbeddedSetupRightLskTextY(page, 1), 146, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "<AUTO PRINT", 4, EmbeddedSetupLskTextY(page, 2), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "<FORMAT / CUT", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterColumns + " COL", page.Width - 150, EmbeddedSetupRightLskTextY(page, 3), 146, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "<PRINT TEST", 4, EmbeddedSetupLskTextY(page, 4), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+
+            if (!string.IsNullOrWhiteSpace(embeddedPrinterStatus))
+            {
+                AddEmbeddedSetupLabel(page, ShortPrinterStatus(embeddedPrinterStatus), 4, EmbeddedSetupLskTextY(page, 5), page.Width - 8, 24, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            }
+
+            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 210, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void ShowEmbeddedSetupPrinterDevicePage(bool refreshStatus)
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.PrinterDevice);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Color color = MainPrimaryTextColor();
+
+            if (refreshStatus || string.IsNullOrWhiteSpace(embeddedPrinterStatus))
+            {
+                embeddedPrinterStatus = DatalinkPrinter.GetPrinterStatus(SelectedPrinterName).Message;
+            }
+
+            AddEmbeddedSetupLabel(page, "PRINTER DEVICE", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "MODE", 4, EmbeddedSetupLskTextY(page, 1), 180, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterModeDisplayText() + ">", page.Width - 170, EmbeddedSetupRightLskTextY(page, 1), 166, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            int printerRowY = EmbeddedSetupLskTextY(page, 2);
+            AddEmbeddedSetupLabel(page, "PRINTER", 4, printerRowY, 120, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupPrinterDropdown(page, 126, printerRowY + 2, Math.Max(180, page.Width - 130));
+
+            AddEmbeddedSetupLabel(page, "STATUS", 4, EmbeddedSetupLskTextY(page, 3), 150, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, ShortPrinterStatus(embeddedPrinterStatus), page.Width - 250, EmbeddedSetupRightLskTextY(page, 3), 246, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, EmbeddedSetupCaptionFont());
+            AddEmbeddedSetupLabel(page, "<REFRESH STATUS", 4, EmbeddedSetupLskTextY(page, 4), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "<PRINTER MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void ShowEmbeddedSetupPrinterAutoPage()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.PrinterAuto);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "AUTO PRINT", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddPrinterAutoToggleRow(page, "PDC / DCL", PrinterAutoPdcDcl, 1, color, menuFont);
+            AddPrinterAutoToggleRow(page, "CPDLC", PrinterAutoCpdlc, 2, color, menuFont);
+            AddPrinterAutoToggleRow(page, "TELEX / AOC", PrinterAutoTelexAoc, 3, color, menuFont);
+            AddPrinterAutoToggleRow(page, "ATIS", PrinterAutoAtis, 4, color, menuFont);
+            AddEmbeddedSetupLabel(page, "<PRINTER MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void AddPrinterAutoToggleRow(Control page, string label, bool enabled, int row, Color color, Font font)
+        {
+            AddEmbeddedSetupLabel(page, label, 4, EmbeddedSetupLskTextY(page, row), 260, 30, ContentAlignment.MiddleLeft, color, font);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(enabled) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, row), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, font);
+        }
+
+        private void ShowEmbeddedSetupPrinterFormatPage()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.PrinterFormat);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "PRINTER FORMAT", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "PAPER COLUMNS", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterColumns + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 1), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "FEED LINES", 4, EmbeddedSetupLskTextY(page, 2), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterFeedLines + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 2), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "AUTO CUT", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(PrinterAutoCut) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 3), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "CUT/FEED ARE ESC/POS COMMANDS", 4, EmbeddedSetupLskTextY(page, 4), page.Width - 8, 24, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddEmbeddedSetupLabel(page, "<PRINTER MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
+        private void RunEmbeddedPrinterTest()
+        {
+            DatalinkPrintResult result = DatalinkPrinter.Print(DatalinkPrinter.CreateTestJob(), CurrentPrinterSettings());
+            embeddedPrinterStatus = result.Message;
+            if (result.Success)
+            {
+                latestPrintedDatalinkPrintJob = DatalinkPrinter.CreateTestJob();
+                RefreshPrinterButtonState();
+            }
+            ShowEmbeddedSetupPrinterMenu();
         }
 
 

@@ -27,6 +27,7 @@ This fork updates EasyCPDLC for **.NET 10** and adds a cockpit-style DCDU interf
 - [Clearance workflow and auto-confirm](#clearance-workflow-and-auto-confirm)
 - [Status indicators](#status-indicators)
 - [Smart message handling](#smart-message-handling)
+- [eLoadControl Boeing DCDU printer](#eloadcontrol-boeing-dcdu-printer)
 - [MSFS / Flow Pro integration](#msfs--flow-pro-integration)
 - [Flow Pro setup](#flow-pro-setup)
 - [Free text cooldown](#free-text-cooldown)
@@ -470,6 +471,47 @@ Examples:
 ATIS responses try to detect the current ATIS information letter and display it directly in the message list.
 
 Unread messages are highlighted and can trigger a reminder sound.
+
+---
+
+## eLoadControl Boeing DCDU printer
+
+The Boeing-style DCDU includes a native ACARS printer for eLoadControl loadsheets and other inbound datalink messages. It prints the textual Hoppie message instead of scaling an eLoadControl PDF to receipt paper, keeping 80 mm output readable.
+
+Two printer modes are available:
+
+- **Windows** sends a formatted document through the selected Windows printer queue and works with normal desktop, receipt, and virtual printers.
+- **ESC/POS** sends raw commands through the Windows spooler with `OpenPrinter` / `WritePrinter`. It supports bold and double-size headings, alignment, line feeds, and automatic cutting on compatible receipt printers.
+
+The default format is **48 columns**. A **64-column** option is available for printers and paper widths that support it.
+
+Printer setup is available from Boeing `SETUP > PRINTER` and includes:
+
+- installed-printer dropdown
+- Windows or raw ESC/POS mode
+- 48- or 64-column formatting
+- automatic print for PDC/DCL
+- automatic print for CPDLC
+- automatic print for TELEX/AOC, including eLoadControl
+- automatic print for ATIS
+- ESC/POS auto-cut toggle
+- feed-lines-after-print setting
+- printer status refresh with offline, paper-out, paused, door-open, and attention states
+- print-test action
+
+The Boeing lower bezel provides separate `PRINT` and `REPRINT` keys. `PRINT` sends the latest printable inbound datalink message, while `REPRINT` repeats the last successfully submitted job. Printable message previews also expose these actions.
+
+Typical flow:
+
+1. Generate a loadsheet in eLoadControl using the pilot's own Pro License Key.
+2. Send the returned `acarsMessage` with eLoadControl's `/api/v1/send-acars` endpoint, using the pilot's Hoppie logon code, airline operator code, and flight number.
+3. Keep EasyCPDLC connected under the matching flight callsign. The normal Hoppie poll receives and displays the message.
+4. In Boeing mode, open the loadsheet and choose `PRINT`, or press the physical-style `PRINT` button on the lower DCDU bezel. The button becomes available after a printable message is received.
+5. The job is sent directly to the printer selected under `SETUP > PRINTER`.
+
+EasyCPDLC does not store or transmit an eLoadControl API key. The integration follows eLoadControl's BYOK model: API authentication remains in eLoadControl or the dispatch tool, while the DCDU receives the resulting ACARS message through Hoppie.
+
+Loadsheet recognition accepts explicit eLoadControl/loadsheet markers and common weight fields such as `ZFW`, `TOW`, `LDW`, and `%MAC`. Sandbox-watermarked messages remain printable and retain their watermark. Raw ESC/POS mode should only be selected for a printer that understands ESC/POS commands.
 
 ---
 
