@@ -885,8 +885,7 @@ private TelexForm tForm;
 
         private static string NormalizeSimbriefID(string value)
         {
-            string cleaned = (value ?? string.Empty).Trim();
-            return Regex.IsMatch(cleaned, @"^\d{1,7}$") ? cleaned : string.Empty;
+            return SimbriefLoadsheetClient.NormalizeUserIdentifier(value);
         }
 
         private const string MessageTextSizeSettingName = "MessageTextSize";
@@ -1607,6 +1606,7 @@ private TelexForm tForm;
                 if (retrieveButton != null)
                 {
                     retrieveButton.Text = _connected ? "DISC" : "CONN";
+                    dcduFrame?.Invalidate(retrieveButton.Bounds);
                 }
 
                 if (statusValueLabel != null)
@@ -1621,6 +1621,16 @@ private TelexForm tForm;
                 UpdateCallsignDisplay();
                 UpdateFlightPhaseBadge();
             }
+        }
+
+        internal static string VatsimConnectionTransitionMessage(bool wasConnected, bool isConnected)
+        {
+            if (wasConnected == isConnected)
+            {
+                return string.Empty;
+            }
+
+            return isConnected ? "VATSIM CONNECTED." : "VATSIM DISCONNECTED.";
         }
 
         private void UpdateConnectionGatedControls()
@@ -3569,6 +3579,7 @@ private TelexForm tForm;
         private const string SetupInputCid = "cid";
         private const string SetupInputHoppie = "hoppie";
         private const string SetupInputSimbrief = "simbrief";
+        private const string SetupInputELoadControl = "eloadcontrol";
 
         private readonly Dictionary<string, TextBox> airbusAocInputs = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> airbusAocFormValues = new(StringComparer.OrdinalIgnoreCase);
@@ -4394,7 +4405,19 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
         private void EasyCpdlcCaptureFocus_MouseDown(object sender, MouseEventArgs e)
         {
+            // ComboBox dropdowns use a separate native popup window. Re-activating the
+            // DCDU during mouse-down causes Windows to dismiss that popup immediately.
+            if (!ShouldCaptureFocusForControl(sender))
+            {
+                return;
+            }
+
             CaptureEasyCpdlcFocus();
+        }
+
+        internal static bool ShouldCaptureFocusForControl(object control)
+        {
+            return control is not ComboBox;
         }
 
         private void CaptureEasyCpdlcFocus()
@@ -17268,18 +17291,29 @@ airbusAocSendLabel = null;
         {
             get
             {
-                string value = ReadFixedStringSetting(PrinterProfileSettingName, "CITIZEN CT-S4000 112MM");
-                return value.Contains("80", StringComparison.OrdinalIgnoreCase) ||
-                    value.Contains("RONGTA", StringComparison.OrdinalIgnoreCase) ||
-                    value.Contains("GENERIC", StringComparison.OrdinalIgnoreCase)
-                    ? DatalinkPrinterProfile.GenericEscPos80Mm
-                    : DatalinkPrinterProfile.CitizenCtS4000_112Mm;
+                string value = ReadFixedStringSetting(PrinterProfileSettingName, "GENERIC 4 INCH");
+                return ParsePrinterProfileSetting(value);
             }
             set
             {
                 SaveFixedStringSetting(PrinterProfileSettingName, DatalinkPrinter.GetProfileDisplayName(value));
                 PrinterColumns = DatalinkPrinter.GetNormalColumns(value);
             }
+        }
+
+        internal static DatalinkPrinterProfile ParsePrinterProfileSetting(string value)
+        {
+            string cleaned = value ?? string.Empty;
+            bool isWideProfile = cleaned.Contains("4 INCH", StringComparison.OrdinalIgnoreCase) ||
+                cleaned.Contains("4IN", StringComparison.OrdinalIgnoreCase) ||
+                cleaned.Contains("104MM", StringComparison.OrdinalIgnoreCase) ||
+                cleaned.Contains("112MM", StringComparison.OrdinalIgnoreCase) ||
+                cleaned.Contains("CTS4000", StringComparison.OrdinalIgnoreCase) ||
+                cleaned.Contains("CT-S4000", StringComparison.OrdinalIgnoreCase);
+
+            return isWideProfile
+                ? DatalinkPrinterProfile.CitizenCtS4000_112Mm
+                : DatalinkPrinterProfile.GenericEscPos80Mm;
         }
 
         public static int PrinterColumns
@@ -17414,6 +17448,7 @@ airbusAocSendLabel = null;
                 return;
             }
 
+            DrawBoeingPrinterButton(e.Graphics, retrieveButton, Connected ? "DISC" : "CONN", 7.2f);
             DrawBoeingPrinterButton(e.Graphics, refreshButtonVisual, "PRINT", 7.2f);
             DrawBoeingPrinterButton(e.Graphics, boeingReprintButton, "REPRINT", 6.6f);
         }
@@ -17871,7 +17906,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 if (!string.IsNullOrWhiteSpace(SimbriefID))
                 {
                     using HttpClient wc = CreateShortTimeoutHttpClient();
-                    string simbriefJson = await wc.GetStringAsync($"https://www.simbrief.com/api/xml.fetcher.php?userid={Uri.EscapeDataString(SimbriefID)}&json=1");
+                    string simbriefJson = await wc.GetStringAsync(SimbriefLoadsheetClient.BuildFetchUrl(SimbriefID));
                     string simbriefNavlog = JObject.Parse(simbriefJson)["navlog"]?.ToString();
 
                     if (!string.IsNullOrWhiteSpace(simbriefNavlog))
@@ -18045,8 +18080,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             if (isBoeing)
             {
                 // Hitboxes tuned for the 656x450 Boeing main asset.
-                retrieveButton.Location = SP(new Point(17, 343));
-                retrieveButton.Size = SS(new Size(45, 24));
+                retrieveButton.Bounds = SR(BoeingConnectButtonBounds());
 
                 telexButton.Location = SP(new Point(69, 343));
                 telexButton.Size = SS(new Size(44, 24));
@@ -18098,6 +18132,12 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             exitButton.BringToFront();
             UpdateMainFrameButtonHotspots(isBoeing);
             dcduFrame?.Invalidate();
+        }
+
+        internal static Rectangle BoeingConnectButtonBounds()
+        {
+            // Cover the complete painted CONN/DISC key without overlapping TELEX.
+            return new Rectangle(20, 341, 52, 32);
         }
 
         private void ConfigureSoundPlayers()
@@ -26566,6 +26606,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
         private async void RetrieveButton_Click(object sender, EventArgs e)
         {
             string response = "";
+            bool wasConnected = Connected;
 
             if (DebugUiPreviewMode)
             {
@@ -26581,7 +26622,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 {
                     using (HttpClient wc = CreateShortTimeoutHttpClient())
                     {
-                        vatsimData = JsonConvert.DeserializeObject<VATSIMRootobject>(wc.GetStringAsync("https://data.vatsim.net/v3/vatsim-data.json").Result);
+                        vatsimData = JsonConvert.DeserializeObject<VATSIMRootobject>(await wc.GetStringAsync("https://data.vatsim.net/v3/vatsim-data.json"));
                         lastVatsimOnlineRefreshUtc = DateTime.UtcNow;
                         UpdateOnlineStatusLabel();
                         Logger.Debug("VATSIM Data Retrieved and Parsed");
@@ -26591,11 +26632,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     userVATSIMData = vatsimData.pilots.Where(i => i.cid == cid).FirstOrDefault();
                     if (userVATSIMData is null)
                     {
-                        response += "VATSIM: PILOT NOT FOUND. WAIT 60 SECONDS AND RETRY.\n";
+                        Logger.Debug("VATSIM pilot not found for CID " + cid + "; remaining disconnected.");
                         atcButton.Enabled = false;
                         telexButton.Enabled = false;
                         Connected = false;
-                        WriteMessage(response, "SYSTEM", "SYSTEM");
                         return;
                     }
 
@@ -26645,13 +26685,13 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     return;
                 }
 
-                response += "LOGON SUCCESSFUL.";
+                response += VatsimConnectionTransitionMessage(wasConnected, Connected);
 
                 try
                 {
 
                     using HttpClient wc = CreateShortTimeoutHttpClient();
-                    var simbriefjson = wc.GetStringAsync($"https://www.simbrief.com/api/xml.fetcher.php?userid={Uri.EscapeDataString(SimbriefID)}&json=1").Result;
+                    var simbriefjson = await wc.GetStringAsync(SimbriefLoadsheetClient.BuildFetchUrl(SimbriefID));
                     var simbriefNavlog = JObject.Parse(simbriefjson)["navlog"].ToString();
                     simbriefData = JsonConvert.DeserializeObject<Navlog>(simbriefNavlog);
 
@@ -26753,7 +26793,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 atisAvailabilityState = "UNKNOWN";
                 lastClearanceHoverText = string.Empty;
                 SetClearanceStatus("CLR --");
-                response = "DISCONNECTED CLIENT";
+                response = VatsimConnectionTransitionMessage(wasConnected, false);
                 vatsimData = new VATSIMRootobject();
                 hoppieOnlineStations.Clear();
                 hoppieOnlineStationsLoaded = false;
@@ -26765,7 +26805,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 telexButton.Enabled = false;
                 Connected = false;
 
-                WriteMessage(response, "SYSTEM", "SYSTEM");
+                if (!string.IsNullOrWhiteSpace(response))
+                {
+                    WriteMessage(response, "SYSTEM", "SYSTEM");
+                }
 
             }
         }
@@ -27381,7 +27424,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 Font = CreateDpiStablePointFont("Consolas", DcduStyleManager.IsBoeing ? 7.3f : 7.7f, FontStyle.Bold),
                 Location = new Point(ScaleChildX(parent, x, width), ScaleChildY(parent, y, 25)),
                 Size = new Size(ScaleChildWidth(parent, x, width), S(25)),
-                MaxDropDownItems = 12
+                MaxDropDownItems = 12,
+                IntegralHeight = false,
+                DropDownHeight = S(220),
+                Cursor = Cursors.Hand
             };
 
             const string selectPrinter = "<SELECT PRINTER>";
@@ -27446,6 +27492,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     case SetupInputSimbrief:
                         SimbriefID = value ?? string.Empty;
                         break;
+
+                    case SetupInputELoadControl:
+                        SavedELoadControlApiKey = value ?? string.Empty;
+                        break;
                 }
 
                 Properties.Settings.Default.Save();
@@ -27503,14 +27553,18 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             AddEmbeddedSetupLabel(page, "VATSIM CID", leftX, y, 170, 18, ContentAlignment.MiddleLeft, color, captionFont);
             AddEmbeddedSetupTextBox(page, SetupInputCid, SavedCID > 0 ? SavedCID.ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty, leftX + 180, y - 2, 150, 8);
-            y += 44;
+            y += 38;
 
             AddEmbeddedSetupLabel(page, "HOPPIE LOGON CODE", leftX, y, 190, 18, ContentAlignment.MiddleLeft, color, captionFont);
             AddEmbeddedSetupTextBox(page, SetupInputHoppie, SavedHoppieCode, leftX + 180, y - 2, 190, 64, true);
-            y += 44;
+            y += 38;
 
             AddEmbeddedSetupLabel(page, "SIMBRIEF USERNAME", leftX, y, 190, 18, ContentAlignment.MiddleLeft, color, captionFont);
             AddEmbeddedSetupTextBox(page, SetupInputSimbrief, SimbriefID, leftX + 180, y - 2, 190, 64);
+            y += 38;
+
+            AddEmbeddedSetupLabel(page, "ELOADCONTROL API", leftX, y, 190, 18, ContentAlignment.MiddleLeft, color, captionFont);
+            AddEmbeddedSetupTextBox(page, SetupInputELoadControl, SavedELoadControlApiKey, leftX + 180, y - 2, 190, 128, true);
             AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, EmbeddedSetupMenuFont());
         }
 
@@ -27593,7 +27647,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             AddEmbeddedSetupLabel(page, PrinterModeDisplayText(), page.Width - 150, EmbeddedSetupRightLskTextY(page, 1), 146, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
             AddEmbeddedSetupLabel(page, "<AUTO PRINT", 4, EmbeddedSetupLskTextY(page, 2), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddEmbeddedSetupLabel(page, "<FORMAT / CUT", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, (PrinterProfile == DatalinkPrinterProfile.CitizenCtS4000_112Mm ? "112MM / " : "80MM / ") + PrinterColumns, page.Width - 180, EmbeddedSetupRightLskTextY(page, 3), 176, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, (PrinterProfile == DatalinkPrinterProfile.CitizenCtS4000_112Mm ? "4IN / " : "80MM / ") + PrinterColumns, page.Width - 180, EmbeddedSetupRightLskTextY(page, 3), 176, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
             AddEmbeddedSetupLabel(page, "<PRINT TEST", 4, EmbeddedSetupLskTextY(page, 4), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
 
             if (!string.IsNullOrWhiteSpace(embeddedPrinterStatus))

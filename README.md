@@ -17,7 +17,7 @@ The scope of this fork is intentionally narrow:
 
 - print the datalink item currently open on either DCDU
 - support ordinary Windows printer queues and raw ESC/POS receipt printers
-- default to the Citizen CT-S4000 112 mm / 104 mm printable-width profile
+- default to the generic 4-inch / 104 mm printable-width profile used by printers such as the Citizen CT-S4000
 - retain an 80 mm / 72 mm profile for devices such as the Rongta RP326
 - request an eLoadControl textual loadsheet inside EasyCPDLC using the pilot’s own API key
 - let the pilot review a loadsheet or imported clearance before printing it
@@ -47,7 +47,7 @@ Printer settings include:
 
 - installed Windows printer selection with persistent storage
 - persisted paper-profile selection
-- Citizen CT-S4000 112 mm profile with 69-column Font A or 92-column Font B formatting
+- generic 4-inch profile with 69-column Font A or 92-column Font B formatting
 - generic 80 mm profile with 48-column Font A or 64-column Font B formatting
 - manual `PRINT` and `REPRINT`
 - optional automatic printing by message category
@@ -77,7 +77,7 @@ Printer profiles describe the paper and printable width; they do not replace the
 
 | Profile | Paper / printable width | Normal mode | Condensed mode | Recommended use |
 |---|---:|---:|---:|---|
-| `CTS4000 112MM` | 112 mm / 104 mm | Font A, 69 columns | Font B, 92 columns | Default; closest match for the Citizen CT-S4000 and wide airline-style sheets |
+| `GENERIC 4 INCH` | 4-inch class / 104 mm printable | Font A, 69 columns | Font B, 92 columns | Default; suitable for the Citizen CT-S4000 and other wide airline-style receipt printers |
 | `GENERIC 80MM` | 80 mm / 72 mm | Font A, 48 columns | Font B, 64 columns | Rongta RP326 and compatible 80 mm ESC/POS printers |
 
 To configure a printer from either DCDU:
@@ -90,7 +90,7 @@ To configure a printer from either DCDU:
 6. Return to the printer menu and select `PRINT TEST`. Confirm that the heading is centered, separator rules reach nearly across the printable area, aligned values remain monospaced, three blank lines feed, and the cutter operates.
 7. Open a received DCDU item and use its `PRINT` action. `REPRINT` prints the most recently completed item again.
 
-The selected profile and column mode are saved for the current Windows user. Existing installations without a saved profile migrate to `CTS4000 112MM` and its 69-column normal mode.
+The selected profile and column mode are saved for the current Windows user. Existing installations without a saved profile migrate to `GENERIC 4 INCH` and its 69-column normal mode.
 
 ### eLoadControl loadsheets
 
@@ -187,7 +187,7 @@ Use **Mock file** mode and **Test Print** before submitting jobs to a physical p
 2. Connect the printer by USB and confirm Windows creates a normal printer queue.
 3. Load 112 mm outward-wound thermal receipt paper and print the printer self-test.
 4. In EasyCPDLC, open `SETUP > PRINTER`, select the queue, and choose `FORMAT / CUT`.
-5. Select `CTS4000 112MM`, `FONT A / 69`, `3` feed lines, and `PARTIAL` cut.
+5. Select `GENERIC 4 INCH`, `FONT A / 69`, `3` feed lines, and `PARTIAL` cut.
 6. Run a mock-file test before sending the first physical test print.
 
 The 92-column Font B option is available for dense operational messages. Font A / 69 is the default because it is easier to read and uses almost the full 832-dot printable line.

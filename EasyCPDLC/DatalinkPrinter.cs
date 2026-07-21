@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.IO;
+using System.Globalization;
 
 namespace EasyCPDLC
 {
@@ -220,7 +221,7 @@ namespace EasyCPDLC
             return profile switch
             {
                 DatalinkPrinterProfile.GenericEscPos80Mm => "GENERIC ESC/POS 80MM",
-                _ => "CITIZEN CT-S4000 112MM"
+                _ => "GENERIC 4 INCH (104MM PRINTABLE)"
             };
         }
 
@@ -229,7 +230,7 @@ namespace EasyCPDLC
             return profile switch
             {
                 DatalinkPrinterProfile.GenericEscPos80Mm => "GENERIC 80MM",
-                _ => "CTS4000 112MM"
+                _ => "GENERIC 4 INCH"
             };
         }
 
@@ -462,7 +463,7 @@ namespace EasyCPDLC
             string type = "TYPE " + SafeToken(job?.MessageType, "TELEX");
             string timestamp = "UTC " + (job?.ReceivedLocalTime ?? DateTime.Now)
                 .ToUniversalTime()
-                .ToString("ddMMMyy HHmm'Z'")
+                .ToString("ddMMMyy HHmm'Z'", CultureInfo.InvariantCulture)
                 .ToUpperInvariant();
             List<string> lines = new()
             {
