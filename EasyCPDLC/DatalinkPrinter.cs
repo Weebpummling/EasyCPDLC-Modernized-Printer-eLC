@@ -18,6 +18,12 @@ namespace EasyCPDLC
         MockFile
     }
 
+    internal enum DatalinkPrinterProfile
+    {
+        CitizenCtS4000_112Mm,
+        GenericEscPos80Mm
+    }
+
     internal enum DatalinkCutMode
     {
         Off,
@@ -37,8 +43,9 @@ namespace EasyCPDLC
     internal sealed class DatalinkPrinterSettings
     {
         public DatalinkPrinterMode Mode { get; init; } = DatalinkPrinterMode.RawEscPos;
+        public DatalinkPrinterProfile Profile { get; init; } = DatalinkPrinterProfile.CitizenCtS4000_112Mm;
         public string PrinterName { get; init; } = string.Empty;
-        public int Columns { get; init; } = 48;
+        public int Columns { get; init; } = 69;
         public bool AutoPrintPdcDcl { get; init; }
         public bool AutoPrintCpdlc { get; init; }
         public bool AutoPrintTelexAoc { get; init; }
@@ -206,6 +213,46 @@ namespace EasyCPDLC
             {
                 return string.Empty;
             }
+        }
+
+        public static string GetProfileDisplayName(DatalinkPrinterProfile profile)
+        {
+            return profile switch
+            {
+                DatalinkPrinterProfile.GenericEscPos80Mm => "GENERIC ESC/POS 80MM",
+                _ => "CITIZEN CT-S4000 112MM"
+            };
+        }
+
+        public static string GetProfileShortName(DatalinkPrinterProfile profile)
+        {
+            return profile switch
+            {
+                DatalinkPrinterProfile.GenericEscPos80Mm => "GENERIC 80MM",
+                _ => "CTS4000 112MM"
+            };
+        }
+
+        public static int GetNormalColumns(DatalinkPrinterProfile profile)
+        {
+            return profile == DatalinkPrinterProfile.GenericEscPos80Mm ? 48 : 69;
+        }
+
+        public static int GetCondensedColumns(DatalinkPrinterProfile profile)
+        {
+            return profile == DatalinkPrinterProfile.GenericEscPos80Mm ? 64 : 92;
+        }
+
+        internal static int NormalizeProfileColumns(DatalinkPrinterProfile profile, int requestedColumns)
+        {
+            int normal = GetNormalColumns(profile);
+            int condensed = GetCondensedColumns(profile);
+            return requestedColumns == condensed ? condensed : normal;
+        }
+
+        internal static bool UsesCondensedFont(DatalinkPrinterProfile profile, int requestedColumns)
+        {
+            return NormalizeProfileColumns(profile, requestedColumns) == GetCondensedColumns(profile);
         }
 
         public static bool IsPrintableMessage(CPDLCMessage message)
@@ -411,26 +458,33 @@ namespace EasyCPDLC
 
         public static string FormatReceiptText(DatalinkPrintJob job, int requestedColumns)
         {
-            int columns = NormalizeColumns(requestedColumns);
+            int columns = NormalizeReceiptColumns(requestedColumns);
+            string type = "TYPE " + SafeToken(job?.MessageType, "TELEX");
+            string timestamp = "UTC " + (job?.ReceivedLocalTime ?? DateTime.Now)
+                .ToUniversalTime()
+                .ToString("ddMMMyy HHmm'Z'")
+                .ToUpperInvariant();
             List<string> lines = new()
             {
                 Center("ACARS", columns),
                 new string('-', columns)
             };
+            lines.AddRange(WrapLines(JoinColumns(type, timestamp, columns), columns));
 
-            lines.AddRange(WrapLines("TYPE " + SafeToken(job?.MessageType, "TELEX"), columns));
             if (!string.IsNullOrWhiteSpace(job?.TransportSource))
             {
                 lines.AddRange(WrapLines("SOURCE " + SafeToken(job.TransportSource, string.Empty), columns));
             }
-            lines.Add("UTC " + (job?.ReceivedLocalTime ?? DateTime.Now).ToUniversalTime().ToString("ddMMMyy HHmm'Z'").ToUpperInvariant());
-            if (!string.IsNullOrWhiteSpace(job?.AircraftCallsign))
+
+            string aircraft = string.IsNullOrWhiteSpace(job?.AircraftCallsign)
+                ? string.Empty
+                : "A/C " + SafeToken(job.AircraftCallsign, string.Empty);
+            string sender = string.IsNullOrWhiteSpace(job?.Sender)
+                ? string.Empty
+                : "FROM " + SafeToken(job.Sender, "UNKNOWN");
+            if (aircraft.Length > 0 || sender.Length > 0)
             {
-                lines.AddRange(WrapLines("A/C " + SafeToken(job.AircraftCallsign, string.Empty), columns));
-            }
-            if (!string.IsNullOrWhiteSpace(job?.Sender))
-            {
-                lines.AddRange(WrapLines("FROM " + SafeToken(job.Sender, "UNKNOWN"), columns));
+                lines.AddRange(WrapLines(JoinColumns(aircraft, sender, columns), columns));
             }
             lines.Add(new string('-', columns));
             lines.AddRange(WrapLines(job?.Message ?? string.Empty, columns));
@@ -447,6 +501,7 @@ namespace EasyCPDLC
                     : Path.GetFullPath(settings.MockOutputDirectory);
                 Directory.CreateDirectory(directory);
 
+                int columns = NormalizeProfileColumns(settings.Profile, settings.Columns);
                 byte[] payload = BuildEscPosPayload(job, settings);
                 string id = SanitizeFileToken(job.StableMessageId);
                 if (string.IsNullOrWhiteSpace(id))
@@ -457,7 +512,7 @@ namespace EasyCPDLC
                 string binaryPath = UniquePath(basePath, ".bin");
                 File.WriteAllBytes(binaryPath, payload);
                 File.WriteAllText(Path.ChangeExtension(binaryPath, ".hex.txt"), ToHexDump(payload), Encoding.ASCII);
-                File.WriteAllText(Path.ChangeExtension(binaryPath, ".preview.txt"), FormatReceiptText(job, settings.Columns), Encoding.UTF8);
+                File.WriteAllText(Path.ChangeExtension(binaryPath, ".preview.txt"), FormatReceiptText(job, columns), Encoding.UTF8);
                 return new DatalinkPrintResult
                 {
                     Success = true,
@@ -473,7 +528,8 @@ namespace EasyCPDLC
 
         private static DatalinkPrintResult PrintWindows(string printerName, DatalinkPrintJob job, DatalinkPrinterSettings settings)
         {
-            List<string> lines = FormatReceiptText(job, settings.Columns).Split('\n').ToList();
+            int columns = NormalizeProfileColumns(settings.Profile, settings.Columns);
+            List<string> lines = FormatReceiptText(job, columns).Split('\n').ToList();
             int nextLine = 0;
 
             try
@@ -493,7 +549,7 @@ namespace EasyCPDLC
 
                 document.PrintPage += (_, e) =>
                 {
-                    using Font bodyFont = CreateWindowsBodyFont(e.Graphics, e.MarginBounds.Width, settings.Columns);
+                    using Font bodyFont = CreateWindowsBodyFont(e.Graphics, e.MarginBounds.Width, columns);
                     using Font headingFont = new(
                         "Consolas",
                         Math.Max(bodyFont.Size + 2f, bodyFont.Size * 1.45f),
@@ -542,8 +598,8 @@ namespace EasyCPDLC
 
         private static Font CreateWindowsBodyFont(Graphics graphics, float printableWidth, int requestedColumns)
         {
-            int columns = NormalizeColumns(requestedColumns);
-            float pointSize = columns == 64 ? 6.5f : 8.0f;
+            int columns = NormalizeReceiptColumns(requestedColumns);
+            float pointSize = columns > 69 ? 6.5f : 8.0f;
             const float minimumPointSize = 5.0f;
 
             using StringFormat measureFormat = (StringFormat)StringFormat.GenericTypographic.Clone();
@@ -640,7 +696,8 @@ namespace EasyCPDLC
 
         internal static byte[] BuildEscPosPayload(DatalinkPrintJob job, DatalinkPrinterSettings settings)
         {
-            int columns = NormalizeColumns(settings.Columns);
+            int columns = NormalizeProfileColumns(settings.Profile, settings.Columns);
+            bool condensed = UsesCondensedFont(settings.Profile, columns);
             List<byte> bytes = new();
 
             Add(bytes, 0x1B, 0x40);             // Initialize.
@@ -653,7 +710,7 @@ namespace EasyCPDLC
             Add(bytes, 0x1D, 0x21, 0x00);       // Normal size.
             Add(bytes, 0x1B, 0x45, 0x00);       // Bold off.
             Add(bytes, 0x1B, 0x61, 0x00);       // Left.
-            Add(bytes, 0x1B, 0x4D, columns == 64 ? (byte)0x01 : (byte)0x00); // Font B for 64 columns.
+            Add(bytes, 0x1B, 0x4D, condensed ? (byte)0x01 : (byte)0x00); // Font A/B selected by paper profile.
 
             string receipt = FormatReceiptText(job, columns);
             string body = string.Join("\n", receipt.Split('\n').Skip(1));
@@ -727,9 +784,28 @@ namespace EasyCPDLC
                 ?? string.Empty;
         }
 
-        private static int NormalizeColumns(int requestedColumns)
+        private static int NormalizeReceiptColumns(int requestedColumns)
         {
-            return requestedColumns >= 56 ? 64 : 48;
+            return Math.Max(24, Math.Min(104, requestedColumns));
+        }
+
+        private static string JoinColumns(string left, string right, int width)
+        {
+            string cleanLeft = (left ?? string.Empty).TrimEnd();
+            string cleanRight = (right ?? string.Empty).Trim();
+            if (cleanLeft.Length == 0)
+            {
+                return cleanRight.Length <= width ? cleanRight.PadLeft(width) : cleanRight;
+            }
+            if (cleanRight.Length == 0)
+            {
+                return cleanLeft;
+            }
+
+            int gap = width - cleanLeft.Length - cleanRight.Length;
+            return gap >= 2
+                ? cleanLeft + new string(' ', gap) + cleanRight
+                : cleanLeft + "\n" + cleanRight;
         }
 
         private static string SafeToken(string value, string fallback)

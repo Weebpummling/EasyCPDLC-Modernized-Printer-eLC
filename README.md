@@ -1,835 +1,234 @@
-# EasyCPDLC – Modernized
+# EasyCPDLC Modernized — Printer + eLoadControl
 
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![Network](https://img.shields.io/badge/network-VATSIM%20%2B%20Hoppie-blue)
-![Status](https://img.shields.io/badge/status-community%20fork-orange)
+![Status](https://img.shields.io/badge/status-testing-orange)
 
-A printer- and datalink-integration-focused public fork of **EasyCPDLC Modernized**, the lightweight CPDLC client for pilots flying on **VATSIM** via the **Hoppie ACARS** network.
+This is a focused public fork of [fresH229a/EasyCPDLC-Modernized](https://github.com/fresH229a/EasyCPDLC-Modernized). It adds a review-first cockpit printing workflow, direct eLoadControl loadsheet requests, and an optional vPilot/vTDLS PDC bridge while retaining the upstream CPDLC client and its Airbus- and Boeing-style DCDUs.
 
-It retains the existing **.NET 10** cockpit-style DCDU, Airbus/Boeing visual styles, flight-plan handling, ATIS/METAR actions, callsign protection, and MSFS/Flow Pro support, while keeping this fork's own additions deliberately narrow.
+The upstream README is preserved verbatim in [README.UPSTREAM.md](README.UPSTREAM.md). Read it for the original client’s complete feature guide, flight-plan workflow, PDC/DCL discovery behavior, Flow Pro setup, and operating instructions.
 
-## Purpose and limited scope of this fork
+> **Flight simulation only.** This project is not approved for real-world aviation, dispatch, communications, loading, or other safety-critical use.
 
-`EasyCPDLC-Modernized-Printer-eLC` exists to add a realistic, review-first printing workflow around the existing EasyCPDLC Modernized client. It is not intended to become a separate all-purpose dispatch suite or a replacement datalink network.
+## What this fork is for
 
-The goals of this fork are limited to:
+The scope of this fork is intentionally narrow:
 
-- printing the message currently displayed on either the Airbus- or Boeing-style DCDU
-- supporting ordinary Windows printer queues, vendor-neutral raw ESC/POS, and mock-to-file testing, with 80 mm / Rongta RP326-compatible defaults
-- requesting an eLoadControl textual loadsheet inside EasyCPDLC using the pilot's own securely stored API key, SimBrief data, and a user-confirmed cabin-class passenger split
-- receiving supported vPilot/vTDLS PDC messages through the optional local bridge so the pilot can review and manually print them
-- preventing reconnect, polling, or duplicate-event behavior from creating duplicate automatic print jobs or duplicate imported vPilot messages
-- preserving the established Hoppie, CPDLC, airport PDC/DCL discovery, and click-only `REQ CLR` behavior
+- print the datalink item currently open on either DCDU
+- support ordinary Windows printer queues and raw ESC/POS receipt printers
+- default to the Citizen CT-S4000 112 mm / 104 mm printable-width profile
+- retain an 80 mm / 72 mm profile for devices such as the Rongta RP326
+- request an eLoadControl textual loadsheet inside EasyCPDLC using the pilot’s own API key
+- let the pilot review a loadsheet or imported clearance before printing it
+- optionally import vPilot/vTDLS PDC messages through a local bridge
+- suppress duplicate automatic prints and duplicate bridge imports
+- preserve upstream Hoppie CPDLC, PDC/DCL discovery, and click-only `REQ CLR` behavior
 
-The following are explicitly outside this fork's goals:
+This fork is **not** intended to:
 
-- replacing eLoadControl's website, PDF output, dispatch planning, or weight-and-balance engine
-- inventing a KUSA/Hoppie login for vTDLS, treating vPilot PDC as CPDLC, or scraping controller systems outside supported client/plugin interfaces
-- bridging all vPilot private chat or automatically replying to controllers
-- writing directly to USB devices or assuming a USB receipt printer is a COM port
-- unrelated redesigns of the existing EasyCPDLC Modernized ATC and datalink behavior
+- replace eLoadControl’s website, PDF documents, or weight-and-balance engine
+- turn vTDLS PDC into Hoppie CPDLC or invent a `KUSA` logon
+- scrape controller systems or import all vPilot private chat
+- write directly to a USB device or assume a USB printer creates a COM port
+- redesign unrelated EasyCPDLC behavior
 
----
+## Added workflows
 
-## Index
+### DCDU printing
 
-- [Purpose and limited scope of this fork](#purpose-and-limited-scope-of-this-fork)
-- [Screenshots](#screenshots)
-- [What is EasyCPDLC?](#what-is-easycpdlc)
-- [What changed in this fork?](#what-changed-in-this-fork)
-- [Features](#features)
-- [Main DCDU overview](#main-dcdu-overview)
-- [Flight plan reload workflow](#flight-plan-reload-workflow)
-- [Callsign mismatch handling](#callsign-mismatch-handling)
-- [Flight phase and next-flight detection](#flight-phase-and-next-flight-detection)
-- [Quick Actions, ATIS and METAR](#quick-actions-atis-and-metar)
-- [PDC / DCL and REQ CLR](#pdc--dcl-and-req-clr)
-- [CPDLC LOGON discovery](#cpdlc-logon-discovery)
-- [Clearance workflow and auto-confirm](#clearance-workflow-and-auto-confirm)
-- [Status indicators](#status-indicators)
-- [Smart message handling](#smart-message-handling)
-- [eLoadControl loadsheets and DCDU printer](#eloadcontrol-loadsheets-and-dcdu-printer)
-- [vPilot / vTDLS PDC bridge](#vpilot--vtdls-pdc-bridge)
-- [MSFS / Flow Pro integration](#msfs--flow-pro-integration)
-- [Flow Pro setup](#flow-pro-setup)
-- [Free text cooldown](#free-text-cooldown)
-- [Message filtering](#message-filtering)
-- [System tray and window behavior](#system-tray-and-window-behavior)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [First start](#first-start)
-- [Short release changelog](#short-release-changelog)
-- [Project status](#project-status)
-- [Credits](#credits)
-- [Disclaimer](#disclaimer)
-- [License](#license)
+The printer integration is isolated behind a small printer service and offers three modes:
 
----
+- **ESC/POS** sends raw bytes through the selected Windows printer queue using the Windows spooler. This is the preferred mode for the Citizen CT-S4000 and Rongta RP326 profiles.
+- **Windows** sends a Windows-rendered print document through the selected queue.
+- **Mock file** writes the ESC/POS binary, text preview, and hexadecimal dump without opening a printer or consuming paper.
+
+Printer settings include:
+
+- installed Windows printer selection with persistent storage
+- persisted paper-profile selection
+- Citizen CT-S4000 112 mm profile with 69-column Font A or 92-column Font B formatting
+- generic 80 mm profile with 48-column Font A or 64-column Font B formatting
+- manual `PRINT` and `REPRINT`
+- optional automatic printing by message category
+- configurable feed lines
+- partial cut, full cut, or cutter disabled
+- test print and queue-status refresh
+
+The default Citizen CT-S4000 sequence is:
+
+```text
+ESC @       initialize
+ESC a 0     left alignment
+ESC t 0     CP437 code page
+ESC M 0/1   Font A (69 columns) or Font B (92 columns)
+...         formatted message
+ESC d 3     feed three lines
+GS V 66 0   partial cut
+```
+
+The formatted sheet uses full-width separator rules and right-aligned type/timestamp and aircraft/sender metadata when space permits. Intentional message line breaks and monospaced alignment are preserved, and long lines wrap at word boundaries where practical.
+
+The selected printer must exist. EasyCPDLC fails closed instead of silently sending a job to the Windows default queue. The RP326 sample job and complete hexadecimal stream remain in [docs/samples/rp326-ci7752-job.hex.txt](docs/samples/rp326-ci7752-job.hex.txt).
+
+#### Printer-profile tutorial
+
+Printer profiles describe the paper and printable width; they do not replace the Windows printer-queue selection. Select both the installed queue and the matching profile.
+
+| Profile | Paper / printable width | Normal mode | Condensed mode | Recommended use |
+|---|---:|---:|---:|---|
+| `CTS4000 112MM` | 112 mm / 104 mm | Font A, 69 columns | Font B, 92 columns | Default; closest match for the Citizen CT-S4000 and wide airline-style sheets |
+| `GENERIC 80MM` | 80 mm / 72 mm | Font A, 48 columns | Font B, 64 columns | Rongta RP326 and compatible 80 mm ESC/POS printers |
+
+To configure a printer from either DCDU:
+
+1. Open `SETUP`, then select `PRINTER`.
+2. Open `DEVICE / MODE`, select the exact Windows queue, and choose `ESC/POS`. Use `MOCK FILE` first if you do not want to consume paper.
+3. Return to `PRINTER`, open `FORMAT / CUT`, and select the matching paper profile.
+4. Leave the default normal Font A mode for loadsheets and ordinary ACARS messages. Select condensed Font B only when a long operational message benefits from additional columns.
+5. Set `FEED LINES` to `3` and `AUTO CUT` to `PARTIAL`. Use `FULL` or `OFF` only when required by another printer's cutter.
+6. Return to the printer menu and select `PRINT TEST`. Confirm that the heading is centered, separator rules reach nearly across the printable area, aligned values remain monospaced, three blank lines feed, and the cutter operates.
+7. Open a received DCDU item and use its `PRINT` action. `REPRINT` prints the most recently completed item again.
+
+The selected profile and column mode are saved for the current Windows user. Existing installations without a saved profile migrate to `CTS4000 112MM` and its 69-column normal mode.
+
+### eLoadControl loadsheets
+
+Open `AOC/TELEX > LOADSHEET` to use the direct eLoadControl workflow:
+
+1. Enter your eLoadControl API key and SimBrief user identifier.
+2. Load the latest SimBrief data and available eLoadControl configurations.
+3. Select the aircraft variant, cabin configuration, and output format.
+4. Review and confirm the passenger split. Single-class configurations are prefilled; multi-class splits remain editable.
+5. Confirm generation. This consumes one eLoadControl API request.
+6. Review the returned textual ACARS loadsheet on the DCDU.
+7. Print the item currently displayed when ready.
+
+The API key uses the eLoadControl bring-your-own-key model. If saved, it is protected for the current Windows user with Windows DPAPI. It is not committed to this repository or written to application logs.
+
+Direct API loadsheets are review-first and do not auto-print. The client prints eLoadControl’s textual ACARS message, not a scaled full-page PDF.
+
+### vPilot / vTDLS PDC bridge
+
+The optional `EasyCPDLC.VPilotBridge` uses vPilot’s plugin API and a current-user local named pipe:
+
+```text
+vTDLS/controller → VATSIM private message → vPilot plugin
+                 → local named pipe → EasyCPDLC review/print screen
+```
+
+Only messages classified as clearance/PDC traffic are imported. They are labeled as VATSIM/vTDLS messages, checked against the EasyCPDLC callsign where possible, and deduplicated so reconnect resends do not create another displayed or printed copy.
+
+Imported PDCs do not provide a Hoppie logon code, do not turn the airport PDC-availability badge green, do not enable `REQ CLR`, and do not gain CPDLC reply actions such as `WILCO`.
+
+To install the bridge for the current Windows user:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Install-VPilotBridge.ps1
+```
+
+Restart vPilot and use `.debug` to confirm that `EasyCPDLC vPilot PDC Bridge` is loaded.
+
+## Preserved upstream behavior
+
+The new modules do not replace the existing clearance workflow. In particular, the upstream PDC badge still checks airport/controller information and Hoppie station availability. `REQ CLR` remains click-only and is only offered when PDC/DCL availability is confirmed.
+
+The following upstream features remain in place:
+
+- Hoppie ACARS and CPDLC communication
+- Airbus- and Boeing-style DCDU layouts
+- PDC/DCL availability and logon-code discovery
+- flight-plan reload and VATSIM callsign protection
+- ATIS/METAR actions and message filtering
+- SimBrief navlog support
+- Flow Pro URI and system-tray integration
+
+See [README.UPSTREAM.md](README.UPSTREAM.md) for the full upstream documentation.
 
 ## Screenshots
 
-| Login | Airbus-style | Boeing-style |
+| Login | Airbus DCDU | Boeing DCDU |
 |---|---|---|
-| ![EasyCPDLC login screen](assets/screenshots/login.png) | ![EasyCPDLC DCDU Airbus-style panel](assets/screenshots/dcdu-airbus1.png) | ![EasyCPDLC DCDU Boeing-style panel](assets/screenshots/dcdu-boeing1.png) |
-
----
-
-## What is EasyCPDLC?
-
-**EasyCPDLC** is a standalone CPDLC client for flight simulation. It allows pilots to use CPDLC-style communication with compatible ATC stations on VATSIM without needing an aircraft that has native CPDLC support.
-
-The client connects using your:
-
-- **Hoppie logon code**
-- **VATSIM CID**
-
-After connecting, EasyCPDLC can be used for common datalink workflows such as ATC logon, clearance requests, TELEX-style messages, METAR/ATIS requests, and CPDLC communication during online flights.
-
----
-
-## What changed in this fork?
-
-This fork focuses on modernization, compatibility, cockpit-style visuals, and smoother simulator workflow.
-
-### Highlights
-
-- Updated for **.NET 10**
-- Refreshed login screen and connection flow
-- Redesigned DCDU-style main interface
-- Airbus-inspired and Boeing-inspired display styles
-- Main page with aligned `STATUS`, `CALLSIGN`, `ROUTE`, and `FP PHASE`
-- Route display below the callsign, including `ROUTE: ----` when no route is loaded
-- Smart status badges for CLR, PDC, ATIS, ATIS auto refresh, and Quick Actions
-- Click-only PDC / REQ CLR action to avoid accidental hover popups
-- PDC/DCL controller-info parsing for formats such as `DCL: XXXX` and `PDC/DCL: XXXX`
-- Click-only CPDLC LOGON candidate popup using Hoppie online status, FIR geolocation, nearby FIR buffering, and DEP/ARR APP station matching
-- Flight-plan reload workflow for multi-leg flying and callsign changes
-- VATSIM prefile support for loading the next route before the new callsign is live
-- Callsign mismatch protection so Hoppie keeps the old callsign until VATSIM confirms the new one
-- Manual callsign refresh icon next to the callsign during mismatch
-- Automatic VATSIM pilot refresh while connected
-- Route flash indication when RLD FP loads a different route
-- Quick Actions popup for METAR/ATIS departure/arrival requests
-- Smarter ATIS/METAR station targeting after departure and after landing
-- Flow Pro integration for opening EasyCPDLC from inside MSFS
-- Tray integration, hide/show support, and no-activate main window behavior
-- Less noisy system messages during normal operation
-
----
-
-## Features
-
-- Connect to the Hoppie ACARS network
-- Use your VATSIM CID for flight/session lookup
-- Log on to CPDLC-equipped ATC stations
-- Send and receive CPDLC messages
-- TELEX-style messaging support
-- Datalink clearance workflow support
-- PDC/DCL availability detection from controller information
-- Click-only REQ CLR quick action when PDC/DCL is confirmed available
-- Click-only CPDLC LOGON candidate popup with FIR/APP-based discovery
-- Clearance auto-confirm fallback when no final CLRC confirmation is sent
-- METAR and ATIS request support
-- Quick Actions for departure/arrival METAR and ATIS requests
-- Smart ATIS/METAR message summaries
-- Lightweight standalone desktop client
-- Cockpit-style DCDU interface skins
-- Airbus-style and Boeing-style display options
-- Message filtering by type
-- Unread message highlighting and reminder sound
-- Weather message cache
-- Exportable message log
-- Optional MSFS Flow Pro shortcut support
-- System tray support with Show / Hide / Exit
-- Main close confirmation
-- Flight plan reload button for new VATSIM flight plans or callsign changes
-- Automatic callsign mismatch warning and dedicated warning sound
-- Manual callsign mismatch re-check button
-- Automatic route display and route-change blink
-- Automatic flight phase detection using live VATSIM data
-
----
-
-## Main DCDU overview
-
-The main DCDU page now shows the most important flight/session information directly in the top area:
-
-```text
-STATUS:   CONNECTED
-CALLSIGN: RYR1234
-ROUTE:    EICK-EGPH
-FP PHASE: 🛫 DEP
-```
-
-If no route is available, the route line remains visible and shows:
-
-```text
-ROUTE:    ----
-```
-
-The main page also contains compact badges for:
-
-- `CLR`
-- `PDC`
-- `ATIS`
-- ATIS auto refresh
-- Quick Actions
-
-The Airbus and Boeing layouts are individually tuned so the top rows, message header, and buttons align with the selected panel style.
-
----
-
-## Flight plan reload workflow
-
-EasyCPDLC includes a **RLD FP** button for reloading current VATSIM flight data.
-
-Use **RLD FP** when:
-
-- you have landed and continue with another leg
-- you filed a new VATSIM flight plan
-- your callsign changed
-- your departure/arrival airport changed
-- EasyCPDLC still shows data from the previous flight
-
-The reload workflow fetches data from:
-
-```text
-https://data.vatsim.net/v3/vatsim-data.json
-```
-
-It checks both:
-
-- your active VATSIM pilot entry
-- your latest VATSIM prefile for the same CID
-
-If a different route is loaded, the `ROUTE` line blinks orange five times.
-
-The **RLD FP** action reloads:
-
-- VATSIM pilot data
-- current active callsign
-- latest VATSIM prefile if applicable
-- filed VATSIM flight plan
-- departure and arrival airport
-- SimBrief navlog data, if configured
-- report fixes
-- ATIS/PDC target logic
-
-It also resets:
-
-- current ATS unit
-- clearance state
-- PDC state
-- ATIS state
-- cached ATIS/PDC data
-- arrival reminder state
-- next-flight detection state
-
-Successful reloads are intentionally silent to avoid cluttering the message list. Errors and callsign mismatch warnings are still shown.
-
----
-
-## Callsign mismatch handling
-
-EasyCPDLC is designed to handle the common VATSIM multi-leg situation where a new flight plan is already prefiled, but the pilot is still online with the previous callsign.
-
-Example:
-
-```text
-Online on VATSIM: RYR41WM
-New prefile:      RYR156P
-```
-
-In this case EasyCPDLC does **not** immediately change the active Hoppie callsign.
-
-Instead:
-
-- Hoppie remains on the old active callsign
-- the new route can already be loaded from the prefile
-- the callsign on the main page turns red
-- a callsign mismatch system message is shown
-- a dedicated mismatch warning sound can play
-- a small refresh icon appears next to the callsign
-
-The refresh icon:
-
-```text
-↻
-```
-
-forces an immediate VATSIM callsign check.
-
-If VATSIM still reports the old callsign, nothing changes.  
-If VATSIM now reports the new callsign, EasyCPDLC automatically switches Hoppie to the new callsign, resets the current ATS unit, and requires a new CPDLC logon.
-
-EasyCPDLC also checks VATSIM automatically while connected, so the manual icon is optional.
-
-> Note: the manual icon forces EasyCPDLC to check the current VATSIM JSON immediately. It cannot force VATSIM itself to publish the new callsign sooner.
-
----
-
-## Flight phase and next-flight detection
-
-EasyCPDLC tracks a simple flight phase on the main page.
-
-Possible states include:
-
-- `○ STBY`
-- `🛫 DEP`
-- `✈ AIRBORN`
-- `🛬 ARR`
-- `🧳 LND`
-- `🆕 NEXT FP`
-
-While connected, EasyCPDLC refreshes the pilot data from VATSIM automatically and updates the phase without requiring user interaction.
-
-Current flight-phase logic:
-
-```text
-<= 3000 ft       DEP / LND
-> 3000 ft        AIRBORN
->= 20000 ft      enroute marker set
-< 20000 ft after enroute  ARR
-<= 3000 ft after ARR      LND
-```
-
-The phase logic is used for:
-
-- departure/arrival weather targeting
-- PDC/ATIS station targeting
-- arrival reminder behavior
-- next flight plan detection
-
-After landing, EasyCPDLC can detect that a new flight plan has been filed and offer a reload prompt. Detection begins shortly after landing and continues periodically while relevant.
-
----
-
-## Quick Actions, ATIS and METAR
-
-The lightning badge opens **Quick Actions**.
-
-Quick Actions can request:
-
-- departure METAR
-- arrival METAR
-- departure ATIS
-- arrival ATIS
-
-Quick Actions are only clickable when EasyCPDLC is **CONNECTED**. In standby or disconnected state, the popup does not open.
-
-The weather target logic is aware of the loaded flight plan:
-
-- before departure, departure airport is preferred
-- after becoming airborne, arrival airport is preferred
-- after landing, arrival airport remains preferred until RLD FP loads the next flight
-
-If a new route is loaded with RLD FP, the TELEX and Quick Actions weather targets update to the new route.
-
-ATIS station selection can prefer:
-
-- departure ATIS variants for departure requests
-- arrival ATIS variants for arrival requests
-- generic station names when needed
-
----
-
-
-## PDC / DCL and REQ CLR
-
-The PDC badge indicates whether a departure clearance service appears to be available for the relevant airport.
-
-EasyCPDLC checks:
-
-- direct Hoppie station availability for the airport code
-- local VATSIM controllers such as `XXXX_DEL`, `XXXX_GND`, `XXXX_TWR`, and `XXXX_APP`
-- controller ATIS/info lines for PDC or DCL logon information
-- Hoppie online status for the detected logon code
-
-Supported controller-info formats include:
-
-```text
-DCL: XXXX
-DCL LOGON XXXX
-DCL LOGON CODE XXXX
-PDC/DCL: XXXX
-XXXX DCL
-PREDEP CLEARANCE ... XXXX
-DEPARTURE CLEARANCE ... XXXX
-DATALINK CLEARANCE ... XXXX
-```
-
-When PDC/DCL is confirmed available, the PDC badge turns green.
-
-The **REQ CLR** action is click-only:
-
-1. Click the `PDC` badge.
-2. If PDC/DCL is confirmed available, `REQ CLR` appears.
-3. Click `REQ CLR` to send a pre-departure clearance request using the detected logon code.
-
-Mouseover does not open REQ CLR anymore. This prevents the action from disappearing while the user is trying to select it.
-
-REQ CLR is only offered when PDC/DCL is confirmed available. If the PDC badge is not green, clicking it does not send anything.
-
----
-
-## CPDLC LOGON discovery
-
-The CPDLC LOGON helper is shown via the `📡` icon next to the current ATS unit.
-
-The LOGON menu is click-only:
-
-1. Click the `📡` icon.
-2. EasyCPDLC shows available `LOGON TO XXXX` candidates.
-3. Click a candidate to send the CPDLC logon request.
-
-Mouseover does not open the menu anymore.
-
-EasyCPDLC only shows LOGON candidates when the detected station is online on Hoppie. Candidate discovery can use:
-
-- current FIR geolocation from VATSIM FIR boundary data
-- a nearby FIR buffer near FIR boundaries
-- DEP/ARR-related APP stations
-- controller ATIS/info lines that mention CPDLC, Hoppie, logon, PDC, or DCL information
-
-The FIR/nearby logic is intended as a helper. If a candidate is marked as possible or nearby, pilots should still verify the correct logon with ATC.
-
----
-
-## Clearance workflow and auto-confirm
-
-The CLR badge tracks the clearance workflow.
-
-Typical states:
-
-- neutral / standby
-- request sent
-- clearance received
-- pilot acknowledged
-- clearance accepted / confirmed
-- rejected / unable
-
-Some PDC/DCL stations do not send a final `CLRC CONFIRMED` message after the pilot sends WILCO or an equivalent acknowledgement.
-
-To avoid leaving the clearance state stuck without a green confirmation, EasyCPDLC starts a 3-minute auto-confirm timer after:
-
-- `WILCO`
-- `AFFIRMATIVE`
-- `ROGER`
-- `ACCEPT`
-
-If no final clearance confirmation and no rejection arrives within 3 minutes, EasyCPDLC sets:
-
-```text
-CLR ACC AUTO
-```
-
-This turns the CLR state green. The original clearance text remains visible, and the CLR popup adds:
-
-```text
-AUTO CONFIRMED AFTER 3 MIN WITHOUT CLRC CONFIRMED
-```
-
-If a real confirmation, rejection, unable, or denied message arrives before the timer expires, the timer is cancelled and the real network/controller result is used.
-
----
-
-## Status indicators
-
-The main DCDU page includes compact status indicators below the current ATC unit area.
-
-### CLR
-
-The CLR indicator shows the current clearance state:
-
-- white = neutral / no active clearance state
-- orange = requested / standby / waiting
-- green = received, accepted, or auto-confirmed
-- red = rejected / unable / denied
-
-The CLR popup now uses the same footprint as the ATIS popup for a consistent layout.
-
-### PDC
-
-The PDC indicator shows whether a matching Hoppie PDC/DCL station appears to be available:
-
-- white = unknown / not checked yet
-- green = confirmed available and Hoppie-online
-- orange = possible fallback candidate
-- red = offline / unavailable
-
-PDC/DCL detection can parse controller information lines such as `DCL: XXXX`, `DCL LOGON XXXX`, or `PDC/DCL: XXXX`.
-
-REQ CLR is opened only by clicking the PDC badge and is only offered when the PDC state is confirmed green.
-
-### ATIS
-
-The ATIS indicator shows whether ATIS data is available for the currently relevant airport.
-
-- before departure: departure airport
-- airborne / after departure: arrival airport
-- after landing: arrival airport until **RLD FP** is used
-
-### ATIS auto refresh
-
-ATIS auto refresh can monitor the active ATIS target and update the state without repeatedly adding unnecessary system messages.
-
----
-
-## Smart message handling
-
-The modernized message overview improves readability by converting common datalink responses into shorter cockpit-style summaries.
-
-Examples:
-
-- `REQUESTING ATIS FOR LOWW`
-- `LOWW ATIS E RECEIVED QNH 1012 RWY 29`
-- `REQUESTING METAR FOR LOWW`
-- `LOWW METAR RECEIVED QNH 1012 WIND 290/08 RWY 29`
-- `ATIS NOT AVAILABLE`
-- `VATSIM CALLSIGN MISMATCH`
-- `NEW FP DETECTED`
-- `AUTO CONFIRMED AFTER 3 MIN WITHOUT CLRC CONFIRMED`
-
-ATIS responses try to detect the current ATIS information letter and display it directly in the message list.
-
-Unread messages are highlighted and can trigger a reminder sound.
-
----
-
-## eLoadControl loadsheets and DCDU printer
-
-EasyCPDLC can request an eLoadControl loadsheet without opening a browser. In either DCDU style, open the AOC/TELEX menu and select `LOADSHEET`. The returned textual `acarsMessage` is added to the normal EasyCPDLC message list and opened for review. Printing uses that text instead of scaling the full-page loadsheet to receipt paper, keeping 80 mm output readable.
-
-The direct workflow is intentionally separate from ATC and PDC/DCL:
-
-1. Enter the pilot's eLoadControl Pro API key and SimBrief user identifier.
-2. Choose `LOAD SIMBRIEF + AVAILABLE CONFIGS`. This fetches the latest SimBrief OFP and eLoadControl aircraft/format reference data; it does not generate a loadsheet.
-3. Select the aircraft variant, cabin configuration, and loadsheet format.
-4. Review the passenger allocation. A single-class cabin is prefilled with the full SimBrief passenger count. A multi-class cabin is split proportionally to class capacity and remains editable; the confirmed class total must equal the SimBrief total.
-5. Choose `CONFIRM + GENERATE`. The confirmation states that exactly one eLoadControl loadsheet-generation request will be sent.
-6. Review the returned `LOADSHEET` message in the DCDU and use its on-screen `PRINT` action when ready.
-
-The API key follows eLoadControl's BYOK model. When saved, it is encrypted with Windows DPAPI for the current Windows user in `%LOCALAPPDATA%\EasyCPDLCModernized\user.config`; it is never written to application logs. If DPAPI protection is unavailable, EasyCPDLC refuses to persist the key rather than falling back to plaintext. HTTP 429 is reported as a monthly-quota error. Existing loadsheets received through Hoppie remain supported and printable.
-
-Three safe printer modes are available:
-
-- **Windows** sends a formatted document through the selected Windows printer queue and works with normal desktop, receipt, and virtual printers.
-- **ESC/POS** (default) sends raw bytes to the selected Windows printer queue with `OpenPrinter` / `StartDocPrinter` / `WritePrinter` and the `RAW` spool data type. It does not open a COM port and does not write directly to a USB device.
-- **MOCK FILE** generates the same ESC/POS `.bin`, hexadecimal dump, and text preview without opening any printer. Files are saved under `%LOCALAPPDATA%\EasyCPDLCModernized\PrinterMock`.
-
-The default format is **48 columns** using ESC/POS Font A. The **64-column** option selects Font B. On a 203 dpi printer with 576 printable dots, both modes use the 72.1 mm effective print width: `48 × 12` dots or `64 × 9` dots. Receipt text is encoded as CP437 after `ESC t 0`; characters not available in CP437 are safely replaced with `?`.
-
-Printer setup is available from Boeing `SETUP > PRINTER` and includes:
-
-- installed-Windows-printer dropdown with persistent selection
-- Windows, raw ESC/POS, or mock-file mode
-- 48- or 64-column formatting
-- automatic print for PDC/DCL
-- automatic print for CPDLC
-- automatic print for TELEX/AOC, including eLoadControl
-- automatic print for ATIS
-- partial cut (default), full cut, or cutter disabled
-- feed-lines-after-print setting
-- printer status refresh with offline, paper-out, paused, door-open, and attention states
-- print-test action
-
-The RP326-compatible raw sequence initializes the printer, selects left alignment and CP437, selects Font A or B, prints the formatted message, feeds the configured number of lines, and by default sends `GS V 66 0` for a partial cut. Full cut uses `GS V 65 0`. The sample 48-column job and complete byte dump are in [`docs/samples/rp326-ci7752-job.hex.txt`](docs/samples/rp326-ci7752-job.hex.txt).
-
-Incoming messages receive a stable print identifier. Hoppie CPDLC message IDs are used when available; other messages use a SHA-256 identifier derived from normalized type, sender, callsign, and body. Automatic printing suppresses a repeated identifier for six hours, including reconnect/poll duplicates. A failed submission is removed from the duplicate cache so it can be retried. Manual `PRINT` and `REPRINT` remain deliberate overrides.
-
-The Boeing lower bezel provides separate `PRINT` and `REPRINT` keys. `PRINT` sends the latest printable inbound datalink message, while `REPRINT` repeats the last successfully submitted job. Printable message previews in both DCDU styles expose these actions, and `PRINT` always targets the message currently open on screen.
-
-The Airbus `DCDU_Main_V15.png` artwork has five physical line-select keys on each side. On a non-reply message preview, `PRINT` is mapped to left LSK 4 and `REPRINT` to left LSK 5; `DELETE` and `CLOSE` remain on right LSK 4 and 5. This uses the existing Airbus panel buttons and does not place Boeing-only bezel controls over the Airbus artwork.
-
-Direct API loadsheets are review-first: they do not invoke automatic printing even if TELEX/AOC auto-print is enabled. This prevents a generation response from reaching paper before the crew reviews it. Manual `PRINT` submits the reviewed item to the printer selected under `SETUP > PRINTER`.
-
-### Windows 11 and Rongta RP326 setup
-
-1. Install the current RP326 Windows x64 driver from Rongta or the printer distributor. Connect the printer by USB and confirm that Windows creates a normal queue such as `Rongta RP326`; no COM port is required.
-2. In Windows **Settings > Bluetooth & devices > Printers & scanners**, open the RP326 queue and print the Windows test page. Confirm the queue is not paused and its paper size is the driver's 80 mm receipt size.
-3. In EasyCPDLC Boeing mode, open `SETUP > PRINTER > DEVICE / MODE`, select the exact RP326 queue, and choose `ESC/POS`. The queue name is saved in `%LOCALAPPDATA%\EasyCPDLCModernized\user.config`.
-4. Under `FORMAT / CUT`, start with `48` columns, `3` feed lines, and `PARTIAL` cut.
-5. Choose `PRINT TEST`. The receipt should show the CI7752 sample loadsheet, advance three lines, and partially cut.
-6. Before consuming paper, select `MOCK FILE` and use `PRINT TEST`. Inspect the `.preview.txt` and `.hex.txt` files in the mock directory, then switch back to `ESC/POS`.
-
-### Troubleshooting
-
-- **Selected printer not installed:** EasyCPDLC fails closed and does not fall back to the Windows default printer. Re-select the exact queue after a driver reinstall or queue rename.
-- **Offline, paused, paper out, door open, or attention:** correct the Windows queue/printer state and refresh status. All printer exceptions are caught and logged without logging the message body or Hoppie credentials.
-- **Readable text but no cut:** confirm `PARTIAL` is selected. If a different ESC/POS model requires full cut, select `FULL`; otherwise select `OFF` and use the printer's feed key.
-- **ESC/POS commands print as text:** the installed queue/driver is not passing RAW data through. Try the manufacturer's receipt/ESC-POS driver rather than a generic text or class driver. Keep using the Windows queue; do not switch to direct USB or COM access.
-- **Accented characters are wrong:** confirm the RP326's active table maps `ESC t 0` to CP437. Some regional firmware uses a different table index even though it supports CP437.
-- **Windows-rendered output is clipped:** use the raw ESC/POS mode for the RP326. Windows mode adapts its monospaced font to the driver's reported margins, but driver paper definitions still vary.
-
-The implementation uses built-in .NET Windows printing plus `winspool.drv`; there is no npm, Python, OPOS, vendor SDK, serial-port, or direct-USB printing dependency. These APIs are supported on Windows 11 and work with USB-attached printers exposed as Windows queues. OPOS compatibility is not required.
-
-Physical hardware is still required to verify the RP326 driver's actual RAW pass-through, the firmware's `ESC t 0` code-table mapping, status reporting while unplugged or out of paper, exact darkness/line spacing, and the cutter's mechanical response. Those behaviors cannot be proven by the mock stream or Windows spooler alone.
-
-Loadsheet recognition accepts explicit eLoadControl/loadsheet markers and common weight fields such as `ZFW`, `TOW`, `LDW`, and `%MAC`. Sandbox-watermarked messages remain printable and retain their watermark. Raw ESC/POS mode should only be selected for a printer that understands ESC/POS commands.
-
-The eLoadControl module does not read or write `pdcDiscoveryLogonCode`, the PDC availability badge, the current ATC unit, CPDLC sequence state, or the Hoppie `REQ CLR` path. Generating a loadsheet therefore cannot make PDC/DCL appear available or send a clearance request.
-
----
-
-## vPilot / vTDLS PDC bridge
-
-vTDLS clearance delivery is intentionally kept separate from Hoppie CPDLC. According to the [vTDLS controller documentation](https://docs.virtualnas.net/vtdls/), a controller sends a PDC to the pilot's VATSIM client; vTDLS may resend it after a network reconnect. The [VATSIM UK PDC documentation](https://docs.vatsim.uk/General/Use%20of%20Software/Issuing%20PDC/) also distinguishes direct pilot-client PDC from Hoppie delivery. EasyCPDLC therefore does not invent a KUSA logon or treat a vTDLS PDC as a live CPDLC connection.
-
-The optional `EasyCPDLC.VPilotBridge` plugin uses vPilot's supported plugin API and a current-Windows-user named pipe:
-
-```text
-vTDLS/controller -> VATSIM private message -> vPilot plugin
-                 -> current-user local pipe -> EasyCPDLC PDC message/printer
-```
-
-Only messages classified as PDC/clearance traffic are imported. Ordinary vPilot private messages stay in vPilot. The callsign supplied by vPilot must match the EasyCPDLC flight callsign when both are available. Imported messages are labeled `SOURCE VATSIM/VTDLS` and are deduplicated from normalized content for six hours so a vTDLS reconnect resend does not create or print a second copy. Use `AOC/TELEX > VPILOT PDC` to open the filtered inbox, select the desired message, review it, and choose its on-screen `PRINT` action. vPilot imports are review-first and do not auto-print.
-
-An imported vTDLS PDC may set the ordinary clearance-received indication, but it does not participate in airport service discovery, does not turn the PDC availability badge green, does not supply a DCL logon code, and cannot enable or send `REQ CLR`. It also does not create CPDLC sequence numbers or expose CPDLC `WILCO` actions.
-
-### Install the bridge
-
-1. Install the current stable [vPilot](https://vpilot.rosscarlson.dev/Download) for the current Windows user.
-2. Close vPilot.
-3. From the repository root, run:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\Install-VPilotBridge.ps1
-   ```
-
-4. Restart vPilot and enter `.debug`. Confirm that `EasyCPDLC vPilot PDC Bridge` is listed as loaded.
-5. Start EasyCPDLC with the same aircraft callsign used in vPilot. The bridge itself does not perform a KUSA, CPDLC, or Hoppie logon; existing EasyCPDLC startup/login behavior is unchanged.
-
-The installer builds against the plugin API in the installed vPilot directory and copies only `EasyCPDLC.VPilotBridge.dll` into vPilot's `Plugins` folder. It does not need administrator access. The bridge accepts an optional outbound private-message command for future isolated integrations, but receipt of a PDC never sends an automatic acknowledgement or controller reply.
-
-### Bridge troubleshooting and test plan
-
-- If vPilot's `.debug` output does not show the plugin, close vPilot and rerun the installer. Check that `RossCarlson.Vatsim.Vpilot.Plugins.dll` exists in the vPilot install directory.
-- If EasyCPDLC does not import a clearance, confirm both applications run under the same Windows account and use the same callsign. The pipe ACL rejects other user accounts.
-- A normal chat/private message is deliberately ignored. For a controlled offline integration test, use the unit-test fake pipe; for a live test, the received text must contain recognizable PDC and clearance markers.
-- Reconnecting vPilot may cause vTDLS to resend the PDC. EasyCPDLC should retain one displayed copy during the six-hour duplicate window; printing remains a manual action from the reviewed message.
-
-The local protocol, classifier, callsign guard, duplicate suppression, and duplex pipe behavior are covered by automated tests. A live VATSIM connection and controller-issued vTDLS PDC are still required to verify the exact sender name and message wording produced by the current network service. vPilot's general private-message behavior is documented in the [official vPilot manual](https://vpilot.rosscarlson.dev/Documentation).
-
----
-
-## MSFS / Flow Pro integration
-
-EasyCPDLC can be opened from inside Microsoft Flight Simulator using **Parallel 42 Flow Pro**.
-
-The application registers a Windows URI protocol:
-
-```text
-easycpdlc://show
-```
-
-When this URI is called, EasyCPDLC brings its already running window back to the front. This allows you to open the CPDLC client from inside MSFS without going back to the desktop.
-
-There is also an optional toggle URI:
-
-```text
-easycpdlc://toggle
-```
-
-For normal use, `easycpdlc://show` is recommended.
-
-### Notes
-
-- This works best with MSFS in borderless/windowed fullscreen.
-- In exclusive fullscreen, Windows may still show the taskbar or change focus behavior.
-- EasyCPDLC uses a tray icon so it can run in the background without a normal taskbar button.
-- If the URI does not work, start EasyCPDLC once normally first. The URI protocol is registered on application start.
-
----
-
-## Flow Pro setup
-
-To create a Flow Pro button that opens EasyCPDLC:
-
-1. Start EasyCPDLC once normally.
-2. Confirm that this works in Windows:
-   - Press `Win + R`
-   - Enter:
-
-     ```text
-     easycpdlc://show
-     ```
-
-   - EasyCPDLC should appear.
-3. Open MSFS.
-4. Open the Flow Pro wheel editor.
-5. Add a **Custom Script Widget**.
-6. Open the widget editor.
-7. Paste this JavaScript code:
-
-```js
-run(() => {
-    this.$api.command.open_browser("easycpdlc://toggle");
-    return 250;
-});
-
-info(() => {
-    return "Toggle EasyCPDLC";
-});
-```
-
----
-
-## Free text cooldown
-
-To reduce accidental or excessive free-text usage, free-text messages use a cooldown system.
-
-By default, free text can only be sent once every 5 minutes.
-
-If free text is attempted too early, EasyCPDLC shows a system message such as:
-
-```text
-FREE TEXT AVAILABLE IN 04:32
-```
-
-METAR and ATIS requests are not affected by this cooldown.
-
----
-
-## Message filtering
-
-The message overview can be filtered by message type.
-
-Available filters include:
-
-- ALL
-- NEW
-- ATIS
-- METAR
-- CPDLC
-- TELEX
-- SYSTEM
-
-This makes it easier to keep the DCDU overview readable during busy flights.
-
----
-
-## System tray and window behavior
-
-EasyCPDLC supports a system tray icon with:
-
-- Show
-- Hide
-- Exit
-
-The main window can be brought back from the tray or via the Flow Pro URI.
-
-The main DCDU window is designed to appear without stealing focus from MSFS where possible. Child windows such as ATC, TELEX, settings, and request windows remain focusable.
-
-Closing the main window asks for confirmation to avoid accidental shutdown.
-
----
+| ![Login screen](assets/screenshots/login.png) | ![Airbus-style DCDU](assets/screenshots/dcdu-airbus1.png) | ![Boeing-style DCDU](assets/screenshots/dcdu-boeing1.png) |
 
 ## Requirements
 
-- Windows
-- .NET 10 Desktop Runtime
-- VATSIM account and CID
-- Hoppie ACARS logon code
-- Active internet connection
-- Optional: SimBrief Pilot ID for navlog/report-fix integration
-- Optional: Parallel 42 Flow Pro for MSFS cockpit shortcut integration
+- Windows 11 x64
+- .NET 10 SDK to build from source
+- VATSIM CID and Hoppie ACARS logon code for normal EasyCPDLC use
+- optional SimBrief account/user identifier
+- optional eLoadControl account and API key for direct loadsheet generation
+- optional vPilot installation for the vTDLS bridge
+- optional Windows-installed receipt printer for physical printing
 
-> Note: the .NET Desktop Runtime may already be included in packaged builds, depending on the release.
+The application is published as a self-contained Windows x64 executable. Raw receipt printing uses the standard Windows spooler; no Rongta SDK, OPOS runtime, serial-port library, npm package, or Python package is required.
 
----
+## Build and test
 
-## Installation
+From a PowerShell prompt with the .NET 10 SDK:
 
-### Download a release
+```powershell
+dotnet restore .\EasyCPDLC.sln
+dotnet build .\EasyCPDLC.sln -c Release
+dotnet test .\EasyCPDLC.Tests\EasyCPDLC.Tests.csproj -c Release
+```
 
-1. Download the latest release from the repository's **Releases** page.
-2. Extract the ZIP file to a folder of your choice.
-3. Start `EasyCPDLC.exe`.
-4. Enter your Hoppie logon code and VATSIM CID.
-5. Click **Connect**.
+To publish the main client:
 
----
+```powershell
+dotnet publish .\EasyCPDLC\EasyCPDLC.csproj -c Release
+```
 
-## First start
+Use **Mock file** mode and **Test Print** before submitting jobs to a physical printer.
 
-1. Open EasyCPDLC.
-2. Enter your **Hoppie logon code**.
-3. Enter your **VATSIM CID**.
-4. Enable **Remember Me** if you want the client to save your login details locally.
-5. Press **Connect**.
-6. Use the DCDU panel to access CPDLC, TELEX, ATC, and setup functions.
-7. On the setup page, choose between Boeing and Airbus style.
-8. Add your SimBrief Pilot ID if you want SimBrief navlog integration.
-9. Optional: create a Flow Pro widget using the [Flow Pro setup](#flow-pro-setup) section.
+## Citizen CT-S4000 quick start (default)
 
----
+1. Install Citizen's current CT-S4000 Windows 11 driver.
+2. Connect the printer by USB and confirm Windows creates a normal printer queue.
+3. Load 112 mm outward-wound thermal receipt paper and print the printer self-test.
+4. In EasyCPDLC, open `SETUP > PRINTER`, select the queue, and choose `FORMAT / CUT`.
+5. Select `CTS4000 112MM`, `FONT A / 69`, `3` feed lines, and `PARTIAL` cut.
+6. Run a mock-file test before sending the first physical test print.
 
-## Short release changelog
+The 92-column Font B option is available for dense operational messages. Font A / 69 is the default because it is easier to read and uses almost the full 832-dot printable line.
 
-- Added modern Airbus/Boeing DCDU main layout with aligned status, callsign, route, and flight phase.
-- Flight phase now switches to ARR below FL200 after enroute detection.
-- Added RLD FP workflow for VATSIM active flight plans, prefiles, new routes, and callsign changes.
-- Added callsign mismatch protection with red callsign, warning sound, automatic refresh, and manual refresh icon.
-- Added route display and orange route blink when a different route is loaded.
-- Added Quick Actions for departure/arrival METAR and ATIS requests.
-- Added click-only PDC / REQ CLR action with PDC/DCL logon parsing from controller info.
-- Added click-only CPDLC LOGON popup with Hoppie-online validation, FIR geolocation, nearby FIR buffer, and DEP/ARR APP matching.
-- Added CLR auto-confirm after 3 minutes when no final CLRC confirmation is sent.
-- Made CLR popup match ATIS popup size.
-- Improved ATIS status priority so VATSIM ATIS can override stale negative Hoppie/VATATIS responses.
-- Improved ATIS/METAR message filtering and aligned the message filter dropdown with `MESSAGES / DATA`.
-- Added NEW FP prompt cleanup after RLD FP / IGNORE and alert sound for new flight-plan detection.
-- Improved inbound flat TELEX parsing.
-- Added Flow Pro URI support, tray show/hide behavior, and safer close confirmation.
-- Reduced noisy system messages during successful reload and auto-refresh operations.
+## RP326 / generic 80 mm quick start
 
----
+1. Install the current Windows x64 driver for the RP326.
+2. Confirm Windows creates a normal printer queue, commonly named `Rongta RP326`.
+3. Print a Windows test page and verify that the queue is online and not paused.
+4. In EasyCPDLC, open `SETUP > PRINTER` and select the exact queue.
+5. Select `GENERIC 80MM`, `FONT A / 48`, `3` feed lines, and `PARTIAL` cut.
+6. Run a mock-file test, inspect the preview, then run a physical test print.
+
+Physical hardware is still required to validate the installed driver’s RAW pass-through, firmware code-page mapping, status reporting, print darkness/spacing, and cutter response.
+
+## Security and privacy
+
+- Do not commit Hoppie codes, eLoadControl API keys, VATSIM credentials, or other secrets.
+- Saved eLoadControl keys are protected with Windows DPAPI for the current Windows account.
+- Printer logs record job outcomes and useful errors without logging message bodies or credentials.
+- The vPilot bridge accepts local connections for the current Windows user rather than exposing a network service.
+
+If a key has ever been posted publicly, revoke it with the service provider and issue a new one.
 
 ## Project status
 
-This is a community-maintained modernization fork. The main goals are:
+This is a community testing fork. The printer byte stream, mock output, formatter, encoding, duplicate suppression, and bridge protocol can be tested automatically. A physical Citizen CT-S4000 or RP326 and a live controller-issued vTDLS PDC are still needed for final end-to-end validation.
 
-- keeping EasyCPDLC compatible with modern .NET versions
-- improving the user interface
-- making CPDLC more comfortable for day-to-day VATSIM flying
-- improving MSFS cockpit workflow with Flow Pro and tray integration
-- improving multi-leg and callsign-change workflows
+Issues and pull requests should stay within the limited scope described above. General EasyCPDLC modernization work belongs upstream unless it is required for these integrations.
 
----
+## Credits and upstream
 
-## Credits
+- Fork-specific repository: [Weebpummling/EasyCPDLC-Modernized-Printer-eLC](https://github.com/Weebpummling/EasyCPDLC-Modernized-Printer-eLC)
+- Immediate upstream: [fresH229a/EasyCPDLC-Modernized](https://github.com/fresH229a/EasyCPDLC-Modernized)
+- Original project: [quassbutreally/EasyCPDLC](https://github.com/quassbutreally/EasyCPDLC)
+- Original EasyCPDLC copyright © 2022 Joshua Seagrave
 
-Original project:
+Thanks to the EasyCPDLC, Hoppie, VATSIM, SimBrief, eLoadControl, and flight-simulation communities.
 
-**EasyCPDLC**  
-Copyright (C) 2022 Joshua Seagrave
+## License and disclaimer
 
-This project is based on the original **EasyCPDLC** project by **quassbutreally**:  
-https://github.com/quassbutreally/EasyCPDLC
+This project is licensed under the GNU General Public License v3.0 or later, consistent with the upstream project.
 
-Thanks to the VATSIM and Hoppie communities for making realistic datalink simulation possible for online pilots.
-
----
-
-## Disclaimer
-
-EasyCPDLC is a third-party community tool for flight simulation. It is not affiliated with, endorsed by, or officially connected to VATSIM, Hoppie, aircraft manufacturers, or real-world aviation authorities.
-
-This software is provided as is, without warranty of any kind, express or implied.
-
-The authors and contributors are not responsible or liable for any damages, data loss, connection issues, network disruptions, incorrect messages, missed ATC instructions, software crashes, simulator issues, or any other problems resulting from the use or inability to use this software.
-
-This project is intended for flight simulation use only.
-
-It must not be used for real-world aviation, real-world communication, real-world navigation, operational flight planning, or any safety-critical purpose.
-
-Use this software at your own risk.
-
-This project is an unofficial community modification/fork and is not affiliated with, endorsed by, or officially supported by VATSIM, the Hoppie ACARS network, or the original EasyCPDLC author.
-
----
-
-## License
-
-This project is licensed under the GNU General Public License v3.0 or later.
+This unofficial community fork is not affiliated with or endorsed by VATSIM, Hoppie, eLoadControl, SimBrief, PMDG, Rongta, aircraft manufacturers, aviation authorities, or the original EasyCPDLC authors. It is provided as-is, without warranty. Use it only for flight simulation and at your own risk.

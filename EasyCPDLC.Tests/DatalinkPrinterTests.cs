@@ -92,7 +92,13 @@ namespace EasyCPDLC.Tests
         {
             byte[] payload = DatalinkPrinter.BuildEscPosPayload(
                 DatalinkPrinter.CreateTestJob(),
-                new DatalinkPrinterSettings { Columns = 48, FeedLines = 3, CutMode = DatalinkCutMode.Partial });
+                new DatalinkPrinterSettings
+                {
+                    Profile = DatalinkPrinterProfile.GenericEscPos80Mm,
+                    Columns = 48,
+                    FeedLines = 3,
+                    CutMode = DatalinkCutMode.Partial
+                });
 
             Assert.True(payload.Take(2).SequenceEqual(new byte[] { 0x1B, 0x40 }));
             Assert.True(Contains(payload, 0x1B, 0x61, 0x00));
@@ -106,10 +112,56 @@ namespace EasyCPDLC.Tests
         {
             byte[] payload = DatalinkPrinter.BuildEscPosPayload(
                 DatalinkPrinter.CreateTestJob(),
-                new DatalinkPrinterSettings { Columns = 64, FeedLines = 0, CutMode = DatalinkCutMode.Off });
+                new DatalinkPrinterSettings
+                {
+                    Profile = DatalinkPrinterProfile.GenericEscPos80Mm,
+                    Columns = 64,
+                    FeedLines = 0,
+                    CutMode = DatalinkCutMode.Off
+                });
 
             Assert.True(Contains(payload, 0x1B, 0x4D, 0x01));
             Assert.False(payload.TakeLast(4).SequenceEqual(new byte[] { 0x1D, 0x56, 0x42, 0x00 }));
+        }
+
+        [Fact]
+        public void Citizen112Profile_DefaultsTo69ColumnsAndCondensedUses92ColumnFontB()
+        {
+            DatalinkPrinterSettings defaults = new();
+            DatalinkPrintJob job = DatalinkPrinter.CreateTestJob();
+            byte[] normal = DatalinkPrinter.BuildEscPosPayload(job, defaults);
+            byte[] condensed = DatalinkPrinter.BuildEscPosPayload(
+                job,
+                new DatalinkPrinterSettings
+                {
+                    Profile = DatalinkPrinterProfile.CitizenCtS4000_112Mm,
+                    Columns = 92,
+                    FeedLines = 0,
+                    CutMode = DatalinkCutMode.Off
+                });
+
+            Assert.Equal(DatalinkPrinterProfile.CitizenCtS4000_112Mm, defaults.Profile);
+            Assert.Equal(69, defaults.Columns);
+            Assert.Equal(69, DatalinkPrinter.NormalizeProfileColumns(defaults.Profile, 48));
+            Assert.Equal(92, DatalinkPrinter.NormalizeProfileColumns(defaults.Profile, 92));
+            Assert.Equal(48, DatalinkPrinter.NormalizeProfileColumns(DatalinkPrinterProfile.GenericEscPos80Mm, defaults.Columns));
+            Assert.True(Contains(normal, 0x1B, 0x4D, 0x00));
+            Assert.True(Contains(condensed, 0x1B, 0x4D, 0x01));
+            Assert.All(DatalinkPrinter.FormatReceiptText(job, 92).Split('\n'), line =>
+                Assert.True(line.Length <= 92, "Over-width line: " + line));
+        }
+
+        [Fact]
+        public void AirlineLayout_UsesFullWidthRulesAndRightAlignedMetadata()
+        {
+            string[] lines = DatalinkPrinter.FormatReceiptText(DatalinkPrinter.CreateTestJob(), 69).Split('\n');
+
+            Assert.Equal(69, lines[1].Length);
+            Assert.Equal(new string('-', 69), lines[1]);
+            Assert.StartsWith("TYPE LOADSHEET", lines[2]);
+            Assert.EndsWith("UTC 20JUL26 1842Z", lines[2]);
+            Assert.Contains(lines, line => line.StartsWith("A/C B-18662") && line.EndsWith("FROM DISPATCH"));
+            Assert.Equal(new string('-', 69), lines[^1]);
         }
 
         [Fact]
@@ -117,7 +169,13 @@ namespace EasyCPDLC.Tests
         {
             byte[] payload = DatalinkPrinter.BuildEscPosPayload(
                 DatalinkPrinter.CreateTestJob(),
-                new DatalinkPrinterSettings { Columns = 48, FeedLines = 1, CutMode = DatalinkCutMode.Full });
+                new DatalinkPrinterSettings
+                {
+                    Profile = DatalinkPrinterProfile.GenericEscPos80Mm,
+                    Columns = 48,
+                    FeedLines = 1,
+                    CutMode = DatalinkCutMode.Full
+                });
 
             Assert.True(payload.TakeLast(7).SequenceEqual(new byte[] { 0x1B, 0x64, 0x01, 0x1D, 0x56, 0x41, 0x00 }));
         }
@@ -127,7 +185,13 @@ namespace EasyCPDLC.Tests
         {
             byte[] payload = DatalinkPrinter.BuildEscPosPayload(
                 DatalinkPrinter.CreateTestJob(),
-                new DatalinkPrinterSettings { Columns = 48, FeedLines = 3, CutMode = DatalinkCutMode.Partial });
+                new DatalinkPrinterSettings
+                {
+                    Profile = DatalinkPrinterProfile.GenericEscPos80Mm,
+                    Columns = 48,
+                    FeedLines = 3,
+                    CutMode = DatalinkCutMode.Partial
+                });
             string dump = DatalinkPrinter.ToHexDump(payload);
 
             Assert.StartsWith("0000  1B 40", dump);
@@ -152,7 +216,8 @@ namespace EasyCPDLC.Tests
                 DatalinkPrinterSettings settings = new()
                 {
                     Mode = DatalinkPrinterMode.MockFile,
-                    Columns = 48,
+                    Profile = DatalinkPrinterProfile.CitizenCtS4000_112Mm,
+                    Columns = 69,
                     FeedLines = 3,
                     CutMode = DatalinkCutMode.Partial,
                     MockOutputDirectory = directory

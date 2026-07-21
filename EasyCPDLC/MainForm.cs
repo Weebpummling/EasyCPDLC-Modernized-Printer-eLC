@@ -894,6 +894,7 @@ private TelexForm tForm;
         private const string WindowScalePercentSettingName = "WindowScalePercent";
         private const string PrinterModeSettingName = "PrinterMode";
         private const string PrinterNameSettingName = "PrinterName";
+        private const string PrinterProfileSettingName = "PrinterProfile";
         private const string PrinterColumnsSettingName = "PrinterColumns";
         private const string PrinterAutoPdcDclSettingName = "PrinterAutoPdcDcl";
         private const string PrinterAutoCpdlcSettingName = "PrinterAutoCpdlc";
@@ -17263,10 +17264,35 @@ airbusAocSendLabel = null;
             set => SaveFixedStringSetting(PrinterNameSettingName, (value ?? string.Empty).Trim());
         }
 
+        private static DatalinkPrinterProfile PrinterProfile
+        {
+            get
+            {
+                string value = ReadFixedStringSetting(PrinterProfileSettingName, "CITIZEN CT-S4000 112MM");
+                return value.Contains("80", StringComparison.OrdinalIgnoreCase) ||
+                    value.Contains("RONGTA", StringComparison.OrdinalIgnoreCase) ||
+                    value.Contains("GENERIC", StringComparison.OrdinalIgnoreCase)
+                    ? DatalinkPrinterProfile.GenericEscPos80Mm
+                    : DatalinkPrinterProfile.CitizenCtS4000_112Mm;
+            }
+            set
+            {
+                SaveFixedStringSetting(PrinterProfileSettingName, DatalinkPrinter.GetProfileDisplayName(value));
+                PrinterColumns = DatalinkPrinter.GetNormalColumns(value);
+            }
+        }
+
         public static int PrinterColumns
         {
-            get => NormalizePrinterColumns(ReadFixedStringSetting(PrinterColumnsSettingName, "48"));
-            set => SaveFixedStringSetting(PrinterColumnsSettingName, NormalizePrinterColumns(value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            get
+            {
+                int fallback = DatalinkPrinter.GetNormalColumns(PrinterProfile);
+                string stored = ReadFixedStringSetting(PrinterColumnsSettingName, fallback.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                return NormalizePrinterColumns(stored, PrinterProfile);
+            }
+            set => SaveFixedStringSetting(
+                PrinterColumnsSettingName,
+                DatalinkPrinter.NormalizeProfileColumns(PrinterProfile, value).ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         public static bool PrinterAutoPdcDcl
@@ -17331,9 +17357,11 @@ airbusAocSendLabel = null;
             return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) || value == "1" || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static int NormalizePrinterColumns(string value)
+        private static int NormalizePrinterColumns(string value, DatalinkPrinterProfile profile)
         {
-            return int.TryParse((value ?? string.Empty).Trim(), out int columns) && columns >= 56 ? 64 : 48;
+            int fallback = DatalinkPrinter.GetNormalColumns(profile);
+            int columns = int.TryParse((value ?? string.Empty).Trim(), out int parsed) ? parsed : fallback;
+            return DatalinkPrinter.NormalizeProfileColumns(profile, columns);
         }
 
         private static int NormalizePrinterFeedLines(string value)
@@ -17346,6 +17374,7 @@ airbusAocSendLabel = null;
             return new DatalinkPrinterSettings
             {
                 Mode = PrinterMode,
+                Profile = PrinterProfile,
                 PrinterName = SelectedPrinterName,
                 Columns = PrinterColumns,
                 AutoPrintPdcDcl = PrinterAutoPdcDcl,
@@ -26989,7 +27018,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     return (rightSide && index >= 1 && index <= 4) || (!rightSide && index == bottom);
 
                 case EmbeddedSetupPage.PrinterFormat:
-                    return (rightSide && index >= 1 && index <= 3) || (!rightSide && index == bottom);
+                    return (rightSide && index >= 1 && index <= 4) || (!rightSide && index == bottom);
 
                 case EmbeddedSetupPage.Style:
                     return (!rightSide && (index == 1 || index == 2 || index == bottom)) ||
@@ -27168,9 +27197,20 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     break;
 
                 case EmbeddedSetupPage.PrinterFormat:
-                    if (rightSide && index == 1) PrinterColumns = PrinterColumns == 48 ? 64 : 48;
-                    else if (rightSide && index == 2) PrinterFeedLines = PrinterFeedLines >= 8 ? 0 : PrinterFeedLines + 1;
-                    else if (rightSide && index == 3)
+                    if (rightSide && index == 1)
+                    {
+                        PrinterProfile = PrinterProfile == DatalinkPrinterProfile.CitizenCtS4000_112Mm
+                            ? DatalinkPrinterProfile.GenericEscPos80Mm
+                            : DatalinkPrinterProfile.CitizenCtS4000_112Mm;
+                    }
+                    else if (rightSide && index == 2)
+                    {
+                        int normal = DatalinkPrinter.GetNormalColumns(PrinterProfile);
+                        int condensed = DatalinkPrinter.GetCondensedColumns(PrinterProfile);
+                        PrinterColumns = PrinterColumns == normal ? condensed : normal;
+                    }
+                    else if (rightSide && index == 3) PrinterFeedLines = PrinterFeedLines >= 8 ? 0 : PrinterFeedLines + 1;
+                    else if (rightSide && index == 4)
                     {
                         PrinterCutMode = PrinterCutMode switch
                         {
@@ -27553,7 +27593,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             AddEmbeddedSetupLabel(page, PrinterModeDisplayText(), page.Width - 150, EmbeddedSetupRightLskTextY(page, 1), 146, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
             AddEmbeddedSetupLabel(page, "<AUTO PRINT", 4, EmbeddedSetupLskTextY(page, 2), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddEmbeddedSetupLabel(page, "<FORMAT / CUT", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, PrinterColumns + " COL", page.Width - 150, EmbeddedSetupRightLskTextY(page, 3), 146, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, (PrinterProfile == DatalinkPrinterProfile.CitizenCtS4000_112Mm ? "112MM / " : "80MM / ") + PrinterColumns, page.Width - 180, EmbeddedSetupRightLskTextY(page, 3), 176, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
             AddEmbeddedSetupLabel(page, "<PRINT TEST", 4, EmbeddedSetupLskTextY(page, 4), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
 
             if (!string.IsNullOrWhiteSpace(embeddedPrinterStatus))
@@ -27619,17 +27659,17 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             Panel page = CreateEmbeddedSetupCanvas();
             Font titleFont = EmbeddedSetupTitleFont();
             Font menuFont = EmbeddedSetupMenuFont();
-            Font captionFont = EmbeddedSetupCaptionFont();
             Color color = MainPrimaryTextColor();
 
             AddEmbeddedSetupLabel(page, "PRINTER FORMAT", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
-            AddEmbeddedSetupLabel(page, "PAPER COLUMNS", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, PrinterColumns + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 1), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
-            AddEmbeddedSetupLabel(page, "FEED LINES", 4, EmbeddedSetupLskTextY(page, 2), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, PrinterFeedLines + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 2), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
-            AddEmbeddedSetupLabel(page, "AUTO CUT", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddEmbeddedSetupLabel(page, PrinterCutMode.ToString().ToUpperInvariant() + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 3), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
-            AddEmbeddedSetupLabel(page, "CUT/FEED ARE ESC/POS COMMANDS", 4, EmbeddedSetupLskTextY(page, 4), page.Width - 8, 24, ContentAlignment.MiddleLeft, DcduTheme.Amber, captionFont);
+            AddEmbeddedSetupLabel(page, "PAPER PROFILE", 4, EmbeddedSetupLskTextY(page, 1), 240, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, DatalinkPrinter.GetProfileShortName(PrinterProfile) + ">", page.Width - 230, EmbeddedSetupRightLskTextY(page, 1), 226, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "TYPEFACE / COLS", 4, EmbeddedSetupLskTextY(page, 2), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, (DatalinkPrinter.UsesCondensedFont(PrinterProfile, PrinterColumns) ? "FONT B / " : "FONT A / ") + PrinterColumns + ">", page.Width - 190, EmbeddedSetupRightLskTextY(page, 2), 186, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "FEED LINES", 4, EmbeddedSetupLskTextY(page, 3), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterFeedLines + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 3), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+            AddEmbeddedSetupLabel(page, "AUTO CUT", 4, EmbeddedSetupLskTextY(page, 4), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, PrinterCutMode.ToString().ToUpperInvariant() + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 4), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
             AddEmbeddedSetupLabel(page, "<PRINTER MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
         }
 
