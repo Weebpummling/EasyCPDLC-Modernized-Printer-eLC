@@ -176,7 +176,7 @@ namespace EasyCPDLC
             audiblePingBox.Checked = MainForm.PlaySound;
             useFSUIPCBox = CreateCheckBox("Use Simulator Connection (req. FSUIPC/XPUIPC)", "2");
             useFSUIPCBox.Checked = MainForm.UseFSUIPC;
-            simbriefTextBox = CreateTextBox(MainForm.SimbriefID, 7, false, true);
+            simbriefTextBox = CreateTextBox(MainForm.SimbriefID, 64, false, false);
 
             settingsFormatPanel.Controls.Add(autoDeleteReqMessagesBox);
             settingsFormatPanel.SetFlowBreak(autoDeleteReqMessagesBox, true);
@@ -204,7 +204,7 @@ namespace EasyCPDLC
                 Margin = isBoeing ? new Padding(0, 3, 0, 0) : new Padding(0, 3, 0, 0),
                 Padding = new Padding(0, 0, 0, 0)
             };
-            Label simbriefLabel = CreateTemplate("SIMBRIEF PILOT ID:");
+            Label simbriefLabel = CreateTemplate("SIMBRIEF USER / ID:");
             simbriefLabel.Width = isBoeing ? 148 : 156;
             simbriefLabel.AutoSize = false;
             simbriefLabel.Padding = new Padding(0, 2, 0, 0);

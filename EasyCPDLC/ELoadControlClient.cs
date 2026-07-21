@@ -334,15 +334,32 @@ namespace EasyCPDLC
             this.client = client ?? SharedClient;
         }
 
-        public async Task<SimbriefLoadsheetData> FetchAsync(string username, string fallbackCallsign, CancellationToken token)
+        internal static string NormalizeUserIdentifier(string value)
         {
-            string cleaned = (username ?? string.Empty).Trim();
-            if (cleaned.Length == 0)
+            string cleaned = (value ?? string.Empty).Trim();
+            if (cleaned.Length == 0 || cleaned.Length > 64 || cleaned.Any(char.IsControl))
             {
-                throw new InvalidOperationException("ENTER A SIMBRIEF USERNAME IN SETUP / ACCOUNT.");
+                return string.Empty;
             }
 
-            string url = "https://www.simbrief.com/api/xml.fetcher.php?userid=" + Uri.EscapeDataString(cleaned) + "&json=1";
+            return cleaned;
+        }
+
+        internal static string BuildFetchUrl(string userIdentifier)
+        {
+            string cleaned = NormalizeUserIdentifier(userIdentifier);
+            if (cleaned.Length == 0)
+            {
+                throw new InvalidOperationException("ENTER A SIMBRIEF USERNAME OR PILOT ID IN SETUP / ACCOUNT.");
+            }
+
+            string parameter = cleaned.All(char.IsDigit) ? "userid" : "username";
+            return "https://www.simbrief.com/api/xml.fetcher.php?" + parameter + "=" + Uri.EscapeDataString(cleaned) + "&json=1";
+        }
+
+        public async Task<SimbriefLoadsheetData> FetchAsync(string username, string fallbackCallsign, CancellationToken token)
+        {
+            string url = BuildFetchUrl(username);
             using HttpResponseMessage response = await client.GetAsync(url, token).ConfigureAwait(false);
             string json = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)

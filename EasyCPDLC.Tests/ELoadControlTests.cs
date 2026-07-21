@@ -56,6 +56,26 @@ namespace EasyCPDLC.Tests
             Assert.Equal(2, request.Value<int>("editionNumber"));
         }
 
+        [Theory]
+        [InlineData("1234567", "userid=1234567")]
+        [InlineData("Pilot_Alias", "username=Pilot_Alias")]
+        [InlineData("Pilot Alias", "username=Pilot%20Alias")]
+        public void SimbriefFetcher_UsesTheCorrectIdentifierParameter(string identifier, string expectedQuery)
+        {
+            string url = SimbriefLoadsheetClient.BuildFetchUrl(identifier);
+
+            Assert.Contains(expectedQuery, url, StringComparison.Ordinal);
+            Assert.EndsWith("&json=1", url, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SimbriefIdentifier_NormalizationPreservesAliasesAndRejectsUnsafeValues()
+        {
+            Assert.Equal("Pilot_Alias", SimbriefLoadsheetClient.NormalizeUserIdentifier("  Pilot_Alias  "));
+            Assert.Equal(string.Empty, SimbriefLoadsheetClient.NormalizeUserIdentifier("Pilot\nAlias"));
+            Assert.Equal(string.Empty, SimbriefLoadsheetClient.NormalizeUserIdentifier(new string('A', 65)));
+        }
+
         [Fact]
         public async Task ReferenceRequests_UseWindowsFriendlyHttpsApiAndPerRequestKeyHeader()
         {

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Globalization;
 using EasyCPDLC;
 using Xunit;
 
@@ -21,6 +22,33 @@ namespace EasyCPDLC.Tests
             Assert.Contains("FROM DISPATCH", receipt);
             Assert.Contains("END OF LOADSHEET", receipt);
             Assert.All(lines, line => Assert.True(line.Length <= 48, "Over-width line: " + line));
+        }
+
+        [Theory]
+        [InlineData("en-US")]
+        [InlineData("fr-FR")]
+        [InlineData("ja-JP")]
+        [InlineData("tr-TR")]
+        public void FormatReceiptText_UsesInvariantUtcTimestampAcrossUserCultures(string cultureName)
+        {
+            CultureInfo originalCulture = CultureInfo.CurrentCulture;
+            CultureInfo originalUiCulture = CultureInfo.CurrentUICulture;
+
+            try
+            {
+                CultureInfo culture = CultureInfo.GetCultureInfo(cultureName);
+                CultureInfo.CurrentCulture = culture;
+                CultureInfo.CurrentUICulture = culture;
+
+                string receipt = DatalinkPrinter.FormatReceiptText(DatalinkPrinter.CreateTestJob(), 69);
+
+                Assert.Contains("UTC 20JUL26 1842Z", receipt);
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = originalCulture;
+                CultureInfo.CurrentUICulture = originalUiCulture;
+            }
         }
 
         [Fact]
@@ -149,6 +177,15 @@ namespace EasyCPDLC.Tests
             Assert.True(Contains(condensed, 0x1B, 0x4D, 0x01));
             Assert.All(DatalinkPrinter.FormatReceiptText(job, 92).Split('\n'), line =>
                 Assert.True(line.Length <= 92, "Over-width line: " + line));
+        }
+
+        [Fact]
+        public void WidePrinterProfile_UsesGenericFourInchLabelAndMigratesLegacyNames()
+        {
+            Assert.Equal("GENERIC 4 INCH", DatalinkPrinter.GetProfileShortName(DatalinkPrinterProfile.CitizenCtS4000_112Mm));
+            Assert.Equal(DatalinkPrinterProfile.CitizenCtS4000_112Mm, MainForm.ParsePrinterProfileSetting("GENERIC 4 INCH"));
+            Assert.Equal(DatalinkPrinterProfile.CitizenCtS4000_112Mm, MainForm.ParsePrinterProfileSetting("CITIZEN CT-S4000 112MM"));
+            Assert.Equal(DatalinkPrinterProfile.GenericEscPos80Mm, MainForm.ParsePrinterProfileSetting("GENERIC ESC/POS 80MM"));
         }
 
         [Fact]
