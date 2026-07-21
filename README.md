@@ -121,7 +121,15 @@ Only messages classified as clearance/PDC traffic are imported. They are labeled
 
 Imported PDCs do not provide a Hoppie logon code, do not turn the airport PDC-availability badge green, do not enable `REQ CLR`, and do not gain CPDLC reply actions such as `WILCO`.
 
-To install the bridge for the current Windows user:
+The normal release ZIP includes a compiled bridge and an optional installer. Close vPilot, extract the complete ZIP, and double-click:
+
+```text
+Install-vPilot-Bridge.cmd
+```
+
+Release users do not need the .NET SDK to install the bridge. The installer verifies and copies the bundled `Bridge\EasyCPDLC.VPilotBridge.dll` into the current user's vPilot `Plugins` folder.
+
+From a source checkout, developers can instead run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\Install-VPilotBridge.ps1
@@ -177,6 +185,12 @@ To publish the main client:
 
 ```powershell
 dotnet publish .\EasyCPDLC\EasyCPDLC.csproj -c Release
+```
+
+To produce the complete release ZIP with the compiled optional vPilot bridge and installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1 -Version 1.0.0.17
 ```
 
 Use **Mock file** mode and **Test Print** before submitting jobs to a physical printer.

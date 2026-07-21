@@ -19241,8 +19241,8 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
         }
 
 
-private const string UpdateGithubOwner = "fresH229a";
-private const string UpdateGithubRepo = "EasyCPDLC-Modernized";
+private const string UpdateGithubOwner = "Weebpummling";
+private const string UpdateGithubRepo = "EasyCPDLC-Modernized-Printer-eLC";
 private const string UpdateGithubApiAccept = "application/vnd.github+json";
 private static readonly Version MinimumSupportedRollbackVersion = new Version(1, 0, 0, 12);
 

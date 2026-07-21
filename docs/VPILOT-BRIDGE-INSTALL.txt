@@ -1,0 +1,18 @@
+EasyCPDLC vPilot Bridge - Optional Installation
+================================================
+
+The normal EasyCPDLC application works without this bridge. Install it only
+if you want EasyCPDLC to receive supported vPilot/vTDLS PDC messages.
+
+1. Install vPilot for the current Windows user.
+2. Close vPilot completely.
+3. Extract the complete EasyCPDLC release ZIP.
+4. Double-click Install-vPilot-Bridge.cmd.
+5. Restart vPilot and enter .debug.
+6. Confirm that "EasyCPDLC vPilot PDC Bridge" is listed as loaded.
+
+The installer copies the bundled Bridge\EasyCPDLC.VPilotBridge.dll into the
+current user's vPilot Plugins folder. Release users do not need the .NET SDK.
+
+If installation fails, confirm that vPilot is installed in the current user
+profile and is not running. Keep the Bridge folder and installer files together.
