@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '1.0.0.17',
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [string]$Version = '1.1.0',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [string]$VPilotInstallDir = '',
@@ -31,7 +32,15 @@ if (-not (Test-Path -LiteralPath $pluginApi -PathType Leaf)) {
 
 $dotnetCommand = Get-Command dotnet -ErrorAction Stop
 $dotnet = $dotnetCommand.Source
-$packageName = "EasyCPDLC-$Version-win-x64"
+$assemblyInfoPath = Join-Path $repoRoot 'EasyCPDLC\Properties\AssemblyInfo.cs'
+$assemblyInfo = Get-Content -LiteralPath $assemblyInfoPath -Raw
+$expectedFileVersion = "$Version.0"
+$fileVersionMatch = [regex]::Match($assemblyInfo, 'AssemblyFileVersion\("(?<version>\d+(?:\.\d+){3})"\)')
+if (-not $fileVersionMatch.Success -or $fileVersionMatch.Groups['version'].Value -ne $expectedFileVersion) {
+    throw "Release version $Version does not match AssemblyFileVersion $($fileVersionMatch.Groups['version'].Value). Expected $expectedFileVersion."
+}
+
+$packageName = "EasyCPDLC-Printer-eLC-$Version-win-x64"
 $publishDirectory = Join-Path $OutputDirectory '_publish'
 $packageDirectory = Join-Path $OutputDirectory $packageName
 $zipPath = Join-Path $OutputDirectory "$packageName.zip"

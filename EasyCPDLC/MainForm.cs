@@ -19243,8 +19243,11 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
 private const string UpdateGithubOwner = "Weebpummling";
 private const string UpdateGithubRepo = "EasyCPDLC-Modernized-Printer-eLC";
+internal const string ForkReleaseTagPrefix = "printer-elc-v";
+internal const string LegacyForkReleaseTag = "1.0.0.17";
+private const string ForkVersionBadgePrefix = "P/eLC";
 private const string UpdateGithubApiAccept = "application/vnd.github+json";
-private static readonly Version MinimumSupportedRollbackVersion = new Version(1, 0, 0, 12);
+private static readonly Version MinimumSupportedRollbackVersion = new Version(1, 0, 0, 17);
 
 private static void ClearPendingLogonUpdateState()
 {
@@ -19272,7 +19275,10 @@ private static async void CheckNewVersion()
         var releases = await client.Repository.Release.GetAll(UpdateGithubOwner, UpdateGithubRepo);
 
         var latest = releases
-            .Where(release => !release.Prerelease && !release.Draft)
+            .Where(release =>
+                !release.Prerelease &&
+                !release.Draft &&
+                IsForkReleaseTag(release.TagName))
             .OrderByDescending(release => release.PublishedAt ?? release.CreatedAt)
             .FirstOrDefault();
 
@@ -20182,7 +20188,19 @@ catch {
 ";
         }
 
-        private static Version ParseReleaseVersion(string value)
+        internal static bool IsForkReleaseTag(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            string tag = value.Trim();
+            return tag.StartsWith(ForkReleaseTagPrefix, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(tag, LegacyForkReleaseTag, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static Version ParseReleaseVersion(string value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -20219,6 +20237,20 @@ catch {
             }
 
             return Version.TryParse(versionText, out Version version) ? version : null;
+        }
+
+        internal static string FormatForkDisplayVersion(string value)
+        {
+            Version version = ParseReleaseVersion(value);
+            if (version == null)
+            {
+                return string.Empty;
+            }
+
+            string numeric = version.Revision == 0
+                ? $"{version.Major}.{version.Minor}.{version.Build}"
+                : version.ToString();
+            return ForkVersionBadgePrefix + " " + numeric;
         }
 
         public static void CheckAdministrator()
@@ -20739,7 +20771,11 @@ private void AddLogonVersionBadge(Form logonForm)
             return;
         }
 
-        string versionText = version;
+        string versionText = FormatForkDisplayVersion(version);
+        if (string.IsNullOrWhiteSpace(versionText))
+        {
+            return;
+        }
         LogonVersionTextControl versionControl = null;
         LogonUpdateIconControl updateControl = null;
         bool lastUpdateAvailableState = logonUpdateAvailable;
@@ -21047,7 +21083,7 @@ private static string GetCleanDisplayVersion()
 
 private static Rectangle GetLogonVersionRect(Form logonForm)
 {
-    int versionWidth = 42;
+    int versionWidth = 84;
     int iconWidth = logonUpdateAvailable ? 13 : 0;
     int gap = logonUpdateAvailable ? 1 : 0;
     int totalWidth = versionWidth + gap + iconWidth;
@@ -27912,7 +27948,11 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             Version currentVersion = ParseReleaseVersion(System.Windows.Forms.Application.ProductVersion);
 
             return releases
-                .Where(release => release != null && !release.Prerelease && !release.Draft)
+                .Where(release =>
+                    release != null &&
+                    !release.Prerelease &&
+                    !release.Draft &&
+                    IsForkReleaseTag(release.TagName))
                 .Select(release => new
                 {
                     Release = release,
@@ -28024,7 +28064,11 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 IReadOnlyList<Release> releases = await client.Repository.Release.GetAll(UpdateGithubOwner, UpdateGithubRepo);
 
                 Release latest = releases
-                    .Where(release => release != null && !release.Prerelease && !release.Draft)
+                    .Where(release =>
+                        release != null &&
+                        !release.Prerelease &&
+                        !release.Draft &&
+                        IsForkReleaseTag(release.TagName))
                     .OrderByDescending(release => ParseReleaseVersion(release.TagName))
                     .FirstOrDefault();
 

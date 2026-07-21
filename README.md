@@ -190,8 +190,10 @@ dotnet publish .\EasyCPDLC\EasyCPDLC.csproj -c Release
 To produce the complete release ZIP with the compiled optional vPilot bridge and installer:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1 -Version 1.0.0.17
+powershell -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1 -Version 1.1.0
 ```
+
+Fork releases use namespaced SemVer tags such as `printer-elc-v1.1.0`; they do not reuse upstream EasyCPDLC tag names. See [VERSIONING.md](VERSIONING.md).
 
 Use **Mock file** mode and **Test Print** before submitting jobs to a physical printer.
 
