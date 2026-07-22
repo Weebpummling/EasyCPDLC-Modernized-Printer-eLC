@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -48,6 +49,83 @@ namespace EasyCPDLC.GNS430
             string relative = $"controls/{control}-{state}.png";
             Image image = Load(relative);
             graphics.DrawImage(image, bounds);
+            DrawButtonFinish(graphics, control, state, bounds);
+        }
+
+        private static void DrawButtonFinish(Graphics graphics, string control, string state, RectangleF controlBounds)
+        {
+            RectangleF pressedBounds = PressedSegmentBounds(control, state, controlBounds);
+            if (pressedBounds.IsEmpty)
+            {
+                return;
+            }
+
+            GraphicsState saved = graphics.Save();
+            try
+            {
+                graphics.SetClip(pressedBounds);
+                using LinearGradientBrush face = new(
+                    pressedBounds,
+                    Color.FromArgb(72, 255, 255, 255),
+                    Color.FromArgb(100, 0, 0, 0),
+                    LinearGradientMode.Vertical);
+                face.InterpolationColors = new ColorBlend
+                {
+                    Colors = new[]
+                    {
+                        Color.FromArgb(58, 255, 255, 255),
+                        Color.FromArgb(18, 255, 255, 255),
+                        Color.FromArgb(42, 0, 0, 0),
+                        Color.FromArgb(92, 0, 0, 0)
+                    },
+                    Positions = new[] { 0f, 0.28f, 0.68f, 1f }
+                };
+                graphics.FillRectangle(face, pressedBounds);
+
+                using Pen upperEdge = new(Color.FromArgb(72, 255, 255, 255), 1f);
+                using Pen lowerEdge = new(Color.FromArgb(118, 0, 0, 0), 1f);
+                graphics.DrawLine(upperEdge, pressedBounds.Left + 2, pressedBounds.Top + 1, pressedBounds.Right - 2, pressedBounds.Top + 1);
+                graphics.DrawLine(lowerEdge, pressedBounds.Left + 2, pressedBounds.Bottom - 1, pressedBounds.Right - 2, pressedBounds.Bottom - 1);
+            }
+            finally
+            {
+                graphics.Restore(saved);
+            }
+
+            if (control.Equals("range", StringComparison.OrdinalIgnoreCase))
+            {
+                float join = controlBounds.Left + (controlBounds.Width / 2f);
+                using Pen sharedSeam = new(Color.FromArgb(155, 7, 8, 8), 1f);
+                using Pen sharedHighlight = new(Color.FromArgb(55, 255, 255, 255), 1f);
+                graphics.DrawLine(sharedSeam, join, controlBounds.Top + 4, join, controlBounds.Bottom - 4);
+                graphics.DrawLine(sharedHighlight, join + 1, controlBounds.Top + 5, join + 1, controlBounds.Bottom - 5);
+            }
+        }
+
+        internal static RectangleF PressedSegmentBounds(string control, string state, RectangleF controlBounds)
+        {
+            if (string.IsNullOrWhiteSpace(control) || string.IsNullOrWhiteSpace(state) || !state.Contains("pressed", StringComparison.OrdinalIgnoreCase))
+            {
+                return RectangleF.Empty;
+            }
+
+            if (!control.Equals("range", StringComparison.OrdinalIgnoreCase))
+            {
+                return controlBounds;
+            }
+
+            float halfWidth = controlBounds.Width / 2f;
+            if (state.Equals("decrease-pressed", StringComparison.OrdinalIgnoreCase))
+            {
+                return new RectangleF(controlBounds.Left, controlBounds.Top, halfWidth, controlBounds.Height);
+            }
+
+            if (state.Equals("increase-pressed", StringComparison.OrdinalIgnoreCase))
+            {
+                return new RectangleF(controlBounds.Left + halfWidth, controlBounds.Top, halfWidth, controlBounds.Height);
+            }
+
+            return controlBounds;
         }
 
         internal static RectangleF ControlBounds(string control)

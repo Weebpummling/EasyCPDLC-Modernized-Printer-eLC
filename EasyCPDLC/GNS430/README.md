@@ -4,8 +4,6 @@
 
 This folder is an isolated front end for mixed-equipment home cockpits. It uses the existing `MainForm` connection, Hoppie/CPDLC session, message store, ATC request pages, AOC/telex pages, and settings. It does not copy or fork the network backend.
 
-![GNS 430-style EasyCPDLC panel in use](../../output/gns430/gns430-in-use.png)
-
 ## Required Hoppie setup
 
 Before connecting EasyCPDLC, set the aircraft's internal Hoppie/ATC network to **NONE** and remove or disable the Hoppie code stored in the aircraft. EasyCPDLC must be the only Hoppie client operating under the flight's callsign—even before the planned PMDG bridge is available.

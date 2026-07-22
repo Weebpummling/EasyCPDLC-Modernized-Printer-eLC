@@ -1191,27 +1191,37 @@ namespace EasyCPDLC.GNS430
 
         private bool TryHandleKnob(PointF point, PointF center)
         {
+            Gns430Command command = KnobCommandAt(point, center);
+            if (command == Gns430Command.None)
+            {
+                return false;
+            }
+
+            ExecuteCommand(command);
+            return true;
+        }
+
+        internal static Gns430Command KnobCommandAt(PointF point, PointF center)
+        {
             float dx = point.X - center.X;
             float dy = point.Y - center.Y;
             float distance = (float)Math.Sqrt((dx * dx) + (dy * dy));
             if (distance > 78)
             {
-                return false;
+                return Gns430Command.None;
             }
 
             if (distance < 27)
             {
-                ExecuteCommand(Gns430Command.CursorPush);
+                return Gns430Command.CursorPush;
             }
-            else if (distance < 49)
+
+            if (distance < 49)
             {
-                ExecuteCommand(dx < 0 ? Gns430Command.SmallRightDecrease : Gns430Command.SmallRightIncrease);
+                return dx < 0 ? Gns430Command.SmallRightDecrease : Gns430Command.SmallRightIncrease;
             }
-            else
-            {
-                ExecuteCommand(dx < 0 ? Gns430Command.LargeRightDecrease : Gns430Command.LargeRightIncrease);
-            }
-            return true;
+
+            return dx < 0 ? Gns430Command.LargeRightDecrease : Gns430Command.LargeRightIncrease;
         }
 
         private void HandleScreenClick(PointF point)
