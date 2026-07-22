@@ -5,6 +5,14 @@
 ![Network](https://img.shields.io/badge/network-VATSIM%20%2B%20Hoppie-blue)
 ![Status](https://img.shields.io/badge/status-testing-orange)
 
+## Experimental GNS 430 interface mod
+
+An experimental [GNS 430-style EasyCPDLC interface](https://github.com/Weebpummling/EasyCPDLC-Modernized-Printer-eLC/tree/testing/gns430-interface/EasyCPDLC/GNS430) is available on the `testing/gns430-interface` branch. It includes the separate panel, private MSFS 2024 companion-module source, an importable MobiFlight project, automated control tests, and its own setup README.
+
+> **Testing only:** this mod is incomplete and is not part of the supported main release.
+
+> **Hoppie warning:** if the aircraft has its own Hoppie client, set its Hoppie/ATC network to **NONE** and remove or disable its Hoppie code before connecting EasyCPDLC. EasyCPDLC must be the only Hoppie client using the flight's callsign; simultaneous aircraft and EasyCPDLC polling can divide pending messages unpredictably.
+
 This is a focused public fork of [fresH229a/EasyCPDLC-Modernized](https://github.com/fresH229a/EasyCPDLC-Modernized). It adds a review-first cockpit printing workflow, direct eLoadControl loadsheet requests, and an optional vPilot/vTDLS PDC bridge while retaining the upstream CPDLC client and its Airbus- and Boeing-style DCDUs.
 
 The upstream README is preserved verbatim in [README.UPSTREAM.md](README.UPSTREAM.md). Read it for the original client’s complete feature guide, flight-plan workflow, PDC/DCL discovery behavior, Flow Pro setup, and operating instructions.
