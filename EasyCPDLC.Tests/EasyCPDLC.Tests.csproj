@@ -17,4 +17,9 @@
   <ItemGroup>
     <ProjectReference Include="..\EasyCPDLC\EasyCPDLC.csproj" SetTargetFramework="TargetFramework=$(TargetFramework)" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\EasyCPDLC\GNS430\MSFS2024Companion\MobiFlight\*.mfproj"
+          Link="MobiFlight\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

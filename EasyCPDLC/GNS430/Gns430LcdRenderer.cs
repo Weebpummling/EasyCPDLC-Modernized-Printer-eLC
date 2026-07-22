@@ -1,0 +1,399 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Linq;
+
+namespace EasyCPDLC.GNS430
+{
+    internal sealed class Gns430LcdState
+    {
+        internal Gns430BackendSnapshot Snapshot { get; init; } = new();
+        internal Gns430Page Page { get; init; }
+        internal Gns430PageGroup PageGroup { get; init; }
+        internal bool CursorActive { get; init; }
+        internal int SelectedIndex { get; init; }
+        internal int DetailScrollLine { get; init; }
+        internal int ResponseIndex { get; init; }
+        internal int ZoomLevel { get; init; }
+        internal string LogonCode { get; init; } = "____";
+        internal int LogonCharacter { get; init; }
+        internal string TransientStatus { get; init; } = string.Empty;
+        internal IReadOnlyList<string> MenuItems { get; init; } = Array.Empty<string>();
+    }
+
+    internal static class Gns430LcdRenderer
+    {
+        internal const int Width = 240;
+        internal const int Height = 128;
+
+        // Palette sampled from all 444 display captures in the Pilot's Guide.
+        internal static readonly Color Blue = Color.FromArgb(56, 83, 164);
+        internal static readonly Color Black = Color.FromArgb(4, 7, 7);
+        internal static readonly Color Cyan = Color.FromArgb(110, 205, 221);
+        internal static readonly Color Green = Color.FromArgb(105, 189, 69);
+        internal static readonly Color White = Color.White;
+        internal static readonly Color Yellow = Color.FromArgb(243, 236, 25);
+        internal static readonly Color Magenta = Color.FromArgb(185, 81, 159);
+
+        private const int MainLeft = 57;
+        private const int FooterTop = 119;
+
+        internal static Bitmap Render(Gns430LcdState state)
+        {
+            Bitmap display = new(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(display))
+            {
+                graphics.SmoothingMode = SmoothingMode.None;
+                graphics.PixelOffsetMode = PixelOffsetMode.None;
+                graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                graphics.Clear(Blue);
+            }
+
+            DrawRadioStrip(display, state);
+            switch (state.Page)
+            {
+                case Gns430Page.Status:
+                    DrawStatus(display, state);
+                    break;
+                case Gns430Page.Messages:
+                    DrawMessages(display, state);
+                    break;
+                case Gns430Page.MessageDetail:
+                    DrawMessageDetail(display, state);
+                    break;
+                case Gns430Page.Logon:
+                    DrawLogon(display, state);
+                    break;
+                case Gns430Page.Menu:
+                    DrawStatus(display, state, drawFooter: false);
+                    DrawMenu(display, state);
+                    break;
+                case Gns430Page.Help:
+                    DrawHelp(display, state);
+                    break;
+            }
+
+            DrawFooter(display, state);
+            if (!string.IsNullOrWhiteSpace(state.TransientStatus))
+            {
+                DrawTransient(display, state.TransientStatus);
+            }
+            return display;
+        }
+
+        private static void DrawRadioStrip(Bitmap display, Gns430LcdState state)
+        {
+            Gns430BackendSnapshot snapshot = state.Snapshot;
+            Fill(display, new Rectangle(0, 0, 56, FooterTop), Blue);
+            Line(display, 55, 0, 55, FooterTop - 1, Cyan);
+
+            Text(display, 1, 0, "DLK", Cyan);
+            Text(display, 1, 8, Fit(snapshot.Callsign, 8, "--------"), White);
+            Line(display, 0, 18, 54, 18, Cyan);
+
+            Text(display, 1, 21, "ATC", Cyan);
+            Text(display, 1, 29, Fit(snapshot.CurrentAtcUnit, 8, "----"), Green);
+            Line(display, 0, 39, 54, 39, Cyan);
+
+            Text(display, 1, 42, "LOG", Cyan);
+            Text(display, 1, 50, Fit(snapshot.PendingLogon, 8, "----"), snapshot.Connected ? Green : Yellow);
+            Line(display, 0, 61, 54, 61, Cyan);
+
+            Box(display, new Rectangle(1, 91, 53, 19), Cyan, Black);
+            Gns430BitmapFont.DrawCentered(display, new Rectangle(1, 91, 53, 19), snapshot.Connected ? "ENR" : "STBY", snapshot.Connected ? Green : Yellow);
+        }
+
+        private static void DrawStatus(Bitmap display, Gns430LcdState state, bool drawFooter = true)
+        {
+            Header(display, "DATALINK STATUS");
+            int outbound = state.Snapshot.Messages.Count(message => message.Outbound);
+            int inbound = state.Snapshot.Messages.Count - outbound;
+            bool selectMessages = state.CursorActive && state.SelectedIndex == 0;
+            Text(display, 60, 12, "TX QUEUE", Cyan);
+            DrawField(display, new Rectangle(117, 10, 16, 12), outbound.ToString(), selectMessages);
+            Text(display, 143, 12, "RX QUEUE", Cyan);
+            DrawField(display, new Rectangle(219, 10, 16, 12), inbound.ToString(), selectMessages);
+
+            Text(display, 60, 26, "NETWORK / CONNECTIVITY", Cyan);
+            DrawField(
+                display,
+                new Rectangle(59, 34, 177, 14),
+                state.Snapshot.Connected ? "VATSIM CONNECTED" : "VATSIM STANDBY",
+                state.CursorActive && state.SelectedIndex == 2);
+
+            Text(display, 60, 51, "CPDLC OPERATION", Cyan);
+            string station = Fit(state.Snapshot.CurrentAtcUnit, 8, "NO LOGON");
+            DrawField(
+                display,
+                new Rectangle(59, 59, 177, 14),
+                state.Snapshot.Connected ? "ACTIVE " + station : "LOGON AVAILABLE",
+                state.CursorActive && state.SelectedIndex == 1);
+
+            Text(display, 60, 76, "CALLSIGN / ATC REQUEST", Cyan);
+            string callsign = Fit(state.Snapshot.Callsign, 8, "--------");
+            DrawField(
+                display,
+                new Rectangle(59, 84, 177, 14),
+                callsign + "  SELECT",
+                state.CursorActive && state.SelectedIndex == 3);
+
+            Text(display, 60, 103, state.CursorActive ? "ENT TO ACTIVATE" : "PUSH CRSR FOR OPTIONS", White);
+        }
+
+        private static void DrawField(Bitmap display, Rectangle bounds, string value, bool selected)
+        {
+            Box(display, bounds, selected ? White : Cyan, selected ? White : Black);
+            Text(display, bounds.X + 3, bounds.Y + 3, Fit(value, Math.Max(1, (bounds.Width - 6) / 6), string.Empty), selected ? Black : Green);
+        }
+
+        private static void DrawMessages(Bitmap display, Gns430LcdState state)
+        {
+            Header(display, "DATALINK MESSAGES");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            IReadOnlyList<Gns430MessageSnapshot> messages = state.Snapshot.Messages;
+            if (messages.Count == 0)
+            {
+                Gns430BitmapFont.DrawCentered(display, new Rectangle(59, 10, 178, 105), "NO MESSAGES", Green);
+                return;
+            }
+
+            int first = Math.Max(0, state.SelectedIndex - 5);
+            int visible = 7;
+            for (int index = first; index < Math.Min(messages.Count, first + visible); index++)
+            {
+                int row = index - first;
+                int y = 13 + (row * 14);
+                bool selected = state.CursorActive && index == state.SelectedIndex;
+                Rectangle bounds = new(61, y, 173, 13);
+                if (selected)
+                {
+                    Fill(display, bounds, Green);
+                }
+
+                Gns430MessageSnapshot message = messages[index];
+                string marker = message.Outbound ? ">" : message.Unread ? "*" : "<";
+                string left = marker + " " + Fit(message.Type, 7, "MSG");
+                string right = Fit(message.Station, 6, "----");
+                Text(display, 63, y + 3, left, selected ? Black : Green);
+                TextRight(display, 231, y + 3, right, selected ? Black : Cyan);
+            }
+            ScrollBar(display, first, messages.Count, visible);
+        }
+
+        private static void DrawMessageDetail(Bitmap display, Gns430LcdState state)
+        {
+            Header(display, "MESSAGES");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            Gns430MessageSnapshot message = SelectedMessage(state);
+            if (message == null)
+            {
+                Text(display, 64, 18, "NO MESSAGE SELECTED", Green);
+                return;
+            }
+
+            Text(display, 63, 13, (message.Outbound ? "SENT " : "RECEIVED ") + Fit(message.Station, 7, "----"), Cyan);
+            Line(display, 61, 22, 234, 22, Cyan);
+            List<string> lines = Gns430Form.WrapText(Gns430Form.CollapseWhitespace(message.Text), state.ZoomLevel == 2 ? 24 : 28);
+            int visibleLines = message.Responses.Count > 0 ? 8 : 10;
+            int first = Math.Clamp(state.DetailScrollLine, 0, Math.Max(0, lines.Count - visibleLines));
+            for (int index = first; index < Math.Min(lines.Count, first + visibleLines); index++)
+            {
+                Text(display, 63, 26 + ((index - first) * 9), Fit(lines[index], 28, string.Empty), Green);
+            }
+
+            if (message.Responses.Count > 0)
+            {
+                string response = message.Responses[Math.Clamp(state.ResponseIndex, 0, message.Responses.Count - 1)];
+                Rectangle responseBox = new(87, 101, 120, 12);
+                Box(display, responseBox, White, state.CursorActive ? White : Black);
+                Gns430BitmapFont.DrawCentered(display, responseBox, Fit(response, 18, string.Empty), state.CursorActive ? Black : Green);
+            }
+        }
+
+        private static void DrawLogon(Bitmap display, Gns430LcdState state)
+        {
+            Header(display, "SELECT LOGON FACILITY");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            Text(display, 66, 18, "IDENT", Cyan);
+
+            string code = (state.LogonCode ?? "____").PadRight(4, '_').Substring(0, 4);
+            for (int index = 0; index < 4; index++)
+            {
+                Rectangle character = new(105 + (index * 18), 31, 15, 15);
+                bool selected = state.CursorActive && state.LogonCharacter == index;
+                Box(display, character, White, selected ? White : Black);
+                Gns430BitmapFont.DrawCentered(display, character, code[index].ToString(), selected ? Black : Green);
+            }
+
+            Line(display, 61, 54, 234, 54, Cyan);
+            Text(display, 66, 61, "CURRENT", Cyan);
+            TextRight(display, 230, 61, Fit(state.Snapshot.CurrentAtcUnit, 8, "NONE"), Green);
+            Text(display, 66, 77, "PENDING", Cyan);
+            TextRight(display, 230, 77, Fit(state.Snapshot.PendingLogon, 8, "NONE"), Yellow);
+            Text(display, 66, 96, "ENT TO ACTIVATE", White);
+        }
+
+        private static void DrawMenu(Bitmap display, Gns430LcdState state)
+        {
+            Rectangle shadow = new(77, 28, 151, 82);
+            Dither(display, shadow, White, Blue);
+            Rectangle menu = new(72, 23, 151, 82);
+            Box(display, menu, White, Blue);
+            Box(display, new Rectangle(75, 26, 145, 11), Cyan, Blue);
+            Gns430BitmapFont.DrawCentered(display, new Rectangle(75, 26, 145, 11), "PAGE MENU", Cyan);
+
+            int first = Math.Max(0, state.SelectedIndex - 5);
+            for (int index = first; index < Math.Min(state.MenuItems.Count, first + 7); index++)
+            {
+                int row = index - first;
+                int y = 40 + (row * 9);
+                bool selected = index == state.SelectedIndex;
+                if (selected)
+                {
+                    Fill(display, new Rectangle(76, y - 1, 141, 9), White);
+                }
+                Text(display, 78, y, Fit(state.MenuItems[index], 22, string.Empty), selected ? Black : White);
+            }
+        }
+
+        private static void DrawHelp(Bitmap display, Gns430LcdState state)
+        {
+            Header(display, "UTILITY");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            string[] items =
+            {
+                "INPUT CONFIGURATION",
+                "PRIVATE MSFS MODULE",
+                "MOBIFLIGHT PROFILE",
+                "FOCUSED KEYBOARD",
+                "NO GPS EVENTS",
+                "RETURN TO DATALINK"
+            };
+            for (int index = 0; index < items.Length; index++)
+            {
+                bool selected = state.CursorActive && state.SelectedIndex == index;
+                int y = 16 + (index * 15);
+                if (selected)
+                {
+                    Fill(display, new Rectangle(62, y - 2, 172, 12), Green);
+                }
+                Text(display, 64, y, items[index], selected ? Black : Green);
+            }
+        }
+
+        private static void Header(Bitmap display, string title)
+        {
+            Fill(display, new Rectangle(MainLeft, 0, Width - MainLeft, 9), Blue);
+            Gns430BitmapFont.DrawCentered(display, new Rectangle(MainLeft, 0, Width - MainLeft, 9), title, White);
+        }
+
+        private static void DrawFooter(Bitmap display, Gns430LcdState state)
+        {
+            Fill(display, new Rectangle(0, FooterTop, Width, Height - FooterTop), Black);
+            Text(display, 2, 120, "GPS", Green);
+            bool unread = state.Snapshot.Messages.Any(message => message.Unread);
+            Text(display, 58, 120, unread ? "MSG" : state.CursorActive ? "CRSR" : string.Empty, unread ? Yellow : Green);
+
+            string group = state.PageGroup.ToString().ToUpperInvariant();
+            int groupX = 219 - Gns430BitmapFont.Measure(group);
+            int pageCount = Gns430Form.PagesForGroup(state.PageGroup).Length;
+            Gns430Page[] pages = Gns430Form.PagesForGroup(state.PageGroup);
+            int current = Math.Max(0, Array.IndexOf(pages, state.Page));
+            int squaresX = groupX - (pageCount * 5) - 3;
+            for (int index = 0; index < pageCount; index++)
+            {
+                Rectangle square = new(squaresX + (index * 5), 121, 4, 6);
+                Box(display, square, White, index == current ? White : Blue);
+            }
+            Text(display, groupX, 120, group, White);
+        }
+
+        private static void DrawTransient(Bitmap display, string text)
+        {
+            Rectangle popup = new(76, 94, 144, 18);
+            Box(display, popup, White, Black);
+            Gns430BitmapFont.DrawCentered(display, popup, Fit(text, 22, string.Empty), Green);
+        }
+
+        private static Gns430MessageSnapshot SelectedMessage(Gns430LcdState state)
+        {
+            return state.Snapshot.Messages.Count == 0
+                ? null
+                : state.Snapshot.Messages[Math.Clamp(state.SelectedIndex, 0, state.Snapshot.Messages.Count - 1)];
+        }
+
+        private static void ScrollBar(Bitmap display, int first, int total, int visible)
+        {
+            if (total <= visible)
+            {
+                return;
+            }
+            Line(display, 235, 13, 235, 109, White);
+            int height = Math.Max(8, (96 * visible) / total);
+            int travel = 96 - height;
+            int y = 13 + ((travel * first) / Math.Max(1, total - visible));
+            Fill(display, new Rectangle(234, y, 3, height), Cyan);
+        }
+
+        private static void DrawRightArrow(Bitmap display, int x, int y, Color color)
+        {
+            Line(display, x, y, x + 9, y, color);
+            Line(display, x + 9, y, x + 6, y - 3, color);
+            Line(display, x + 9, y, x + 6, y + 3, color);
+        }
+
+        private static void Text(Bitmap display, int x, int y, string value, Color color)
+        {
+            Gns430BitmapFont.Draw(display, x, y, value ?? string.Empty, color);
+        }
+
+        private static void TextRight(Bitmap display, int right, int y, string value, Color color)
+        {
+            string text = value ?? string.Empty;
+            Text(display, right - Gns430BitmapFont.Measure(text), y, text, color);
+        }
+
+        private static string Fit(string value, int length, string fallback)
+        {
+            string clean = string.IsNullOrWhiteSpace(value) ? fallback : Gns430Form.CollapseWhitespace(value).ToUpperInvariant();
+            return clean.Length <= length ? clean : clean.Substring(0, length);
+        }
+
+        private static void Box(Bitmap display, Rectangle bounds, Color outline, Color fill)
+        {
+            Fill(display, bounds, fill);
+            using Graphics graphics = Graphics.FromImage(display);
+            graphics.SmoothingMode = SmoothingMode.None;
+            using Pen pen = new(outline, 1);
+            graphics.DrawRectangle(pen, bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+        }
+
+        private static void Fill(Bitmap display, Rectangle bounds, Color color)
+        {
+            using Graphics graphics = Graphics.FromImage(display);
+            graphics.SmoothingMode = SmoothingMode.None;
+            using Brush brush = new SolidBrush(color);
+            graphics.FillRectangle(brush, bounds);
+        }
+
+        private static void Line(Bitmap display, int x1, int y1, int x2, int y2, Color color)
+        {
+            using Graphics graphics = Graphics.FromImage(display);
+            graphics.SmoothingMode = SmoothingMode.None;
+            using Pen pen = new(color, 1);
+            graphics.DrawLine(pen, x1, y1, x2, y2);
+        }
+
+        private static void Dither(Bitmap display, Rectangle bounds, Color first, Color second)
+        {
+            for (int y = bounds.Top; y < bounds.Bottom; y++)
+            {
+                for (int x = bounds.Left; x < bounds.Right; x++)
+                {
+                    display.SetPixel(x, y, ((x + y) & 1) == 0 ? first : second);
+                }
+            }
+        }
+    }
+}

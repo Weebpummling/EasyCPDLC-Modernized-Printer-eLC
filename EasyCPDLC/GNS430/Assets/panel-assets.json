@@ -1,0 +1,220 @@
+{
+  "source_url": "https://www.ftav.com/products/part-011_00280_10.html",
+  "source_note": "Fieldtech Avionics product photograph; derived assets are retained for the user's personal simulator interface.",
+  "panel_size": [
+    960,
+    407
+  ],
+  "screen_rect": [
+    230,
+    52,
+    753,
+    334
+  ],
+  "controls": {
+    "com_flip": {
+      "bounds": [
+        153,
+        51,
+        207,
+        121
+      ],
+      "states": {
+        "normal": "controls/com_flip-normal.png",
+        "pressed": "controls/com_flip-pressed.png"
+      }
+    },
+    "vloc_flip": {
+      "bounds": [
+        153,
+        132,
+        207,
+        204
+      ],
+      "states": {
+        "normal": "controls/vloc_flip-normal.png",
+        "pressed": "controls/vloc_flip-pressed.png"
+      }
+    },
+    "range": {
+      "bounds": [
+        781,
+        40,
+        932,
+        94
+      ],
+      "states": {
+        "normal": "controls/range-normal.png",
+        "pressed": "controls/range-pressed.png",
+        "decrease-pressed": "controls/range-decrease-pressed.png",
+        "increase-pressed": "controls/range-increase-pressed.png"
+      }
+    },
+    "direct_to": {
+      "bounds": [
+        779,
+        94,
+        855,
+        147
+      ],
+      "states": {
+        "normal": "controls/direct_to-normal.png",
+        "pressed": "controls/direct_to-pressed.png"
+      }
+    },
+    "menu": {
+      "bounds": [
+        856,
+        94,
+        932,
+        147
+      ],
+      "states": {
+        "normal": "controls/menu-normal.png",
+        "pressed": "controls/menu-pressed.png"
+      }
+    },
+    "clear": {
+      "bounds": [
+        779,
+        151,
+        855,
+        206
+      ],
+      "states": {
+        "normal": "controls/clear-normal.png",
+        "pressed": "controls/clear-pressed.png"
+      }
+    },
+    "enter": {
+      "bounds": [
+        856,
+        151,
+        932,
+        206
+      ],
+      "states": {
+        "normal": "controls/enter-normal.png",
+        "pressed": "controls/enter-pressed.png"
+      }
+    },
+    "cdi": {
+      "bounds": [
+        243,
+        343,
+        325,
+        393
+      ],
+      "states": {
+        "normal": "controls/cdi-normal.png",
+        "pressed": "controls/cdi-pressed.png"
+      }
+    },
+    "obs": {
+      "bounds": [
+        350,
+        343,
+        433,
+        393
+      ],
+      "states": {
+        "normal": "controls/obs-normal.png",
+        "pressed": "controls/obs-pressed.png"
+      }
+    },
+    "msg": {
+      "bounds": [
+        457,
+        343,
+        541,
+        393
+      ],
+      "states": {
+        "normal": "controls/msg-normal.png",
+        "pressed": "controls/msg-pressed.png"
+      }
+    },
+    "fpl": {
+      "bounds": [
+        567,
+        343,
+        651,
+        393
+      ],
+      "states": {
+        "normal": "controls/fpl-normal.png",
+        "pressed": "controls/fpl-pressed.png"
+      }
+    },
+    "proc": {
+      "bounds": [
+        674,
+        343,
+        762,
+        393
+      ],
+      "states": {
+        "normal": "controls/proc-normal.png",
+        "pressed": "controls/proc-pressed.png"
+      }
+    },
+    "left_small_top": {
+      "bounds": [
+        29,
+        25,
+        118,
+        114
+      ],
+      "states": {
+        "normal": "controls/left_small_top-normal.png",
+        "ccw": "controls/left_small_top-ccw.png",
+        "cw": "controls/left_small_top-cw.png"
+      }
+    },
+    "left_small_bottom": {
+      "bounds": [
+        29,
+        106,
+        118,
+        195
+      ],
+      "states": {
+        "normal": "controls/left_small_bottom-normal.png",
+        "ccw": "controls/left_small_bottom-ccw.png",
+        "cw": "controls/left_small_bottom-cw.png"
+      }
+    },
+    "left_encoder": {
+      "bounds": [
+        2,
+        248,
+        158,
+        406
+      ],
+      "states": {
+        "normal": "controls/left_encoder-normal.png",
+        "pushed": "controls/left_encoder-pushed.png",
+        "large-ccw": "controls/left_encoder-large-ccw.png",
+        "large-cw": "controls/left_encoder-large-cw.png",
+        "small-ccw": "controls/left_encoder-small-ccw.png",
+        "small-cw": "controls/left_encoder-small-cw.png"
+      }
+    },
+    "right_encoder": {
+      "bounds": [
+        799,
+        246,
+        957,
+        406
+      ],
+      "states": {
+        "normal": "controls/right_encoder-normal.png",
+        "pushed": "controls/right_encoder-pushed.png",
+        "large-ccw": "controls/right_encoder-large-ccw.png",
+        "large-cw": "controls/right_encoder-large-cw.png",
+        "small-ccw": "controls/right_encoder-small-ccw.png",
+        "small-cw": "controls/right_encoder-small-cw.png"
+      }
+    }
+  }
+}

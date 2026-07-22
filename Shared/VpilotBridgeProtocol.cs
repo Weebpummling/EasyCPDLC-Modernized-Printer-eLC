@@ -8,6 +8,7 @@ namespace EasyCPDLC.VPilotBridge.Protocol
     {
         Unknown,
         PrivateMessage,
+        ContactMe,
         NetworkConnected,
         NetworkDisconnected,
         SendPrivateMessage,
@@ -22,12 +23,14 @@ namespace EasyCPDLC.VPilotBridge.Protocol
         public string Callsign { get; set; } = string.Empty;
         public string Peer { get; set; } = string.Empty;
         public string Message { get; set; } = string.Empty;
+        public string Facility { get; set; } = string.Empty;
+        public string Frequency { get; set; } = string.Empty;
     }
 
     public static class VpilotBridgeProtocol
     {
         public const string PipeName = "EasyCPDLC.VPilotBridge.v1";
-        private const string Version = "V1";
+        private const string Version = "V2";
         private const int MaximumLineLength = 65536;
 
         public static string Encode(VpilotBridgePacket packet)
@@ -49,7 +52,9 @@ namespace EasyCPDLC.VPilotBridge.Protocol
                 timestamp.Ticks.ToString(CultureInfo.InvariantCulture),
                 ToBase64(packet.Callsign),
                 ToBase64(packet.Peer),
-                ToBase64(packet.Message));
+                ToBase64(packet.Message),
+                ToBase64(packet.Facility),
+                ToBase64(packet.Frequency));
         }
 
         public static bool TryDecode(string line, out VpilotBridgePacket packet)
@@ -61,7 +66,9 @@ namespace EasyCPDLC.VPilotBridge.Protocol
             }
 
             string[] fields = line.Split('|');
-            if (fields.Length != 7 || !string.Equals(fields[0], Version, StringComparison.Ordinal))
+            bool isV1 = fields.Length == 7 && string.Equals(fields[0], "V1", StringComparison.Ordinal);
+            bool isV2 = fields.Length == 9 && string.Equals(fields[0], Version, StringComparison.Ordinal);
+            if (!isV1 && !isV2)
             {
                 return false;
             }
@@ -83,7 +90,9 @@ namespace EasyCPDLC.VPilotBridge.Protocol
                     TimestampUtc = new DateTime(ticks, DateTimeKind.Utc),
                     Callsign = FromBase64(fields[4]),
                     Peer = FromBase64(fields[5]),
-                    Message = FromBase64(fields[6])
+                    Message = FromBase64(fields[6]),
+                    Facility = isV2 ? FromBase64(fields[7]) : string.Empty,
+                    Frequency = isV2 ? FromBase64(fields[8]) : string.Empty
                 };
                 return true;
             }
@@ -99,6 +108,7 @@ namespace EasyCPDLC.VPilotBridge.Protocol
             switch (kind)
             {
                 case VpilotBridgePacketKind.PrivateMessage: return "PRIVATE";
+                case VpilotBridgePacketKind.ContactMe: return "CONTACT_ME";
                 case VpilotBridgePacketKind.NetworkConnected: return "CONNECTED";
                 case VpilotBridgePacketKind.NetworkDisconnected: return "DISCONNECTED";
                 case VpilotBridgePacketKind.SendPrivateMessage: return "SEND_PRIVATE";
@@ -112,6 +122,7 @@ namespace EasyCPDLC.VPilotBridge.Protocol
             switch ((token ?? string.Empty).Trim().ToUpperInvariant())
             {
                 case "PRIVATE": return VpilotBridgePacketKind.PrivateMessage;
+                case "CONTACT_ME": return VpilotBridgePacketKind.ContactMe;
                 case "CONNECTED": return VpilotBridgePacketKind.NetworkConnected;
                 case "DISCONNECTED": return VpilotBridgePacketKind.NetworkDisconnected;
                 case "SEND_PRIVATE": return VpilotBridgePacketKind.SendPrivateMessage;

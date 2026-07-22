@@ -19,6 +19,7 @@
       <Private>false</Private>
     </Reference>
     <Compile Include="..\Shared\VpilotBridgeProtocol.cs" Link="Protocol\VpilotBridgeProtocol.cs" />
+    <Compile Include="..\Shared\VpilotContactMeParser.cs" Link="Protocol\VpilotContactMeParser.cs" />
   </ItemGroup>
 
   <Target Name="ValidateVPilotPluginApi" BeforeTargets="ResolveReferences">

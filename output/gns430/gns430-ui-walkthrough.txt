@@ -1,0 +1,14 @@
+GNS 430 interaction walkthrough
+PASS  LCD is rendered at the GNS 430 native 240 x 128 resolution
+PASS  LCD colors use the sampled Garmin guide palette
+PASS  Manual reference library includes 479 UI image instances
+PASS  Photo-derived frame, button, rocker, and encoder artwork is embedded
+PASS  Button presses replace the normal artwork with a depressed state
+PASS  Encoder commands replace the normal artwork with direction-specific states
+PASS  Large-right clockwise changes NAV group to WPT/Logon
+PASS  Large-right clockwise changes WPT group to AUX
+PASS  Small-right clockwise changes page inside NAV group
+PASS  Small-right edits the selected logon character
+PASS  Large-right advances the logon character cursor
+PASS  Large-right scrolls a message list when CRSR is active
+PASS  Small-right changes the selected CPDLC response

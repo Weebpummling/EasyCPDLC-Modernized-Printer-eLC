@@ -91,4 +91,4 @@ if ($sourceHash -ne $installedHash) {
 
 Write-Host "Installed EasyCPDLC.VPilotBridge.dll to '$destination'."
 Write-Host "SHA-256: $installedHash"
-Write-Host 'Start vPilot, enter .debug, and confirm that EasyCPDLC vPilot PDC Bridge loaded.'
+Write-Host 'Start vPilot, enter .debug, and confirm that EasyCPDLC vPilot Bridge loaded.'
