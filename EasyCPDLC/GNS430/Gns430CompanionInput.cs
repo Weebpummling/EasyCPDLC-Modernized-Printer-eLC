@@ -1,6 +1,10 @@
 using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace EasyCPDLC.GNS430
 {
@@ -19,6 +23,8 @@ namespace EasyCPDLC.GNS430
         private const uint ClientDataPeriodOnSet = 3;
         private const uint ClientDataRequestChanged = 1;
         private const int ClientDataPayloadOffset = 40;
+        private const uint CommBusBroadcastToJs = 1;
+        private const string DisplayCommBusEvent = "EasyCPDLC.DTL430.Display.v1";
 
         private readonly DispatchProc dispatchProc;
         private IntPtr connection;
@@ -26,6 +32,8 @@ namespace EasyCPDLC.GNS430
         private uint statusSequence;
         private DateTime lastModulePacketUtc = DateTime.MinValue;
         private DateTime lastStatusSentUtc = DateTime.MinValue;
+        private DateTime lastDisplaySentUtc = DateTime.MinValue;
+        private string lastDisplayPayload = string.Empty;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct SimConnectRecv
@@ -102,6 +110,14 @@ namespace EasyCPDLC.GNS430
 
         [DllImport("SimConnect.dll", CallingConvention = CallingConvention.StdCall)]
         private static extern int SimConnect_CallDispatch(IntPtr handle, DispatchProc callback, IntPtr context);
+
+        [DllImport("SimConnect.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+        private static extern int SimConnect_CallCommBusEvent(
+            IntPtr handle,
+            string eventName,
+            uint broadcastTo,
+            uint bufferSize,
+            byte[] data);
 
         internal Gns430CompanionInput()
         {
@@ -266,6 +282,51 @@ namespace EasyCPDLC.GNS430
             }
         }
 
+        internal void UpdateDisplay(Bitmap display)
+        {
+            if (!Enabled || display == null)
+            {
+                return;
+            }
+
+            try
+            {
+                using MemoryStream stream = new();
+                display.Save(stream, ImageFormat.Png);
+                string image = Convert.ToBase64String(stream.ToArray());
+                if (string.Equals(image, lastDisplayPayload, StringComparison.Ordinal) &&
+                    DateTime.UtcNow - lastDisplaySentUtc < TimeSpan.FromSeconds(1))
+                {
+                    return;
+                }
+
+                string json =
+                    "{\"version\":1,\"width\":240,\"height\":128,\"png\":\"data:image/png;base64," +
+                    image +
+                    "\"}";
+                byte[] payload = Encoding.UTF8.GetBytes(json + "\0");
+                if (SimConnect_CallCommBusEvent(
+                    connection,
+                    DisplayCommBusEvent,
+                    CommBusBroadcastToJs,
+                    (uint)payload.Length,
+                    payload) < 0)
+                {
+                    Status = "DISPLAY ERROR";
+                }
+                else
+                {
+                    lastDisplayPayload = image;
+                    lastDisplaySentUtc = DateTime.UtcNow;
+                }
+            }
+            catch
+            {
+                Disable();
+                Status = "LOST";
+            }
+        }
+
         private void Dispatch(IntPtr data, uint dataSize, IntPtr context)
         {
             int packetSize = Marshal.SizeOf<Gns430CompanionCommandPacket>();
@@ -317,6 +378,8 @@ namespace EasyCPDLC.GNS430
 
             connection = IntPtr.Zero;
             lastModulePacketUtc = DateTime.MinValue;
+            lastDisplaySentUtc = DateTime.MinValue;
+            lastDisplayPayload = string.Empty;
             Status = "OFF";
         }
 

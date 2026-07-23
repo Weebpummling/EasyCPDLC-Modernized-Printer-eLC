@@ -342,3 +342,7 @@ healthchecksdb
 # Locally generated GNS 430 Pilot's Guide reference sheets.
 # These are design-analysis output and are not redistributed with the mod.
 output/gns430-reference/
+
+# Locally generated simulator packages.
+EasyCPDLC/GNS430/MSFS2024Companion/BuiltPackage/
+EasyCPDLC/GNS430/MSFS2024AircraftPackage/BuiltPackage/

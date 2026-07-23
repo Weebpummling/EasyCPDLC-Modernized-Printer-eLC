@@ -18,18 +18,26 @@ The normal EasyCPDLC publish output includes the importable GNS and DCDU project
 
 This module is not an aircraft ACARS adapter. Hoppie and future aircraft-inbox routing are documented in `docs/HOPPIE-AIRCRAFT-ACARS-ROUTING.md`.
 
-## Build requirement
+## Build
 
-The Microsoft Flight Simulator 2024 SDK is not installed on this development machine, so a `.wasm` binary cannot be produced or runtime-tested here yet. Do not hand-create the package/project XML: use the official SDK's **StandaloneModule** sample as the verified package shell.
+The installed MSFS 2024 SDK toolchain at `C:\MSFS 2024 SDK` can build the
+standalone module without Visual Studio:
 
-1. Install the current MSFS 2024 SDK and its samples.
-2. Copy `Samples/DevmodeProjects/Misc/StandaloneModule` to a new working folder.
-3. In its `Sources/Code` project, replace the sample module source with `Sources/EasyCpdclCompanion.cpp` and add `Sources/EasyCpdclCompanionProtocol.h`.
-4. Keep the MSFS 2024 platform toolset and `MSFS_WasmVersions.a` configuration supplied by the sample.
-5. Change the module output name to `easycpdlc-companion.wasm`, build it, and let the official Project Editor generate the package metadata.
-6. Copy the built package folder to the MSFS 2024 Community folder and restart the simulator.
+```powershell
+.\Build-Wasm.ps1
+```
 
-The current SDK documents standalone modules as automatically loaded when their package is mounted. Using the official sample avoids brittle, hand-authored package XML and gives DevMode the correct `WasmModule` asset group.
+The script compiles with the SDK's WASI `clang-cl`, links
+`MSFS_WasmVersions.a`, exports the standalone module entry points, validates
+the WASM magic, and creates this ready-to-install package:
+
+```text
+BuiltPackage\easycpdlc-companion
+```
+
+Copy that directory into the MSFS 2024 Community folder and restart the
+simulator. The package contains only `modules/easycpdlc-companion.wasm` plus
+its manifest/layout metadata.
 
 ## Commands
 

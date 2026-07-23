@@ -1,12 +1,25 @@
 #include "EasyCpdclCompanionProtocol.h"
 
 #include <MSFS/MSFS.h>
-#include <MSFS/MSFS_Vars.h>
+#if defined(__wasm__)
+typedef long long __int64;
+#endif
+#include <MSFS/MSFS_WindowsTypes.h>
 #include <SimConnect.h>
 
 #include <cstdio>
 #include <cstddef>
 #include <cstring>
+
+extern "C"
+{
+    // This legacy ABI is available to standalone modules in both simulator
+    // generations. The newer fsVars imports are not exposed by every MSFS 2024
+    // standalone-module host.
+    std::int32_t register_named_variable(const char* name);
+    double get_named_variable_value(std::int32_t id);
+    void set_named_variable_value(std::int32_t id, double value);
+}
 
 namespace
 {
@@ -27,63 +40,69 @@ namespace
         StatusRequestId = 1
     };
 
-    HANDLE g_simConnect = nullptr;
+    enum EventId : DWORD
+    {
+        OneSecondEventId = 100
+    };
+
+    HANDLE g_simConnect = 0;
     std::uint32_t g_commandSequence = 0;
     float g_heartbeatSeconds = 0.0f;
     float g_statusAgeSeconds = 1000.0f;
-    FsUnitId g_numberUnit = -1;
-    FsLVarId g_command = FS_VAR_INVALID_ID;
-    FsLVarId g_moduleAlive = FS_VAR_INVALID_ID;
-    FsLVarId g_appConnected = FS_VAR_INVALID_ID;
-    FsLVarId g_vatsimConnected = FS_VAR_INVALID_ID;
-    FsLVarId g_unreadCount = FS_VAR_INVALID_ID;
-    FsLVarId g_page = FS_VAR_INVALID_ID;
-    FsLVarId g_cursorActive = FS_VAR_INVALID_ID;
-    FsLVarId g_dcduModeLVar = FS_VAR_INVALID_ID;
+    using LVarId = std::int32_t;
+    constexpr LVarId InvalidLVarId = -1;
+    LVarId g_command = InvalidLVarId;
+    LVarId g_moduleAlive = InvalidLVarId;
+    LVarId g_appConnected = InvalidLVarId;
+    LVarId g_vatsimConnected = InvalidLVarId;
+    LVarId g_unreadCount = InvalidLVarId;
+    LVarId g_page = InvalidLVarId;
+    LVarId g_cursorActive = InvalidLVarId;
+    LVarId g_dcduModeLVar = InvalidLVarId;
     bool g_dcduMode = false;
 
     struct DcduInput
     {
         const char* name;
         std::uint32_t command;
-        FsLVarId id;
+        LVarId id;
     };
 
     DcduInput g_dcduInputs[] =
     {
-        { "EASYCPDLC_DCDU_LSK_L1", 19, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_L2", 20, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_L3", 21, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_L4", 22, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_L5", 23, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_L6", 24, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_R1", 25, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_R2", 26, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_R3", 27, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_R4", 28, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_R5", 29, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_LSK_R6", 30, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_CONNECT", 31, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_AOC", 32, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_ATC", 33, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_SETTINGS", 34, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_RELOAD", 35, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_PRINT", 36, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_REPRINT", 37, FS_VAR_INVALID_ID },
-        { "EASYCPDLC_DCDU_HIDE", 38, FS_VAR_INVALID_ID }
+        { "EASYCPDLC_DCDU_LSK_L1", 19, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_L2", 20, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_L3", 21, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_L4", 22, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_L5", 23, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_L6", 24, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_R1", 25, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_R2", 26, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_R3", 27, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_R4", 28, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_R5", 29, InvalidLVarId },
+        { "EASYCPDLC_DCDU_LSK_R6", 30, InvalidLVarId },
+        { "EASYCPDLC_DCDU_CONNECT", 31, InvalidLVarId },
+        { "EASYCPDLC_DCDU_AOC", 32, InvalidLVarId },
+        { "EASYCPDLC_DCDU_ATC", 33, InvalidLVarId },
+        { "EASYCPDLC_DCDU_SETTINGS", 34, InvalidLVarId },
+        { "EASYCPDLC_DCDU_RELOAD", 35, InvalidLVarId },
+        { "EASYCPDLC_DCDU_PRINT", 36, InvalidLVarId },
+        { "EASYCPDLC_DCDU_REPRINT", 37, InvalidLVarId },
+        { "EASYCPDLC_DCDU_HIDE", 38, InvalidLVarId }
     };
 
-    void SetLVar(FsLVarId id, double value)
+    void SetLVar(LVarId id, double value)
     {
-        if (id != FS_VAR_INVALID_ID && g_numberUnit >= 0)
+        if (id != InvalidLVarId)
         {
-            fsVarsLVarSet(id, g_numberUnit, value);
+            set_named_variable_value(id, value);
         }
     }
 
     void PublishCommand(std::uint32_t command)
     {
-        if (g_simConnect == nullptr)
+        if (g_simConnect == 0)
         {
             return;
         }
@@ -135,31 +154,47 @@ namespace
         SetLVar(g_page, static_cast<double>(packet.page));
     }
 
+    void ProcessTick(float elapsed);
+
     void CALLBACK Dispatch(SIMCONNECT_RECV* data, DWORD size, void*)
     {
-        if (data == nullptr || data->dwID != SIMCONNECT_RECV_ID_CLIENT_DATA)
+        if (data == nullptr)
         {
             return;
         }
 
-        const auto* received = reinterpret_cast<const SIMCONNECT_RECV_CLIENT_DATA*>(data);
-        constexpr std::size_t payloadOffset = offsetof(SIMCONNECT_RECV_CLIENT_DATA, dwData);
-        if (received->dwRequestID != StatusRequestId || size < payloadOffset + sizeof(easycpdlc::StatusPacket))
+        if (data->dwID == SIMCONNECT_RECV_ID_CLIENT_DATA)
         {
+            const auto* received = reinterpret_cast<const SIMCONNECT_RECV_CLIENT_DATA*>(data);
+            constexpr std::size_t payloadOffset = offsetof(SIMCONNECT_RECV_CLIENT_DATA, dwData);
+            if (received->dwRequestID != StatusRequestId ||
+                size < payloadOffset + sizeof(easycpdlc::StatusPacket))
+            {
+                return;
+            }
+
+            easycpdlc::StatusPacket packet{};
+            std::memcpy(&packet, &received->dwData, sizeof(packet));
+            ApplyStatus(packet);
             return;
         }
 
-        easycpdlc::StatusPacket packet{};
-        std::memcpy(&packet, &received->dwData, sizeof(packet));
-        ApplyStatus(packet);
+        if (data->dwID == SIMCONNECT_RECV_ID_EVENT)
+        {
+            const auto* eventData = reinterpret_cast<const SIMCONNECT_RECV_EVENT*>(data);
+            if (eventData->uEventID == OneSecondEventId)
+            {
+                ProcessTick(1.0f);
+            }
+        }
     }
 
     bool OpenClientDataChannels()
     {
-        if (SimConnect_Open(&g_simConnect, "EasyCPDLC MSFS 2024 companion", nullptr, 0, nullptr, 0) < 0 ||
-            g_simConnect == nullptr)
+        if (SimConnect_Open(&g_simConnect, "EasyCPDLC MSFS 2024 companion", 0, 0, 0, 0) < 0 ||
+            g_simConnect == 0)
         {
-            g_simConnect = nullptr;
+            g_simConnect = 0;
             return false;
         }
 
@@ -169,7 +204,7 @@ namespace
             SimConnect_AddToClientDataDefinition(g_simConnect, StatusDefinitionId, 0, sizeof(easycpdlc::StatusPacket)) < 0)
         {
             SimConnect_Close(g_simConnect);
-            g_simConnect = nullptr;
+            g_simConnect = 0;
             return false;
         }
 
@@ -187,7 +222,18 @@ namespace
             SIMCONNECT_CLIENT_DATA_REQUEST_FLAG_CHANGED) < 0)
         {
             SimConnect_Close(g_simConnect);
-            g_simConnect = nullptr;
+            g_simConnect = 0;
+            return false;
+        }
+
+        if (SimConnect_SubscribeToSystemEvent(
+                g_simConnect,
+                OneSecondEventId,
+                "1sec") < 0 ||
+            SimConnect_CallDispatch(g_simConnect, Dispatch, nullptr) < 0)
+        {
+            SimConnect_Close(g_simConnect);
+            g_simConnect = 0;
             return false;
         }
 
@@ -196,18 +242,17 @@ namespace
 
     void RegisterLVars()
     {
-        g_numberUnit = fsVarsGetUnitId("Number");
-        g_command = fsVarsRegisterLVar(easycpdlc::kCommandLVar);
-        g_moduleAlive = fsVarsRegisterLVar(easycpdlc::kModuleAliveLVar);
-        g_appConnected = fsVarsRegisterLVar(easycpdlc::kAppConnectedLVar);
-        g_vatsimConnected = fsVarsRegisterLVar(easycpdlc::kVatsimConnectedLVar);
-        g_unreadCount = fsVarsRegisterLVar(easycpdlc::kUnreadCountLVar);
-        g_page = fsVarsRegisterLVar(easycpdlc::kPageLVar);
-        g_cursorActive = fsVarsRegisterLVar(easycpdlc::kCursorActiveLVar);
-        g_dcduModeLVar = fsVarsRegisterLVar(easycpdlc::kDcduModeLVar);
+        g_command = register_named_variable(easycpdlc::kCommandLVar);
+        g_moduleAlive = register_named_variable(easycpdlc::kModuleAliveLVar);
+        g_appConnected = register_named_variable(easycpdlc::kAppConnectedLVar);
+        g_vatsimConnected = register_named_variable(easycpdlc::kVatsimConnectedLVar);
+        g_unreadCount = register_named_variable(easycpdlc::kUnreadCountLVar);
+        g_page = register_named_variable(easycpdlc::kPageLVar);
+        g_cursorActive = register_named_variable(easycpdlc::kCursorActiveLVar);
+        g_dcduModeLVar = register_named_variable(easycpdlc::kDcduModeLVar);
         for (auto& input : g_dcduInputs)
         {
-            input.id = fsVarsRegisterLVar(input.name);
+            input.id = register_named_variable(input.name);
         }
 
         SetLVar(g_command, 0.0);
@@ -220,6 +265,61 @@ namespace
         SetLVar(g_dcduModeLVar, 0.0);
         ClearDcduInputs();
     }
+
+    void ProcessTick(float elapsed)
+    {
+        if (g_simConnect == 0)
+        {
+            return;
+        }
+
+        g_heartbeatSeconds += elapsed;
+        g_statusAgeSeconds += elapsed;
+
+        const double commandValue = get_named_variable_value(g_command);
+        if (commandValue != 0.0)
+        {
+            SetLVar(g_command, 0.0);
+            const auto command = static_cast<std::uint32_t>(commandValue + 0.5);
+            if (!g_dcduMode && command >= 1 && command <= 18)
+            {
+                PublishCommand(command);
+            }
+        }
+
+        if (g_dcduMode)
+        {
+            for (auto& input : g_dcduInputs)
+            {
+                const double value = get_named_variable_value(input.id);
+                if (value != 0.0)
+                {
+                    SetLVar(input.id, 0.0);
+                    PublishCommand(input.command);
+                }
+            }
+        }
+        else
+        {
+            ClearDcduInputs();
+        }
+
+        if (g_heartbeatSeconds >= 1.0f)
+        {
+            g_heartbeatSeconds = 0.0f;
+            PublishCommand(0);
+            SetLVar(g_moduleAlive, 1.0);
+        }
+
+        if (g_statusAgeSeconds >= 3.0f)
+        {
+            SetLVar(g_appConnected, 0.0);
+            SetLVar(g_vatsimConnected, 0.0);
+            SetLVar(g_dcduModeLVar, 0.0);
+            g_dcduMode = false;
+            ClearDcduInputs();
+        }
+    }
 }
 
 extern "C" MSFS_CALLBACK void module_init(void)
@@ -230,73 +330,16 @@ extern "C" MSFS_CALLBACK void module_init(void)
     std::printf("[EasyCPDLC] companion module %s\n", opened ? "ready" : "could not open SimConnect");
 }
 
-extern "C" MSFS_CALLBACK void module_update(float deltaSeconds)
-{
-    if (g_simConnect == nullptr)
-    {
-        return;
-    }
-
-    SimConnect_CallDispatch(g_simConnect, Dispatch, nullptr);
-    const float elapsed = deltaSeconds > 0.0f ? deltaSeconds : 0.0f;
-    g_heartbeatSeconds += elapsed;
-    g_statusAgeSeconds += elapsed;
-
-    double commandValue = 0.0;
-    if (fsVarsLVarGet(g_command, g_numberUnit, &commandValue) == FS_VAR_ERROR_NONE && commandValue != 0.0)
-    {
-        SetLVar(g_command, 0.0);
-        const auto command = static_cast<std::uint32_t>(commandValue + 0.5);
-        if (!g_dcduMode && command >= 1 && command <= 18)
-        {
-            PublishCommand(command);
-        }
-    }
-
-    if (g_dcduMode)
-    {
-        for (auto& input : g_dcduInputs)
-        {
-            double value = 0.0;
-            if (fsVarsLVarGet(input.id, g_numberUnit, &value) == FS_VAR_ERROR_NONE && value != 0.0)
-            {
-                SetLVar(input.id, 0.0);
-                PublishCommand(input.command);
-            }
-        }
-    }
-    else
-    {
-        ClearDcduInputs();
-    }
-
-    if (g_heartbeatSeconds >= 1.0f)
-    {
-        g_heartbeatSeconds = 0.0f;
-        PublishCommand(0);
-        SetLVar(g_moduleAlive, 1.0);
-    }
-
-    if (g_statusAgeSeconds >= 3.0f)
-    {
-        SetLVar(g_appConnected, 0.0);
-        SetLVar(g_vatsimConnected, 0.0);
-        SetLVar(g_dcduModeLVar, 0.0);
-        g_dcduMode = false;
-        ClearDcduInputs();
-    }
-}
-
 extern "C" MSFS_CALLBACK void module_deinit(void)
 {
     SetLVar(g_moduleAlive, 0.0);
     SetLVar(g_appConnected, 0.0);
     SetLVar(g_dcduModeLVar, 0.0);
     ClearDcduInputs();
-    if (g_simConnect != nullptr)
+    if (g_simConnect != 0)
     {
         SimConnect_Close(g_simConnect);
-        g_simConnect = nullptr;
+        g_simConnect = 0;
     }
     std::printf("[EasyCPDLC] companion module stopped\n");
 }
