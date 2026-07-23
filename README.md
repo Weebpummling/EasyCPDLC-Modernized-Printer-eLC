@@ -1,13 +1,23 @@
-# EasyCPDLC Modernized — Printer + eLoadControl
+# EasyCPDLC Print + eLoadControl
 
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![Network](https://img.shields.io/badge/network-VATSIM%20%2B%20Hoppie-blue)
-![Status](https://img.shields.io/badge/status-testing-orange)
+![Status](https://img.shields.io/badge/status-development-blue)
 
-This is a focused public fork of [fresH229a/EasyCPDLC-Modernized](https://github.com/fresH229a/EasyCPDLC-Modernized). It adds a review-first cockpit printing workflow, direct eLoadControl loadsheet requests, and an optional vPilot/vTDLS PDC bridge while retaining the upstream CPDLC client and its Airbus- and Boeing-style DCDUs.
+This repository is the focused **EasyCPDLC-Print-eLC** development line. Its
+upstream is [EasyCPDLC-Modernized](https://github.com/fresH229a/EasyCPDLC-Modernized),
+whose README is preserved in [README.UPSTREAM.md](README.UPSTREAM.md).
 
-The upstream README is preserved verbatim in [README.UPSTREAM.md](README.UPSTREAM.md). Read it for the original client’s complete feature guide, flight-plan workflow, PDC/DCL discovery behavior, Flow Pro setup, and operating instructions.
+The Print/eLC application remains deliberately limited to cockpit printing,
+eLoadControl, display/artwork controls for extra screens, and the integrations
+required by those workflows.
+
+> **Hoppie warning:** before connecting EasyCPDLC, set the aircraft's internal Hoppie/ATC network to **NONE** and remove or disable its Hoppie code. EasyCPDLC must be the only Hoppie client using the flight's callsign. Running the aircraft and EasyCPDLC as simultaneous Hoppie clients can divide pending messages unpredictably between them.
+
+The fork adds review-first cockpit printing, direct eLoadControl loadsheet
+requests, and an optional vPilot bridge for vTDLS PDCs and ATC Contact Me
+alerts while retaining the upstream CPDLC client and Airbus/Boeing DCDUs.
 
 > **Flight simulation only.** This project is not approved for real-world aviation, dispatch, communications, loading, or other safety-critical use.
 
@@ -21,7 +31,7 @@ The scope of this fork is intentionally narrow:
 - retain an 80 mm / 72 mm profile for devices such as the Rongta RP326
 - request an eLoadControl textual loadsheet inside EasyCPDLC using the pilot’s own API key
 - let the pilot review a loadsheet or imported clearance before printing it
-- optionally import vPilot/vTDLS PDC messages through a local bridge
+- optionally import vPilot/vTDLS PDC messages and controller Contact Me alerts through a local bridge
 - suppress duplicate automatic prints and duplicate bridge imports
 - preserve upstream Hoppie CPDLC, PDC/DCL discovery, and click-only `REQ CLR` behavior
 
@@ -34,6 +44,17 @@ This fork is **not** intended to:
 - redesign unrelated EasyCPDLC behavior
 
 ## Added workflows
+
+### Display and hardware-panel mode
+
+Open `SETUP > DISPLAY` from either DCDU to configure the main window:
+
+- `PANEL ARTWORK` shows the normal Airbus or Boeing bezel; turning it off produces a compact screen-only window.
+- `ONSCREEN KEYS` enables the painted panel and LSK click hotspots. Turn it off when physical controls will operate the client.
+- `WINDOW SCALE` selects common sizes from 75% through 200%. The lower-right corner can also be dragged to choose a proportional size in 5% steps.
+- `RESET SIZE` returns the current artwork or screen-only window to 100%.
+
+Drag the top of the window to move it. Artwork, key, and scale choices persist for the current Windows user. The system-tray menu includes the same artwork/key toggles and an `Open Display Settings` recovery action, so disabling on-screen keys cannot lock the user out of the setting.
 
 ### DCDU printing
 
@@ -108,7 +129,7 @@ The API key uses the eLoadControl bring-your-own-key model. If saved, it is prot
 
 Direct API loadsheets are review-first and do not auto-print. The client prints eLoadControl’s textual ACARS message, not a scaled full-page PDF.
 
-### vPilot / vTDLS PDC bridge
+### vPilot / vTDLS and ATC Contact Me bridge
 
 The optional `EasyCPDLC.VPilotBridge` uses vPilot’s plugin API and a current-user local named pipe:
 
@@ -117,7 +138,9 @@ vTDLS/controller → VATSIM private message → vPilot plugin
                  → local named pipe → EasyCPDLC review/print screen
 ```
 
-Only messages classified as clearance/PDC traffic are imported. They are labeled as VATSIM/vTDLS messages, checked against the EasyCPDLC callsign where possible, and deduplicated so reconnect resends do not create another displayed or printed copy.
+The bridge imports only supported clearance/PDC traffic and controller-originated Contact Me requests; unrelated private chat stays in vPilot. Contact requests appear under `VPILOT MSGS` with the controller callsign, a readable facility label such as `SFO APPROACH` or `OAK CENTER`, the radio frequency, and the original instruction. Both message types are checked against the EasyCPDLC callsign where possible and deduplicated so reconnect resends do not create another displayed or printed copy.
+
+Contact Me alerts are review-first. Open `VPILOT MSGS`, select the alert, and use the DCDU `PRINT` action if a paper copy is wanted. They do not use Hoppie, do not create a CPDLC session, and do not alter the PDC-availability badge.
 
 Imported PDCs do not provide a Hoppie logon code, do not turn the airport PDC-availability badge green, do not enable `REQ CLR`, and do not gain CPDLC reply actions such as `WILCO`.
 
@@ -135,7 +158,7 @@ From a source checkout, developers can instead run:
 powershell -ExecutionPolicy Bypass -File .\scripts\Install-VPilotBridge.ps1
 ```
 
-Restart vPilot and use `.debug` to confirm that `EasyCPDLC vPilot PDC Bridge` is loaded.
+Restart vPilot and use `.debug` to confirm that `EasyCPDLC vPilot Bridge` is loaded.
 
 ## Preserved upstream behavior
 
@@ -230,7 +253,7 @@ If a key has ever been posted publicly, revoke it with the service provider and 
 
 ## Project status
 
-This is a community testing fork. The printer byte stream, mock output, formatter, encoding, duplicate suppression, and bridge protocol can be tested automatically. A physical Citizen CT-S4000 or RP326 and a live controller-issued vTDLS PDC are still needed for final end-to-end validation.
+This is a community testing fork. The printer byte stream, mock output, formatter, encoding, duplicate suppression, and bridge protocol can be tested automatically. A physical Citizen CT-S4000 or RP326 plus live controller-issued vTDLS PDC and Contact Me messages are still needed for final end-to-end validation.
 
 Issues and pull requests should stay within the limited scope described above. General EasyCPDLC modernization work belongs upstream unless it is required for these integrations.
 

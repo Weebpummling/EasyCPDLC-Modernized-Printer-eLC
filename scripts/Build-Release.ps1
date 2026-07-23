@@ -89,7 +89,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $packageDi
 
 $bridgeHash = (Get-FileHash -LiteralPath (Join-Path $packageDirectory 'Bridge\EasyCPDLC.VPilotBridge.dll') -Algorithm SHA256).Hash
 $manifest = [ordered]@{
-    product = 'EasyCPDLC Modernized - Printer + eLoadControl'
+    product = 'EasyCPDLC Print + eLoadControl'
     version = $Version
     runtime = 'win-x64 self-contained'
     bridge = 'Bridge/EasyCPDLC.VPilotBridge.dll'

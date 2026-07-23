@@ -15,6 +15,9 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\EasyCPDLC\EasyCPDLC.csproj" SetTargetFramework="TargetFramework=$(TargetFramework)" />
+    <!-- No SetTargetFramework: both projects already target net10.0-windows, and setting
+         global properties here makes MSBuild build EasyCPDLC twice in parallel into the
+         same output path, which fails with MSB3554/CS2012 file-in-use errors. -->
+    <ProjectReference Include="..\EasyCPDLC\EasyCPDLC.csproj" />
   </ItemGroup>
 </Project>

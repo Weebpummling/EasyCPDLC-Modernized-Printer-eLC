@@ -2,14 +2,28 @@ EasyCPDLC vPilot Bridge - Optional Installation
 ================================================
 
 The normal EasyCPDLC application works without this bridge. Install it only
-if you want EasyCPDLC to receive supported vPilot/vTDLS PDC messages.
+if you want EasyCPDLC to receive supported vPilot/vTDLS PDC messages and
+controller Contact Me alerts.
 
 1. Install vPilot for the current Windows user.
 2. Close vPilot completely.
 3. Extract the complete EasyCPDLC release ZIP.
 4. Double-click Install-vPilot-Bridge.cmd.
 5. Restart vPilot and enter .debug.
-6. Confirm that "EasyCPDLC vPilot PDC Bridge" is listed as loaded.
+6. Confirm that "EasyCPDLC vPilot Bridge" is listed as loaded.
+
+Contact Me test
+---------------
+Connect vPilot and EasyCPDLC with the same aircraft callsign. Ask a controller
+to send a normal vPilot Contact Me request. In EasyCPDLC, open VPILOT MSGS and
+select the new ATC CONTACT REQUEST. Verify the controller callsign, facility,
+and frequency, then use the on-screen PRINT action if desired.
+
+The installed vPilot API delivers Contact Me as a private-message event rather
+than a separate event. The bridge imports it only when the sender has a known
+controller facility suffix, the text is a contact request, and a valid aviation
+frequency is present in the message or in vPilot's controller list. Other
+private messages remain in vPilot.
 
 The installer copies the bundled Bridge\EasyCPDLC.VPilotBridge.dll into the
 current user's vPilot Plugins folder. Release users do not need the .NET SDK.

@@ -15,7 +15,7 @@ namespace EasyCPDLC
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             Application.EnableVisualStyles();
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
@@ -25,6 +25,7 @@ namespace EasyCPDLC
 
             MainForm mainForm = new MainForm();
             EasyCPDLCAppIcon.Apply(mainForm);
+
             Application.Run(mainForm);
         }
     }

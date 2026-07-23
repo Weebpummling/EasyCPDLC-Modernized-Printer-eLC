@@ -247,6 +247,7 @@ namespace EasyCPDLC
     {
         private Image cachedImage;
         private string assetFileName;
+        private bool showArtwork = true;
         private Rectangle highlightRectangle = Rectangle.Empty;
         private bool highlightPressed;
 
@@ -315,19 +316,40 @@ namespace EasyCPDLC
             e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
             e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-            cachedImage ??= DcduAssets.LoadImage(AssetFileName);
-            if (cachedImage != null)
+            if (!ShowArtwork)
             {
-                e.Graphics.DrawImage(cachedImage, new Rectangle(0, 0, Width, Height));
+                using SolidBrush screenOnlyBackground = new SolidBrush(DcduTheme.Screen);
+                e.Graphics.FillRectangle(screenOnlyBackground, ClientRectangle);
             }
             else
             {
-                using SolidBrush fallback = new SolidBrush(DcduTheme.BezelMid);
-                e.Graphics.FillRectangle(fallback, ClientRectangle);
+                cachedImage ??= DcduAssets.LoadImage(AssetFileName);
+                if (cachedImage != null)
+                {
+                    e.Graphics.DrawImage(cachedImage, new Rectangle(0, 0, Width, Height));
+                }
+                else
+                {
+                    using SolidBrush fallback = new SolidBrush(DcduTheme.BezelMid);
+                    e.Graphics.FillRectangle(fallback, ClientRectangle);
+                }
             }
 
             DrawHotspotHighlight(e.Graphics);
             base.OnPaint(e);
+        }
+
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool ShowArtwork
+        {
+            get => showArtwork;
+            set
+            {
+                if (showArtwork == value) return;
+                showArtwork = value;
+                Invalidate();
+            }
         }
 
         private void DrawHotspotHighlight(Graphics g)
