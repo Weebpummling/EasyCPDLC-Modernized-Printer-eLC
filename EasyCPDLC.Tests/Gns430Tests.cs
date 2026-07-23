@@ -192,17 +192,41 @@ namespace EasyCPDLC.Tests
 
         [Theory]
         [InlineData(0, 0, (int)Gns430Command.CursorPush)]
-        [InlineData(-38, 0, (int)Gns430Command.SmallRightDecrease)]
-        [InlineData(38, 0, (int)Gns430Command.SmallRightIncrease)]
-        [InlineData(-63, 0, (int)Gns430Command.LargeRightDecrease)]
-        [InlineData(63, 0, (int)Gns430Command.LargeRightIncrease)]
+        [InlineData(-38, 0, (int)Gns430Command.None)]
+        [InlineData(38, 0, (int)Gns430Command.None)]
+        [InlineData(-63, 0, (int)Gns430Command.None)]
+        [InlineData(63, 0, (int)Gns430Command.None)]
         [InlineData(80, 0, (int)Gns430Command.None)]
-        public void MouseEncoderHitZones_DriveTheCorrectPhysicalRing(float offsetX, float offsetY, int expected)
+        public void LeftClick_OnlyPushesTheEncoderCenter(float offsetX, float offsetY, int expected)
         {
             PointF center = new(878, 326);
             PointF point = new(center.X + offsetX, center.Y + offsetY);
 
-            Assert.Equal((Gns430Command)expected, Gns430Form.KnobCommandAt(point, center));
+            Assert.Equal((Gns430Command)expected, Gns430Form.KnobPushCommandAt(point, center));
+        }
+
+        [Theory]
+        [InlineData(0, 0, 120, (int)Gns430Command.SmallRightIncrease)]
+        [InlineData(-38, 0, -120, (int)Gns430Command.SmallRightDecrease)]
+        [InlineData(38, 0, 120, (int)Gns430Command.SmallRightIncrease)]
+        [InlineData(-63, 0, -120, (int)Gns430Command.LargeRightDecrease)]
+        [InlineData(63, 0, 120, (int)Gns430Command.LargeRightIncrease)]
+        [InlineData(80, 0, 120, (int)Gns430Command.None)]
+        [InlineData(38, 0, 0, (int)Gns430Command.None)]
+        public void MouseWheel_RotatesTheRingUnderThePointer(float offsetX, float offsetY, int delta, int expected)
+        {
+            PointF center = new(878, 326);
+            PointF point = new(center.X + offsetX, center.Y + offsetY);
+
+            Assert.Equal((Gns430Command)expected, Gns430Form.KnobWheelCommandAt(point, center, delta));
+        }
+
+        [Fact]
+        public void GnsPanel_DoesNotOverrideKeyboardCommandHandling()
+        {
+            Assert.Null(typeof(Gns430Form).GetMethod(
+                "ProcessCmdKey",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly));
         }
 
         [Fact]

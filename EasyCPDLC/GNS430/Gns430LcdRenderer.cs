@@ -266,7 +266,7 @@ namespace EasyCPDLC.GNS430
                 "INPUT CONFIGURATION",
                 "PRIVATE MSFS MODULE",
                 "MOBIFLIGHT PROFILE",
-                "FOCUSED KEYBOARD",
+                "MOUSE INPUT ONLY",
                 "NO GPS EVENTS",
                 "RETURN TO DATALINK"
             };

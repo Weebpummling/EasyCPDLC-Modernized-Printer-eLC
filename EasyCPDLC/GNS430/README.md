@@ -49,23 +49,13 @@ EasyCPDLC.exe --gns430
 
 Closing the panel hides it; the EasyCPDLC backend remains active in the tray.
 
-## Mouse and keyboard
+## Mouse interaction
 
-Click the left or right half of the outer right-knob ring for large-knob decrease/increase. Click the left or right half of the middle ring for small-knob decrease/increase. Click the center for `PUSH CRSR`. The left COM/VLOC controls are deliberately not mouse-mapped to the GPS page knob, matching the separation of controls on the physical unit.
+Physical buttons use press-and-release behavior: hold the left mouse button to depress the photographed key, then release over the same key to activate it and return the artwork to normal. Dragging away before release cancels the action. Click and release the center of the right encoder for `PUSH CRSR`.
 
-When the panel has keyboard focus:
+Use the mouse wheel over the right encoder to rotate it. Wheel up increases and wheel down decreases. The pointer position selects the ring: the center and middle ring operate the small inner knob, while the outer ring operates the large knob. Clicking the rings does not rotate them. The left COM/VLOC controls are deliberately not mapped to the GPS page knob, matching the separation of controls on the physical unit.
 
-| Action | Key |
-| --- | --- |
-| Large knob decrease/increase | Left / Right |
-| Small knob decrease/increase | Down / Up |
-| Push cursor | Space |
-| ENT / CLR | Enter / Escape or Backspace |
-| MENU / MSG / FPL / PROC | M / G / F / P |
-| Direct-to / OBS | D / O |
-| Range in/out | Plus / Minus |
-
-There are no global EasyCPDLC shortcuts. Keyboard navigation is accepted only while the EasyCPDLC panel has focus.
+The panel accepts no keyboard navigation or keyboard shortcuts. Hardware input is handled by the private MSFS 2024 companion-module path described below.
 
 ## MSFS 2024 companion module
 

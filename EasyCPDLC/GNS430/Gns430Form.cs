@@ -57,6 +57,9 @@ namespace EasyCPDLC.GNS430
         private string activeArtworkControl = string.Empty;
         private string activeArtworkState = string.Empty;
         private DateTime activeArtworkUntilUtc = DateTime.MinValue;
+        private PanelButton pressedPanelButton;
+        private bool pressedCursor;
+        private bool pressedScreen;
 
         private sealed class PanelButton
         {
@@ -76,7 +79,6 @@ namespace EasyCPDLC.GNS430
             MinimumSize = new Size(730, 355);
             ClientSize = new Size(LogicalWidth, LogicalHeight);
             BackColor = BezelDark;
-            KeyPreview = true;
             DoubleBuffered = true;
             TopMost = true;
             Icon = backend.Icon;
@@ -105,6 +107,9 @@ namespace EasyCPDLC.GNS430
 
             Paint += PaintPanel;
             MouseDown += PanelMouseDown;
+            MouseUp += PanelMouseUp;
+            MouseWheel += PanelMouseWheel;
+            MouseCaptureChanged += PanelMouseCaptureChanged;
             FormClosing += PanelFormClosing;
             VisibleChanged += (_, __) =>
             {
@@ -147,47 +152,6 @@ namespace EasyCPDLC.GNS430
             }
 
             base.WndProc(ref m);
-        }
-
-        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
-        {
-            Keys modifiers = keyData & Keys.Modifiers;
-            Keys key = keyData & Keys.KeyCode;
-            if (modifiers != Keys.None)
-            {
-                return base.ProcessCmdKey(ref msg, keyData);
-            }
-
-            Gns430Command command = key switch
-            {
-                Keys.Left => Gns430Command.LargeRightDecrease,
-                Keys.Right => Gns430Command.LargeRightIncrease,
-                Keys.Down => Gns430Command.SmallRightDecrease,
-                Keys.Up => Gns430Command.SmallRightIncrease,
-                Keys.Space => Gns430Command.CursorPush,
-                Keys.Enter => Gns430Command.Enter,
-                Keys.Escape => Gns430Command.Clear,
-                Keys.Back => Gns430Command.Clear,
-                Keys.M => Gns430Command.Menu,
-                Keys.G => Gns430Command.Message,
-                Keys.F => Gns430Command.FlightPlan,
-                Keys.P => Gns430Command.Procedure,
-                Keys.D => Gns430Command.DirectTo,
-                Keys.O => Gns430Command.Obs,
-                Keys.Add => Gns430Command.RangeIn,
-                Keys.Oemplus => Gns430Command.RangeIn,
-                Keys.Subtract => Gns430Command.RangeOut,
-                Keys.OemMinus => Gns430Command.RangeOut,
-                _ => Gns430Command.None
-            };
-
-            if (command == Gns430Command.None)
-            {
-                return base.ProcessCmdKey(ref msg, keyData);
-            }
-
-            ExecuteCommand(command);
-            return true;
         }
 
         private void RefreshTimerTick(object sender, EventArgs e)
@@ -667,13 +631,20 @@ namespace EasyCPDLC.GNS430
             SetArtworkFeedback(control, state);
         }
 
-        private void SetArtworkFeedback(string control, string state)
+        private void SetArtworkFeedback(string control, string state, bool held = false)
         {
             activeArtworkControl = control ?? string.Empty;
             activeArtworkState = state ?? string.Empty;
             activeArtworkUntilUtc = string.IsNullOrWhiteSpace(activeArtworkControl)
                 ? DateTime.MinValue
-                : DateTime.UtcNow.AddMilliseconds(220);
+                : held ? DateTime.MaxValue : DateTime.UtcNow.AddMilliseconds(220);
+        }
+
+        private void ClearArtworkFeedback()
+        {
+            activeArtworkControl = string.Empty;
+            activeArtworkState = string.Empty;
+            activeArtworkUntilUtc = DateTime.MinValue;
         }
 
         private void PaintPanel(object sender, PaintEventArgs e)
@@ -1160,49 +1131,135 @@ namespace EasyCPDLC.GNS430
 
         private void PanelMouseDown(object sender, MouseEventArgs e)
         {
-            PointF logical = new(
-                e.X * LogicalWidth / (float)Math.Max(1, ClientSize.Width),
-                e.Y * LogicalHeight / (float)Math.Max(1, ClientSize.Height));
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            PointF logical = ToLogicalPoint(e.Location);
 
             foreach (PanelButton button in panelButtons)
             {
                 if (button.Bounds.Contains(logical))
                 {
-                    ExecuteCommand(button.Command);
+                    pressedPanelButton = button;
                     SetArtworkFeedback(
                         button.ArtworkControl,
                         button.Command == Gns430Command.RangeOut ? "decrease-pressed"
                             : button.Command == Gns430Command.RangeIn ? "increase-pressed"
-                            : "pressed");
+                            : "pressed",
+                        held: true);
+                    Capture = true;
+                    Invalidate();
                     return;
                 }
             }
 
-            if (TryHandleKnob(logical, new PointF(878, 326)))
+            if (KnobPushCommandAt(logical, new PointF(878, 326)) == Gns430Command.CursorPush)
             {
+                pressedCursor = true;
+                SetArtworkFeedback("right_encoder", "pushed", held: true);
+                Capture = true;
+                Invalidate();
                 return;
             }
 
             if (ScreenBounds.Contains(logical))
             {
+                pressedScreen = true;
+                Capture = true;
+            }
+        }
+
+        private void PanelMouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            PointF logical = ToLogicalPoint(e.Location);
+            PanelButton releasedButton = pressedPanelButton;
+            bool releasedCursor = pressedCursor;
+            bool releasedScreen = pressedScreen;
+            ReleasePointerPress();
+
+            if (releasedButton != null && releasedButton.Bounds.Contains(logical))
+            {
+                ExecuteCommand(releasedButton.Command);
+                ClearArtworkFeedback();
+            }
+            else if (releasedCursor && KnobPushCommandAt(logical, new PointF(878, 326)) == Gns430Command.CursorPush)
+            {
+                ExecuteCommand(Gns430Command.CursorPush);
+                ClearArtworkFeedback();
+            }
+            else if (releasedScreen && ScreenBounds.Contains(logical))
+            {
                 HandleScreenClick(logical);
             }
+
+            Invalidate();
         }
 
-        private bool TryHandleKnob(PointF point, PointF center)
+        private void PanelMouseWheel(object sender, MouseEventArgs e)
         {
-            Gns430Command command = KnobCommandAt(point, center);
+            Gns430Command command = KnobWheelCommandAt(ToLogicalPoint(e.Location), new PointF(878, 326), e.Delta);
             if (command == Gns430Command.None)
             {
-                return false;
+                return;
             }
 
-            ExecuteCommand(command);
-            return true;
+            int detents = Math.Max(1, Math.Abs(e.Delta) / Math.Max(1, SystemInformation.MouseWheelScrollDelta));
+            for (int index = 0; index < detents; index++)
+            {
+                ExecuteCommand(command);
+            }
         }
 
-        internal static Gns430Command KnobCommandAt(PointF point, PointF center)
+        private void PanelMouseCaptureChanged(object sender, EventArgs e)
         {
+            if (!Capture && (pressedPanelButton != null || pressedCursor || pressedScreen))
+            {
+                ReleasePointerPress();
+                Invalidate();
+            }
+        }
+
+        private void ReleasePointerPress()
+        {
+            pressedPanelButton = null;
+            pressedCursor = false;
+            pressedScreen = false;
+            ClearArtworkFeedback();
+            if (Capture)
+            {
+                Capture = false;
+            }
+        }
+
+        private PointF ToLogicalPoint(Point point)
+        {
+            return new PointF(
+                point.X * LogicalWidth / (float)Math.Max(1, ClientSize.Width),
+                point.Y * LogicalHeight / (float)Math.Max(1, ClientSize.Height));
+        }
+
+        internal static Gns430Command KnobPushCommandAt(PointF point, PointF center)
+        {
+            float dx = point.X - center.X;
+            float dy = point.Y - center.Y;
+            float distance = (float)Math.Sqrt((dx * dx) + (dy * dy));
+            return distance < 27 ? Gns430Command.CursorPush : Gns430Command.None;
+        }
+
+        internal static Gns430Command KnobWheelCommandAt(PointF point, PointF center, int delta)
+        {
+            if (delta == 0)
+            {
+                return Gns430Command.None;
+            }
+
             float dx = point.X - center.X;
             float dy = point.Y - center.Y;
             float distance = (float)Math.Sqrt((dx * dx) + (dy * dy));
@@ -1211,17 +1268,12 @@ namespace EasyCPDLC.GNS430
                 return Gns430Command.None;
             }
 
-            if (distance < 27)
-            {
-                return Gns430Command.CursorPush;
-            }
-
             if (distance < 49)
             {
-                return dx < 0 ? Gns430Command.SmallRightDecrease : Gns430Command.SmallRightIncrease;
+                return delta < 0 ? Gns430Command.SmallRightDecrease : Gns430Command.SmallRightIncrease;
             }
 
-            return dx < 0 ? Gns430Command.LargeRightDecrease : Gns430Command.LargeRightIncrease;
+            return delta < 0 ? Gns430Command.LargeRightDecrease : Gns430Command.LargeRightIncrease;
         }
 
         private void HandleScreenClick(PointF point)
