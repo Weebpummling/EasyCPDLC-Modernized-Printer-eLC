@@ -87,29 +87,33 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install-vPilot-Bridge.cmd') -De
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\VPILOT-BRIDGE-INSTALL.txt') -Destination $packageDirectory -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $packageDirectory -Force
 
-$companionRoot = Join-Path $repoRoot 'EasyCPDLC\GNS430\MSFS2024Companion'
-$mobiFlightProfile = Join-Path $companionRoot 'MobiFlight\EasyCPDLC-GNS430-Companion.mfproj'
-$dcduMobiFlightProfile = Join-Path $companionRoot 'MobiFlight\EasyCPDLC-DCDU-Companion.mfproj'
+$vns430Root = Join-Path $repoRoot 'EasyCPDLC\VNS430'
+$moduleRoot = Join-Path $vns430Root 'MSFS2024Module'
+$bridgeRoot = Join-Path $moduleRoot 'Bridge'
+$mobiFlightProfile = Join-Path $moduleRoot 'MobiFlight\EasyCPDLC-VNS430-Module.mfproj'
+$dcduMobiFlightProfile = Join-Path $moduleRoot 'MobiFlight\EasyCPDLC-DCDU-Module.mfproj'
 if (-not (Test-Path -LiteralPath $mobiFlightProfile -PathType Leaf)) {
-    throw "The required MobiFlight companion profile was not found at '$mobiFlightProfile'."
+    throw "The required VNS430 MobiFlight profile was not found at '$mobiFlightProfile'."
 }
 if (-not (Test-Path -LiteralPath $dcduMobiFlightProfile -PathType Leaf)) {
-    throw "The required DCDU MobiFlight companion profile was not found at '$dcduMobiFlightProfile'."
+    throw "The required DCDU MobiFlight profile was not found at '$dcduMobiFlightProfile'."
 }
 
-$companionPackageDirectory = Join-Path $packageDirectory 'Companion'
-$companionMobiFlightDirectory = Join-Path $companionPackageDirectory 'MobiFlight'
-$companionSourceDirectory = Join-Path $companionPackageDirectory 'MSFS2024-SDK-Sources'
-New-Item -ItemType Directory -Path $companionMobiFlightDirectory -Force | Out-Null
-New-Item -ItemType Directory -Path $companionSourceDirectory -Force | Out-Null
-Copy-Item -LiteralPath $mobiFlightProfile -Destination $companionMobiFlightDirectory -Force
-Copy-Item -LiteralPath $dcduMobiFlightProfile -Destination $companionMobiFlightDirectory -Force
-Copy-Item -LiteralPath (Join-Path $companionRoot 'MobiFlight\README.md') -Destination $companionMobiFlightDirectory -Force
-Copy-Item -LiteralPath (Join-Path $companionRoot 'README.md') -Destination $companionPackageDirectory -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\HOPPIE-AIRCRAFT-ACARS-ROUTING.md') -Destination $companionPackageDirectory -Force
-Copy-Item -Path (Join-Path $companionRoot 'Sources\*') -Destination $companionSourceDirectory -Recurse -Force
+$vns430PackageDirectory = Join-Path $packageDirectory 'VNS430'
+$modulePackageDirectory = Join-Path $vns430PackageDirectory 'MSFS2024Module'
+$moduleMobiFlightDirectory = Join-Path $modulePackageDirectory 'MobiFlight'
+$moduleSourceDirectory = Join-Path $modulePackageDirectory 'Bridge-Sources'
+New-Item -ItemType Directory -Path $moduleMobiFlightDirectory -Force | Out-Null
+New-Item -ItemType Directory -Path $moduleSourceDirectory -Force | Out-Null
+Copy-Item -LiteralPath $mobiFlightProfile -Destination $moduleMobiFlightDirectory -Force
+Copy-Item -LiteralPath $dcduMobiFlightProfile -Destination $moduleMobiFlightDirectory -Force
+Copy-Item -LiteralPath (Join-Path $vns430Root 'README.md') -Destination $vns430PackageDirectory -Force
+Copy-Item -LiteralPath (Join-Path $moduleRoot 'README.md') -Destination $modulePackageDirectory -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\HOPPIE-AIRCRAFT-ACARS-ROUTING.md') -Destination $vns430PackageDirectory -Force
+Copy-Item -Path (Join-Path $bridgeRoot 'Sources\*') -Destination $moduleSourceDirectory -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $bridgeRoot 'Build-Wasm.ps1') -Destination $moduleSourceDirectory -Force
 
-$builtCompanionRoot = Join-Path $companionRoot 'BuiltPackage'
+$builtCompanionRoot = Join-Path $bridgeRoot 'BuiltPackage'
 $builtCompanionWasm = if (Test-Path -LiteralPath $builtCompanionRoot -PathType Container) {
     Get-ChildItem -LiteralPath $builtCompanionRoot -Filter '*.wasm' -File -Recurse | Select-Object -First 1
 } else {
@@ -117,25 +121,35 @@ $builtCompanionWasm = if (Test-Path -LiteralPath $builtCompanionRoot -PathType C
 }
 $companionWasmIncluded = $null -ne $builtCompanionWasm
 if ($companionWasmIncluded) {
-    $companionCommunityDirectory = Join-Path $companionPackageDirectory 'Community'
+    $companionCommunityDirectory = Join-Path $modulePackageDirectory 'Bridge-Community'
     New-Item -ItemType Directory -Path $companionCommunityDirectory -Force | Out-Null
     Copy-Item -Path (Join-Path $builtCompanionRoot '*') -Destination $companionCommunityDirectory -Recurse -Force
 }
 
+$builtThreeDRoot = Join-Path $moduleRoot 'BuiltPackage'
+$threeDPackageIncluded = Test-Path -LiteralPath $builtThreeDRoot -PathType Container
+if ($threeDPackageIncluded) {
+    $threeDCommunityDirectory = Join-Path $modulePackageDirectory 'ThreeD-Community'
+    New-Item -ItemType Directory -Path $threeDCommunityDirectory -Force | Out-Null
+    Copy-Item -Path (Join-Path $builtThreeDRoot '*') -Destination $threeDCommunityDirectory -Recurse -Force
+}
+
 $bridgeHash = (Get-FileHash -LiteralPath (Join-Path $packageDirectory 'Bridge\EasyCPDLC.VPilotBridge.dll') -Algorithm SHA256).Hash
 $manifest = [ordered]@{
-    product = 'EasyCPDLC Modernized - Printer + eLoadControl'
+    product = 'EasyCPDLC Print + eLoadControl'
     version = $Version
     runtime = 'win-x64 self-contained'
     bridge = 'Bridge/EasyCPDLC.VPilotBridge.dll'
     bridgeSha256 = $bridgeHash
     bridgeInstaller = 'Install-vPilot-Bridge.cmd'
-    mobiFlightProfile = 'Companion/MobiFlight/EasyCPDLC-GNS430-Companion.mfproj'
-    dcduMobiFlightProfile = 'Companion/MobiFlight/EasyCPDLC-DCDU-Companion.mfproj'
+    mobiFlightProfile = 'VNS430/MSFS2024Module/MobiFlight/EasyCPDLC-VNS430-Module.mfproj'
+    dcduMobiFlightProfile = 'VNS430/MSFS2024Module/MobiFlight/EasyCPDLC-DCDU-Module.mfproj'
     companionWasmIncluded = $companionWasmIncluded
-    companionCommunityPackage = if ($companionWasmIncluded) { 'Companion/Community' } else { $null }
-    companionSdkSources = 'Companion/MSFS2024-SDK-Sources'
-    aircraftAcarsRoutingPlan = 'Companion/HOPPIE-AIRCRAFT-ACARS-ROUTING.md'
+    companionCommunityPackage = if ($companionWasmIncluded) { 'VNS430/MSFS2024Module/Bridge-Community' } else { $null }
+    threeDPackageIncluded = $threeDPackageIncluded
+    threeDCommunityPackage = if ($threeDPackageIncluded) { 'VNS430/MSFS2024Module/ThreeD-Community' } else { $null }
+    companionSdkSources = 'VNS430/MSFS2024Module/Bridge-Sources'
+    aircraftAcarsRoutingPlan = 'VNS430/HOPPIE-AIRCRAFT-ACARS-ROUTING.md'
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $packageDirectory 'release-manifest.json') -Encoding UTF8
 

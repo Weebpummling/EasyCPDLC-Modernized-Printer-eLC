@@ -1,4 +1,4 @@
-﻿/*  EASYCPDLC: CPDLC Client for the VATSIM Network
+/*  EASYCPDLC: CPDLC Client for the VATSIM Network
     Copyright (C) 2021 Joshua Seagrave joshseagrave@googlemail.com
 
     This program is free software: you can redistribute it and/or modify
@@ -3677,7 +3677,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             ApplyDisplayStyle();
             this.ShowInTaskbar = false;
             ConfigureTrayIcon();
-            RestoreGns430CompanionHost();
+            RestoreVns430CompanionHost();
             ConfigureMainFrameButtonHotspots();
             StartVpilotBridge();
             dcduFrame.Paint += DcduFrame_PaintPrinterButton;
@@ -19000,11 +19000,11 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
                 trayMenu = new ContextMenuStrip();
                 trayMenu.Items.Add("Show EasyCPDLC", null, (_, __) => BringEasyCpdlcWindowToFront());
-                trayMenu.Items.Add("Open GNS 430 panel", null, (_, __) => ShowGns430Panel());
+                trayMenu.Items.Add("Open VNS430 panel", null, (_, __) => ShowVns430Panel());
                 trayMenu.Items.Add("Hide EasyCPDLC", null, (_, __) => Hide());
                 trayMenu.Items.Add(new ToolStripSeparator());
                 trayMenu.Items.Add("Connection credentials...", null, (_, __) => ShowSharedCredentialEditor());
-                trayDcduCompanionMenuItem = new ToolStripMenuItem("Use MSFS companion for DCDU controls")
+                trayDcduCompanionMenuItem = new ToolStripMenuItem("Use MSFS module for DCDU controls")
                 {
                     CheckOnClick = false
                 };
@@ -19058,7 +19058,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
             string note = Connected
                 ? "Credentials saved. The active Hoppie session is unchanged; reconnect to use the new CID or Hoppie code."
-                : "Credentials saved for the DCDU, GNS 430, SimBrief, and eLoadControl interfaces.";
+                : "Credentials saved for the DCDU, VNS430, SimBrief, and eLoadControl interfaces.";
             trayIcon?.ShowBalloonTip(3500, "EasyCPDLC credentials", note, ToolTipIcon.Info);
         }
 
@@ -19074,10 +19074,10 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             SyncTrayCompanionMenuState();
             string note = enable
                 ? string.IsNullOrWhiteSpace(error)
-                    ? "DCDU LSK and button L-vars are enabled. GNS command L-vars are ignored while this mode is active."
+                    ? "DCDU LSK and button L-vars are enabled. VNS430 command L-vars are ignored while this mode is active."
                     : "DCDU mode is saved and will connect automatically when MSFS/SimConnect becomes available."
                 : "DCDU LSK and button L-vars are disabled.";
-            trayIcon?.ShowBalloonTip(4000, "EasyCPDLC MSFS companion", note, ToolTipIcon.Info);
+            trayIcon?.ShowBalloonTip(4000, "EasyCPDLC MSFS module", note, ToolTipIcon.Info);
         }
 
         private void SyncTrayCompanionMenuState()

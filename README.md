@@ -1,21 +1,31 @@
-# EasyCPDLC Modernized — Printer + eLoadControl
+# EasyCPDLC Print + eLoadControl
 
 ![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![Network](https://img.shields.io/badge/network-VATSIM%20%2B%20Hoppie-blue)
-![Status](https://img.shields.io/badge/status-testing-orange)
+![Status](https://img.shields.io/badge/status-development-blue)
 
-## Optional GNS 430 datalink panel
+This repository is the focused **EasyCPDLC-Print-eLC** development line. Its
+upstream is [EasyCPDLC-Modernized](https://github.com/fresH229a/EasyCPDLC-Modernized),
+whose README is preserved in [README.UPSTREAM.md](README.UPSTREAM.md).
 
-> **Testing only:** the GNS 430 interface mod is experimental, incomplete, and not part of the supported release. Use it only in a simulator test environment.
+The Print/eLC application remains deliberately limited to cockpit printing,
+eLoadControl, display/artwork controls for extra screens, and the integrations
+required by those workflows.
 
-A separate [GNS 430-style interface mod](https://github.com/Weebpummling/EasyCPDLC-Modernized-Printer-eLC/tree/testing/gns430-interface/EasyCPDLC/GNS430) is available for mixed-equipment home cockpits on the `testing/gns430-interface` branch. It reuses the live EasyCPDLC backend and supports dual-encoder interaction through a private MSFS 2024 companion module. The test package contains a ready-to-import MobiFlight project whose actions address only EasyCPDLC private L-vars; it does not send Garmin, radio, flight-plan, or aircraft GPS events. A tray editor saves one shared credential set across DCDU and GNS interfaces. An optional, explicitly gated DCDU companion mode exposes private LSK and panel-button L-vars without enabling them in GNS mode. The mod's own [README](EasyCPDLC/GNS430/README.md) and [illustrated tutorial](EasyCPDLC/GNS430/Tutorial/README.md) explain its current functionality and limitations.
+## Optional VNS430 instrument
+
+[VNS430](EasyCPDLC/VNS430/README.md) is a child component of the Print/eLC
+application, not a separate branch or product. It provides the virtual
+desktop instrument, reuses the existing EasyCPDLC backend, and contains an
+optional [MSFS 2024 module](EasyCPDLC/VNS430/MSFS2024Module/README.md) for the
+in-simulator 3D installation and private MobiFlight/L-var bridge.
 
 > **Hoppie warning:** before connecting EasyCPDLC, set the aircraft's internal Hoppie/ATC network to **NONE** and remove or disable its Hoppie code. EasyCPDLC must be the only Hoppie client using the flight's callsign. Running the aircraft and EasyCPDLC as simultaneous Hoppie clients can divide pending messages unpredictably between them.
 
-This is a focused public fork of [fresH229a/EasyCPDLC-Modernized](https://github.com/fresH229a/EasyCPDLC-Modernized). It adds a review-first cockpit printing workflow, direct eLoadControl loadsheet requests, and an optional vPilot bridge for vTDLS PDCs and ATC Contact Me alerts while retaining the upstream CPDLC client and its Airbus- and Boeing-style DCDUs.
-
-The upstream README is preserved verbatim in [README.UPSTREAM.md](README.UPSTREAM.md). Read it for the original client’s complete feature guide, flight-plan workflow, PDC/DCL discovery behavior, Flow Pro setup, and operating instructions.
+The fork adds review-first cockpit printing, direct eLoadControl loadsheet
+requests, and an optional vPilot bridge for vTDLS PDCs and ATC Contact Me
+alerts while retaining the upstream CPDLC client and Airbus/Boeing DCDUs.
 
 > **Flight simulation only.** This project is not approved for real-world aviation, dispatch, communications, loading, or other safety-critical use.
 
@@ -176,9 +186,9 @@ See [README.UPSTREAM.md](README.UPSTREAM.md) for the full upstream documentation
 
 ## Screenshots
 
-| Login | Airbus DCDU | Boeing DCDU | Experimental GNS 430 |
+| Login | Airbus DCDU | Boeing DCDU | VNS430 |
 |---|---|---|---|
-| ![Login screen](assets/screenshots/login.png) | ![Airbus-style DCDU](assets/screenshots/dcdu-airbus1.png) | ![Boeing-style DCDU](assets/screenshots/dcdu-boeing1.png) | [![GNS 430 direct request](EasyCPDLC/GNS430/Screenshots/gns430-direct-request.png)](EasyCPDLC/GNS430/Tutorial/README.md) |
+| ![Login screen](assets/screenshots/login.png) | ![Airbus-style DCDU](assets/screenshots/dcdu-airbus1.png) | ![Boeing-style DCDU](assets/screenshots/dcdu-boeing1.png) | [![VNS430 direct request](EasyCPDLC/VNS430/Docs/images/vns430-in-use.png)](EasyCPDLC/VNS430/README.md) |
 
 ## Requirements
 

@@ -26,15 +26,15 @@ namespace EasyCPDLC
             MainForm mainForm = new MainForm();
             EasyCPDLCAppIcon.Apply(mainForm);
 
-            bool startWithGns430 = Array.Exists(
+            bool startWithVns430 = Array.Exists(
                 args ?? Array.Empty<string>(),
-                value => string.Equals(value, "--gns430", StringComparison.OrdinalIgnoreCase));
+                value => string.Equals(value, "--vns430", StringComparison.OrdinalIgnoreCase));
 
-            if (startWithGns430)
+            if (startWithVns430)
             {
                 mainForm.Shown += (_, __) => mainForm.BeginInvoke(new Action(() =>
                 {
-                    mainForm.ShowGns430Panel();
+                    mainForm.ShowVns430Panel();
                     mainForm.Hide();
                 }));
             }

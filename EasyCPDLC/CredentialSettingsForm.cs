@@ -27,7 +27,7 @@ namespace EasyCPDLC
 
             Label heading = NewLabel("Shared connection credentials", 20, 16, 470, 28, 14f, FontStyle.Bold);
             Label explanation = NewLabel(
-                "These values are shared by the DCDU, GNS 430, Hoppie, SimBrief, and eLoadControl workflows.",
+                "These values are shared by the DCDU, VNS430, Hoppie, SimBrief, and eLoadControl workflows.",
                 20, 48, 480, 38, 8.8f, FontStyle.Regular);
             Controls.Add(heading);
             Controls.Add(explanation);

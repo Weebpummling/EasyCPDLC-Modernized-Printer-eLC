@@ -10,7 +10,7 @@ The safe target topology is therefore:
 
 ```text
 Hoppie <-> EasyCPDLC <-> supported aircraft adapter <-> aircraft ACARS/CDU
-                    \\-> GNS 430-style EasyCPDLC display
+                    \\-> VNS430-style EasyCPDLC display
 ```
 
 The aircraft's own Hoppie connection must be disabled while this mode is active. EasyCPDLC continues to send and poll once, then mirrors normalized inbound and outbound traffic to a supported aircraft adapter.
@@ -48,7 +48,7 @@ On the machine with MSFS 2024 and the PMDG SDK installed:
 
 ## Current package boundary
 
-The packaged MSFS companion module is intentionally limited to private EasyCPDLC GNS controls and status. It does not impersonate a Garmin unit and it does not yet claim PMDG 737 ACARS compatibility. The release always contains the importable MobiFlight project and the SDK source; once an SDK-built `.wasm` package is placed under `EasyCPDLC/GNS430/MSFS2024Companion/BuiltPackage`, the release builder also includes its Community-package contents.
+The packaged MSFS module is intentionally limited to private EasyCPDLC VNS430 controls, display, and status. It does not impersonate a Garmin unit and it does not claim PMDG 737 ACARS compatibility. The release contains both importable MobiFlight profiles and the bridge source. When SDK-built packages exist under `EasyCPDLC/VNS430/MSFS2024Module/Bridge/BuiltPackage` and `EasyCPDLC/VNS430/MSFS2024Module/BuiltPackage`, the release builder includes their Community-package contents.
 
 ## Research references
 

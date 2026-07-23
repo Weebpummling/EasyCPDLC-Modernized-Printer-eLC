@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>net10.0-windows</TargetFramework>
 		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -95,19 +95,14 @@
 		<None Update="Resources\cog-wheel-gear-setting.png">
 			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
 		</None>
-		<None Remove="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-GNS430-Companion.mfproj" />
-		<None Remove="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-DCDU-Companion.mfproj" />
-		<None Remove="GNS430\MSFS2024Companion\MobiFlight\README.md" />
-		<None Include="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-GNS430-Companion.mfproj">
-			<TargetPath>MobiFlight\EasyCPDLC-GNS430-Companion.mfproj</TargetPath>
+		<None Remove="VNS430\MSFS2024Module\MobiFlight\EasyCPDLC-VNS430-Module.mfproj" />
+		<None Remove="VNS430\MSFS2024Module\MobiFlight\EasyCPDLC-DCDU-Module.mfproj" />
+		<None Include="VNS430\MSFS2024Module\MobiFlight\EasyCPDLC-VNS430-Module.mfproj">
+			<TargetPath>MobiFlight\EasyCPDLC-VNS430-Module.mfproj</TargetPath>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 		</None>
-		<None Include="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-DCDU-Companion.mfproj">
-			<TargetPath>MobiFlight\EasyCPDLC-DCDU-Companion.mfproj</TargetPath>
-			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-		</None>
-		<None Include="GNS430\MSFS2024Companion\MobiFlight\README.md">
-			<TargetPath>MobiFlight\README.md</TargetPath>
+		<None Include="VNS430\MSFS2024Module\MobiFlight\EasyCPDLC-DCDU-Module.mfproj">
+			<TargetPath>MobiFlight\EasyCPDLC-DCDU-Module.mfproj</TargetPath>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 		</None>
 	</ItemGroup>
@@ -134,7 +129,7 @@
 		<EmbeddedResource Include="Resources\**\*.*" Exclude="Resources\*.resx" />
 		<EmbeddedResource Include="Sounds\**\*.*" />
 		<EmbeddedResource Include="*.ico" />
-		<EmbeddedResource Include="GNS430\Assets\**\*.*" />
+		<EmbeddedResource Include="VNS430\Assets\**\*.*" />
 	</ItemGroup>
 
 </Project>

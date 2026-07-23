@@ -339,10 +339,10 @@ ASALocalRun/
 # BeatPulse healthcheck temp database
 healthchecksdb
 
-# Locally generated GNS 430 Pilot's Guide reference sheets.
-# These are design-analysis output and are not redistributed with the mod.
-output/gns430-reference/
+# Locally generated GNS 430 reference sheets used during VNS430 development.
+# Generated contact sheets are never committed or redistributed.
+output/vns430-reference/
 
 # Locally generated simulator packages.
-EasyCPDLC/GNS430/MSFS2024Companion/BuiltPackage/
-EasyCPDLC/GNS430/MSFS2024AircraftPackage/BuiltPackage/
+EasyCPDLC/VNS430/MSFS2024Module/BuiltPackage/
+EasyCPDLC/VNS430/MSFS2024Module/Bridge/BuiltPackage/
