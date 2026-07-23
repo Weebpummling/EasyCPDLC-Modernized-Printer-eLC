@@ -10,6 +10,6 @@ They were generated for the user's personal mixed-cockpit simulator interface wi
 python scripts/Build-Gns430PanelSprites.py <source-photo> EasyCPDLC/GNS430/Assets --source-url <source-page>
 ```
 
-`panel-assets.json` records the source page, panel geometry, LCD opening, control bounds, and every generated state. The normal faceplate, pressed keys, range-rocker halves, small knobs, and independently rotated inner/outer encoder rings are embedded into the standalone application.
+`panel-assets.json` records the source page, panel geometry, LCD opening, control bounds, calibrated encoder pivots, and generated states. The rectangular key crops remain fixed while runtime gradients create the press depth, preventing the photographed bezel from jumping. Each dual encoder is split into an inner and outer transparent layer; only the selected ring is rotated around its calibrated mechanical axis while the recess and surrounding panel remain stationary.
 
 These derived photographic assets are for personal simulator use. They are not Garmin firmware, are not approved for real-world navigation, and should not be redistributed separately from the project without reviewing the original photographer's terms.

@@ -174,11 +174,20 @@ namespace EasyCPDLC.Tests
             RectangleF decrease = Gns430PanelArtwork.PressedSegmentBounds("range", "decrease-pressed", control);
             RectangleF increase = Gns430PanelArtwork.PressedSegmentBounds("range", "increase-pressed", control);
 
-            Assert.Equal(control.Left, decrease.Left);
-            Assert.Equal(control.Right, increase.Right);
             Assert.Equal(decrease.Right, increase.Left);
-            Assert.Equal(control.Height, decrease.Height);
-            Assert.Equal(control.Height, increase.Height);
+            Assert.True(decrease.Left > control.Left);
+            Assert.True(increase.Right < control.Right);
+            Assert.Equal(decrease.Top, increase.Top);
+            Assert.Equal(decrease.Height, increase.Height);
+        }
+
+        [Theory]
+        [InlineData("pressed")]
+        [InlineData("decrease-pressed")]
+        [InlineData("increase-pressed")]
+        public void ButtonPresses_ReuseTheRegisteredNormalPhotoCrop(string state)
+        {
+            Assert.Equal("normal", Gns430PanelArtwork.AssetStateFor(state));
         }
 
         [Theory]
@@ -213,6 +222,17 @@ namespace EasyCPDLC.Tests
 
             Assert.True(smallInnerChanges > smallOuterChanges, $"Small knob changed inner={smallInnerChanges}, outer={smallOuterChanges} pixels.");
             Assert.True(largeOuterChanges > largeInnerChanges, $"Large knob changed outer={largeOuterChanges}, inner={largeInnerChanges} pixels.");
+        }
+
+        [Theory]
+        [InlineData("left_encoder", 78, 82)]
+        [InlineData("right_encoder", 79, 83)]
+        public void EncoderArtwork_UsesCalibratedMechanicalPivots(string control, float expectedX, float expectedY)
+        {
+            PointF pivot = Gns430PanelArtwork.EncoderPivot(control);
+
+            Assert.Equal(expectedX, pivot.X);
+            Assert.Equal(expectedY, pivot.Y);
         }
 
         private static Bitmap RenderPanelState(Gns430PanelArtwork artwork, string control, string state)

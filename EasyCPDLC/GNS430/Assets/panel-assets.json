@@ -198,6 +198,14 @@
         "large-cw": "controls/left_encoder-large-cw.png",
         "small-ccw": "controls/left_encoder-small-ccw.png",
         "small-cw": "controls/left_encoder-small-cw.png"
+      },
+      "pivot": [
+        78,
+        82
+      ],
+      "layers": {
+        "large": "controls/left_encoder-large.png",
+        "small": "controls/left_encoder-small.png"
       }
     },
     "right_encoder": {
@@ -214,6 +222,14 @@
         "large-cw": "controls/right_encoder-large-cw.png",
         "small-ccw": "controls/right_encoder-small-ccw.png",
         "small-cw": "controls/right_encoder-small-cw.png"
+      },
+      "pivot": [
+        79,
+        83
+      ],
+      "layers": {
+        "large": "controls/right_encoder-large.png",
+        "small": "controls/right_encoder-small.png"
       }
     }
   }

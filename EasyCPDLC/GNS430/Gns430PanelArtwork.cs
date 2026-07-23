@@ -30,6 +30,14 @@ namespace EasyCPDLC.GNS430
             ["right_encoder"] = new(799, 246, 158, 160),
         };
 
+        // The photographed knobs protrude from the faceplate, so their mechanical
+        // axes sit slightly below the geometric centers of their rectangular crops.
+        private static readonly IReadOnlyDictionary<string, PointF> EncoderPivots = new Dictionary<string, PointF>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["left_encoder"] = new(78f, 82f),
+            ["right_encoder"] = new(79f, 83f),
+        };
+
         private readonly Dictionary<string, Image> images = new(StringComparer.OrdinalIgnoreCase);
 
         internal Image PanelBackground { get; }
@@ -46,10 +54,65 @@ namespace EasyCPDLC.GNS430
                 return;
             }
 
-            string relative = $"controls/{control}-{state}.png";
+            if (EncoderPivots.ContainsKey(control) && !state.Equals("normal", StringComparison.OrdinalIgnoreCase))
+            {
+                DrawEncoderState(graphics, control, state, bounds);
+                return;
+            }
+
+            string visualState = AssetStateFor(state);
+            string relative = $"controls/{control}-{visualState}.png";
             Image image = Load(relative);
             graphics.DrawImage(image, bounds);
             DrawButtonFinish(graphics, control, state, bounds);
+        }
+
+        private void DrawEncoderState(Graphics graphics, string control, string state, RectangleF bounds)
+        {
+            Image normal = Load($"controls/{control}-normal.png");
+            graphics.DrawImage(normal, bounds);
+
+            PointF pivot = EncoderPivots[control];
+            if (state.Equals("pushed", StringComparison.OrdinalIgnoreCase))
+            {
+                RectangleF cap = new(bounds.X + pivot.X - 41, bounds.Y + pivot.Y - 41, 82, 82);
+                using LinearGradientBrush pushShade = new(
+                    cap,
+                    Color.FromArgb(20, 255, 255, 255),
+                    Color.FromArgb(108, 0, 0, 0),
+                    LinearGradientMode.Vertical);
+                graphics.FillEllipse(pushShade, cap);
+                return;
+            }
+
+            bool large = state.StartsWith("large-", StringComparison.OrdinalIgnoreCase);
+            bool small = state.StartsWith("small-", StringComparison.OrdinalIgnoreCase);
+            bool clockwise = state.EndsWith("-cw", StringComparison.OrdinalIgnoreCase);
+            bool counterClockwise = state.EndsWith("-ccw", StringComparison.OrdinalIgnoreCase);
+            if ((!large && !small) || (!clockwise && !counterClockwise))
+            {
+                return;
+            }
+
+            string layerName = large ? "large" : "small";
+            Image layer = Load($"controls/{control}-{layerName}.png");
+            float angle = clockwise ? 12f : -12f;
+            float pivotX = bounds.X + pivot.X;
+            float pivotY = bounds.Y + pivot.Y;
+            GraphicsState saved = graphics.Save();
+            try
+            {
+                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                graphics.TranslateTransform(pivotX, pivotY);
+                graphics.RotateTransform(angle);
+                graphics.TranslateTransform(-pivotX, -pivotY);
+                graphics.DrawImage(layer, bounds);
+            }
+            finally
+            {
+                graphics.Restore(saved);
+            }
         }
 
         private static void DrawButtonFinish(Graphics graphics, string control, string state, RectangleF controlBounds)
@@ -63,9 +126,17 @@ namespace EasyCPDLC.GNS430
             GraphicsState saved = graphics.Save();
             try
             {
-                graphics.SetClip(pressedBounds);
+                RectangleF faceBounds = ButtonFaceBounds(controlBounds);
+                using GraphicsPath faceShape = RoundedRectangle(faceBounds, Math.Min(7f, faceBounds.Height / 3f));
+                graphics.SetClip(faceShape);
+                if (!control.Equals("range", StringComparison.OrdinalIgnoreCase))
+                {
+                    graphics.IntersectClip(pressedBounds);
+                }
+                bool connectedRange = control.Equals("range", StringComparison.OrdinalIgnoreCase);
+                RectangleF gradientBounds = connectedRange ? faceBounds : pressedBounds;
                 using LinearGradientBrush face = new(
-                    pressedBounds,
+                    gradientBounds,
                     Color.FromArgb(72, 255, 255, 255),
                     Color.FromArgb(100, 0, 0, 0),
                     LinearGradientMode.Vertical);
@@ -80,26 +151,53 @@ namespace EasyCPDLC.GNS430
                     },
                     Positions = new[] { 0f, 0.28f, 0.68f, 1f }
                 };
-                graphics.FillRectangle(face, pressedBounds);
+                graphics.FillRectangle(face, gradientBounds);
 
                 using Pen upperEdge = new(Color.FromArgb(72, 255, 255, 255), 1f);
                 using Pen lowerEdge = new(Color.FromArgb(118, 0, 0, 0), 1f);
-                graphics.DrawLine(upperEdge, pressedBounds.Left + 2, pressedBounds.Top + 1, pressedBounds.Right - 2, pressedBounds.Top + 1);
-                graphics.DrawLine(lowerEdge, pressedBounds.Left + 2, pressedBounds.Bottom - 1, pressedBounds.Right - 2, pressedBounds.Bottom - 1);
+                RectangleF edgeBounds = connectedRange ? faceBounds : pressedBounds;
+                graphics.DrawLine(upperEdge, edgeBounds.Left + 2, edgeBounds.Top + 1, edgeBounds.Right - 2, edgeBounds.Top + 1);
+                graphics.DrawLine(lowerEdge, edgeBounds.Left + 2, edgeBounds.Bottom - 1, edgeBounds.Right - 2, edgeBounds.Bottom - 1);
+
+                if (connectedRange)
+                {
+                    DrawRangeSideShade(graphics, faceBounds, state);
+                }
             }
             finally
             {
                 graphics.Restore(saved);
             }
 
-            if (control.Equals("range", StringComparison.OrdinalIgnoreCase))
+        }
+
+        private static void DrawRangeSideShade(Graphics graphics, RectangleF faceBounds, string state)
+        {
+            bool decrease = state.Equals("decrease-pressed", StringComparison.OrdinalIgnoreCase);
+            bool increase = state.Equals("increase-pressed", StringComparison.OrdinalIgnoreCase);
+            if (!decrease && !increase)
             {
-                float join = controlBounds.Left + (controlBounds.Width / 2f);
-                using Pen sharedSeam = new(Color.FromArgb(155, 7, 8, 8), 1f);
-                using Pen sharedHighlight = new(Color.FromArgb(55, 255, 255, 255), 1f);
-                graphics.DrawLine(sharedSeam, join, controlBounds.Top + 4, join, controlBounds.Bottom - 4);
-                graphics.DrawLine(sharedHighlight, join + 1, controlBounds.Top + 5, join + 1, controlBounds.Bottom - 5);
+                return;
             }
+
+            using LinearGradientBrush sideShade = new(
+                faceBounds,
+                Color.Transparent,
+                Color.Transparent,
+                LinearGradientMode.Horizontal);
+            sideShade.InterpolationColors = new ColorBlend
+            {
+                Colors = decrease
+                    ? new[] { Color.FromArgb(58, 0, 0, 0), Color.FromArgb(28, 0, 0, 0), Color.Transparent, Color.Transparent }
+                    : new[] { Color.Transparent, Color.Transparent, Color.FromArgb(28, 0, 0, 0), Color.FromArgb(58, 0, 0, 0) },
+                Positions = new[] { 0f, 0.38f, 0.58f, 1f }
+            };
+            graphics.FillRectangle(sideShade, faceBounds);
+        }
+
+        internal static string AssetStateFor(string state)
+        {
+            return !string.IsNullOrWhiteSpace(state) && state.Contains("pressed", StringComparison.OrdinalIgnoreCase) ? "normal" : state;
         }
 
         internal static RectangleF PressedSegmentBounds(string control, string state, RectangleF controlBounds)
@@ -109,28 +207,58 @@ namespace EasyCPDLC.GNS430
                 return RectangleF.Empty;
             }
 
+            RectangleF faceBounds = ButtonFaceBounds(controlBounds);
             if (!control.Equals("range", StringComparison.OrdinalIgnoreCase))
             {
-                return controlBounds;
+                return faceBounds;
             }
 
-            float halfWidth = controlBounds.Width / 2f;
+            float join = controlBounds.Left + (controlBounds.Width / 2f);
             if (state.Equals("decrease-pressed", StringComparison.OrdinalIgnoreCase))
             {
-                return new RectangleF(controlBounds.Left, controlBounds.Top, halfWidth, controlBounds.Height);
+                return new RectangleF(faceBounds.Left, faceBounds.Top, join - faceBounds.Left, faceBounds.Height);
             }
 
             if (state.Equals("increase-pressed", StringComparison.OrdinalIgnoreCase))
             {
-                return new RectangleF(controlBounds.Left + halfWidth, controlBounds.Top, halfWidth, controlBounds.Height);
+                return new RectangleF(join, faceBounds.Top, faceBounds.Right - join, faceBounds.Height);
             }
 
-            return controlBounds;
+            return faceBounds;
+        }
+
+        private static RectangleF ButtonFaceBounds(RectangleF controlBounds)
+        {
+            float horizontalInset = Math.Max(3f, controlBounds.Width * 0.04f);
+            float topInset = Math.Max(4f, controlBounds.Height * 0.08f);
+            float bottomInset = Math.Max(5f, controlBounds.Height * 0.12f);
+            return new RectangleF(
+                controlBounds.Left + horizontalInset,
+                controlBounds.Top + topInset,
+                controlBounds.Width - (horizontalInset * 2f),
+                controlBounds.Height - topInset - bottomInset);
+        }
+
+        private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius)
+        {
+            float diameter = radius * 2f;
+            GraphicsPath path = new();
+            path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+            path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+            path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+            path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+            path.CloseFigure();
+            return path;
         }
 
         internal static RectangleF ControlBounds(string control)
         {
             return Bounds.TryGetValue(control ?? string.Empty, out RectangleF bounds) ? bounds : RectangleF.Empty;
+        }
+
+        internal static PointF EncoderPivot(string control)
+        {
+            return EncoderPivots.TryGetValue(control ?? string.Empty, out PointF pivot) ? pivot : PointF.Empty;
         }
 
         private Image Load(string relative)
