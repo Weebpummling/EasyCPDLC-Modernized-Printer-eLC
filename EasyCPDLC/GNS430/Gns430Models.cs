@@ -16,8 +16,31 @@ namespace EasyCPDLC.GNS430
         Messages,
         MessageDetail,
         Logon,
+        AtcMenu,
+        AtcRequest,
+        RequestReview,
+        AocMenu,
+        AocRequest,
+        AocReview,
+        LoadControl,
+        LoadReview,
         Menu,
         Help
+    }
+
+    internal enum Gns430WorkflowKind
+    {
+        None,
+        AtcDirect,
+        AtcLevel,
+        AtcSpeed,
+        AtcWhenCanWe,
+        AtcFreeText,
+        AocTelex,
+        AocMetar,
+        AocAtis,
+        AocPreDeparture,
+        AocOceanic
     }
 
     internal sealed class Gns430MessageSnapshot
@@ -38,6 +61,9 @@ namespace EasyCPDLC.GNS430
         internal string Callsign { get; init; } = string.Empty;
         internal string CurrentAtcUnit { get; init; } = string.Empty;
         internal string PendingLogon { get; init; } = string.Empty;
+        internal string Departure { get; init; } = string.Empty;
+        internal string Arrival { get; init; } = string.Empty;
+        internal string Aircraft { get; init; } = string.Empty;
         internal IReadOnlyList<Gns430MessageSnapshot> Messages { get; init; } = new Gns430MessageSnapshot[0];
     }
 }

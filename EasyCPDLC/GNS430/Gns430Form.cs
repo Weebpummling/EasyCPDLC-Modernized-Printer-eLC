@@ -60,6 +60,21 @@ namespace EasyCPDLC.GNS430
         private PanelButton pressedPanelButton;
         private bool pressedCursor;
         private bool pressedScreen;
+        private Gns430Workflow workflow;
+        private int workflowCharacter;
+        private Gns430LoadControlSession loadSession;
+        private bool operationBusy;
+        private string operationStatus = string.Empty;
+
+        private static readonly string[] AtcMenuItems =
+        {
+            "DIRECT TO", "LEVEL", "SPEED", "WHEN CAN WE", "FREE TEXT"
+        };
+
+        private static readonly string[] AocMenuItems =
+        {
+            "AOC TELEX", "METAR", "ATIS", "PREDEP CLEARANCE", "OCEANIC CLEARANCE", "LOAD CONTROL"
+        };
 
         private sealed class PanelButton
         {
@@ -101,7 +116,7 @@ namespace EasyCPDLC.GNS430
             displayFontFamily = Gns430FontLoader.Family;
             panelButtons = CreatePanelButtons();
 
-            companionInput.CommandReceived += command => BeginInvoke(new Action(() => ExecuteCommand(command)));
+            companionInput.CommandReceived += command => BeginInvoke(new Action(() => HandleCompanionCommand(command)));
             refreshTimer.Tick += RefreshTimerTick;
             refreshTimer.Start();
 
@@ -156,7 +171,12 @@ namespace EasyCPDLC.GNS430
 
         private void RefreshTimerTick(object sender, EventArgs e)
         {
-            companionInput.UpdateStatus(snapshot, page, cursorActive);
+            if (preferences.CompanionModuleEnabled && !companionInput.Enabled && refreshTick % 50 == 0)
+            {
+                companionInput.TryEnable(Handle, WmAppSimConnect, out _);
+            }
+
+            companionInput.UpdateStatus(snapshot, page, cursorActive, preferences.DcduCompanionMode);
             refreshTick += 1;
             if (refreshTick % 3 == 0)
             {
@@ -169,6 +189,11 @@ namespace EasyCPDLC.GNS430
         private void RefreshSnapshot()
         {
             snapshot = backend.GetGns430Snapshot();
+            if (!ShouldPreserveMessageSelection(page))
+            {
+                return;
+            }
+
             if (snapshot.Messages.Count == 0)
             {
                 selectedIndex = 0;
@@ -217,19 +242,16 @@ namespace EasyCPDLC.GNS430
                     ToggleMenu();
                     break;
                 case Gns430Command.Message:
+                    OpenMessages(true);
+                    break;
                 case Gns430Command.Nearest:
-                    SetPage(
-                        page == Gns430Page.Messages ? Gns430Page.Status : Gns430Page.Messages,
-                        page != Gns430Page.Messages,
-                        page == Gns430Page.Messages ? Gns430PageGroup.Nav : Gns430PageGroup.Nrst);
+                    OpenMessages(false);
                     break;
                 case Gns430Command.FlightPlan:
-                    backend.Gns430OpenAtcRequests();
-                    SetTransient("ATC MENU OPENED");
+                    SetPage(Gns430Page.AtcMenu, true, Gns430PageGroup.Wpt);
                     break;
                 case Gns430Command.Procedure:
-                    backend.Gns430OpenAocTelex();
-                    SetTransient("AOC MENU OPENED");
+                    SetPage(Gns430Page.AocMenu, true, Gns430PageGroup.Aux);
                     break;
                 case Gns430Command.DirectTo:
                     SetPage(Gns430Page.Logon, true, Gns430PageGroup.Wpt);
@@ -262,6 +284,18 @@ namespace EasyCPDLC.GNS430
 
         private void RotateLarge(int direction)
         {
+            if ((page == Gns430Page.AtcRequest || page == Gns430Page.AocRequest) && workflow != null)
+            {
+                MoveWorkflowCursor(direction);
+                return;
+            }
+
+            if (page == Gns430Page.LoadControl && loadSession != null && !operationBusy)
+            {
+                selectedIndex = Wrap(selectedIndex + direction, loadSession.FieldCount);
+                return;
+            }
+
             if (page == Gns430Page.Logon && cursorActive)
             {
                 logonCharacter = Wrap(logonCharacter + direction, 4);
@@ -293,6 +327,13 @@ namespace EasyCPDLC.GNS430
                 return;
             }
 
+            if (page == Gns430Page.AtcMenu || page == Gns430Page.AocMenu)
+            {
+                int count = page == Gns430Page.AtcMenu ? AtcMenuItems.Length : AocMenuItems.Length;
+                selectedIndex = Wrap(selectedIndex + direction, count);
+                return;
+            }
+
             if (page == Gns430Page.Help)
             {
                 if (cursorActive)
@@ -318,6 +359,18 @@ namespace EasyCPDLC.GNS430
 
         private void RotateSmall(int direction)
         {
+            if ((page == Gns430Page.AtcRequest || page == Gns430Page.AocRequest) && workflow != null)
+            {
+                workflow.Fields[Math.Clamp(selectedIndex, 0, workflow.Fields.Count - 1)].Step(workflowCharacter, direction);
+                return;
+            }
+
+            if (page == Gns430Page.LoadControl && loadSession != null && !operationBusy)
+            {
+                StepLoadControlField(direction);
+                return;
+            }
+
             if (page == Gns430Page.Logon && cursorActive)
             {
                 char[] characters = "_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".ToCharArray();
@@ -383,8 +436,7 @@ namespace EasyCPDLC.GNS430
                             SetTransient(snapshot.Connected ? "DISCONNECTING" : "CONNECTING");
                             break;
                         case 3:
-                            backend.Gns430OpenAtcRequests();
-                            SetTransient("ATC MENU OPENED");
+                            SetPage(Gns430Page.AtcMenu, true, Gns430PageGroup.Wpt);
                             break;
                     }
                     break;
@@ -426,6 +478,52 @@ namespace EasyCPDLC.GNS430
                     SetTransient("LOGON SENT " + station);
                     break;
 
+                case Gns430Page.AtcMenu:
+                    BeginWorkflow((Gns430WorkflowKind)(selectedIndex + (int)Gns430WorkflowKind.AtcDirect));
+                    break;
+
+                case Gns430Page.AocMenu:
+                    if (selectedIndex == AocMenuItems.Length - 1)
+                    {
+                        await OpenLoadControlAsync();
+                    }
+                    else
+                    {
+                        BeginWorkflow((Gns430WorkflowKind)(selectedIndex + (int)Gns430WorkflowKind.AocTelex));
+                    }
+                    break;
+
+                case Gns430Page.AtcRequest:
+                case Gns430Page.AocRequest:
+                    string validation = workflow?.ValidationError() ?? "NO REQUEST";
+                    if (!string.IsNullOrWhiteSpace(validation))
+                    {
+                        SetTransient(validation);
+                        return;
+                    }
+                    SetPage(page == Gns430Page.AtcRequest ? Gns430Page.RequestReview : Gns430Page.AocReview, false);
+                    break;
+
+                case Gns430Page.RequestReview:
+                case Gns430Page.AocReview:
+                    await SendWorkflowAsync();
+                    break;
+
+                case Gns430Page.LoadControl:
+                    if (loadSession == null)
+                    {
+                        await OpenLoadControlAsync();
+                    }
+                    else
+                    {
+                        SetPage(Gns430Page.LoadReview, false);
+                    }
+                    break;
+
+                case Gns430Page.LoadReview:
+                    await GenerateLoadsheetAsync();
+                    break;
+
                 case Gns430Page.Menu:
                     ActivateMenuItem(selectedIndex);
                     break;
@@ -446,12 +544,10 @@ namespace EasyCPDLC.GNS430
                     SetPage(Gns430Page.Status, false, Gns430PageGroup.Nav);
                     break;
                 case 1:
-                    backend.Gns430OpenAtcRequests();
-                    SetTransient("ATC MENU OPENED");
+                    SetPage(Gns430Page.AtcMenu, true, Gns430PageGroup.Wpt);
                     break;
                 case 2:
-                    backend.Gns430OpenAocTelex();
-                    SetTransient("AOC MENU OPENED");
+                    SetPage(Gns430Page.AocMenu, true, Gns430PageGroup.Aux);
                     break;
                 case 3:
                     backend.Gns430OpenSettings();
@@ -473,6 +569,8 @@ namespace EasyCPDLC.GNS430
             {
                 companionInput.Disable();
                 preferences.CompanionModuleEnabled = false;
+                preferences.DcduCompanionMode = false;
+                preferences.Save(Bounds);
                 SetTransient("MSFS MODULE OFF");
                 return;
             }
@@ -480,11 +578,14 @@ namespace EasyCPDLC.GNS430
             if (companionInput.TryEnable(Handle, WmAppSimConnect, out string error))
             {
                 preferences.CompanionModuleEnabled = true;
+                preferences.Save(Bounds);
                 SetTransient("WAITING FOR MODULE");
             }
             else
             {
                 preferences.CompanionModuleEnabled = false;
+                preferences.DcduCompanionMode = false;
+                preferences.Save(Bounds);
                 MessageBox.Show(this, error, "Companion module unavailable", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 SetTransient("MSFS MODULE OFFLINE");
             }
@@ -492,6 +593,39 @@ namespace EasyCPDLC.GNS430
 
         private void ClearOrBack()
         {
+            if ((page == Gns430Page.AtcRequest || page == Gns430Page.AocRequest) && workflow != null && cursorActive)
+            {
+                Gns430EditField field = workflow.Fields[Math.Clamp(selectedIndex, 0, workflow.Fields.Count - 1)];
+                if (!string.IsNullOrWhiteSpace(field.CleanValue) && !field.IsOption)
+                {
+                    field.ClearCharacter(workflowCharacter);
+                    return;
+                }
+                SetPage(page == Gns430Page.AtcRequest ? Gns430Page.AtcMenu : Gns430Page.AocMenu, true);
+                return;
+            }
+
+            if (page == Gns430Page.RequestReview)
+            {
+                SetPage(Gns430Page.AtcRequest, true);
+                return;
+            }
+            if (page == Gns430Page.AocReview)
+            {
+                SetPage(Gns430Page.AocRequest, true);
+                return;
+            }
+            if (page == Gns430Page.LoadReview)
+            {
+                SetPage(Gns430Page.LoadControl, true);
+                return;
+            }
+            if (page == Gns430Page.AtcMenu || page == Gns430Page.AocMenu || page == Gns430Page.LoadControl)
+            {
+                SetPage(Gns430Page.Status, false, Gns430PageGroup.Nav);
+                return;
+            }
+
             if (page == Gns430Page.Logon && cursorActive)
             {
                 char[] code = logonCode.ToCharArray();
@@ -557,8 +691,8 @@ namespace EasyCPDLC.GNS430
             return group switch
             {
                 Gns430PageGroup.Nav => new[] { Gns430Page.Status, Gns430Page.Messages },
-                Gns430PageGroup.Wpt => new[] { Gns430Page.Logon },
-                Gns430PageGroup.Aux => new[] { Gns430Page.Help },
+                Gns430PageGroup.Wpt => new[] { Gns430Page.Logon, Gns430Page.AtcMenu },
+                Gns430PageGroup.Aux => new[] { Gns430Page.AocMenu, Gns430Page.LoadControl, Gns430Page.Help },
                 Gns430PageGroup.Nrst => new[] { Gns430Page.Messages },
                 _ => new[] { Gns430Page.Status }
             };
@@ -577,6 +711,10 @@ namespace EasyCPDLC.GNS430
             selectedIndex = ShouldPreserveMessageSelection(newPage)
                 ? Math.Clamp(selectedIndex, 0, Math.Max(0, snapshot.Messages.Count - 1))
                 : 0;
+            if (newPage != Gns430Page.AtcRequest && newPage != Gns430Page.AocRequest)
+            {
+                workflowCharacter = 0;
+            }
         }
 
         private Gns430MessageSnapshot SelectedMessage()
@@ -597,6 +735,161 @@ namespace EasyCPDLC.GNS430
                 "MSFS MODULE: " + companionInput.Status,
                 "INPUT HELP"
             };
+        }
+
+        private void OpenMessages(bool prioritizeUnread)
+        {
+            int unread = prioritizeUnread
+                ? snapshot.Messages.ToList().FindIndex(message => message.Unread && !message.Outbound)
+                : -1;
+            if (unread >= 0)
+            {
+                selectedIndex = unread;
+                SetPage(Gns430Page.MessageDetail, true, Gns430PageGroup.Nrst);
+                backend.Gns430MarkRead(SelectedMessage());
+                return;
+            }
+
+            SetPage(Gns430Page.Messages, true, Gns430PageGroup.Nrst);
+        }
+
+        private void BeginWorkflow(Gns430WorkflowKind kind)
+        {
+            workflow = Gns430Workflow.Create(kind, snapshot);
+            workflowCharacter = 0;
+            operationStatus = string.Empty;
+            bool atc = kind >= Gns430WorkflowKind.AtcDirect && kind <= Gns430WorkflowKind.AtcFreeText;
+            SetPage(atc ? Gns430Page.AtcRequest : Gns430Page.AocRequest, true,
+                atc ? Gns430PageGroup.Wpt : Gns430PageGroup.Aux);
+        }
+
+        private void MoveWorkflowCursor(int direction)
+        {
+            if (workflow?.Fields.Count > 0)
+            {
+                Gns430EditField field = workflow.Fields[Math.Clamp(selectedIndex, 0, workflow.Fields.Count - 1)];
+                if (field.IsOption)
+                {
+                    selectedIndex = Wrap(selectedIndex + direction, workflow.Fields.Count);
+                    workflowCharacter = direction < 0
+                        ? Math.Max(0, workflow.Fields[selectedIndex].MaxLength - 1)
+                        : 0;
+                    return;
+                }
+
+                int next = workflowCharacter + direction;
+                if (next >= 0 && next < field.MaxLength)
+                {
+                    workflowCharacter = next;
+                    return;
+                }
+
+                selectedIndex = Wrap(selectedIndex + direction, workflow.Fields.Count);
+                Gns430EditField nextField = workflow.Fields[selectedIndex];
+                workflowCharacter = nextField.IsOption || direction > 0 ? 0 : Math.Max(0, nextField.MaxLength - 1);
+            }
+        }
+
+        private void StepLoadControlField(int direction)
+        {
+            if (loadSession == null)
+            {
+                return;
+            }
+
+            if (selectedIndex == 0)
+            {
+                loadSession.AircraftIndex = Wrap(loadSession.AircraftIndex + direction, loadSession.Reference.Aircraft.Count);
+                loadSession.CabinIndex = 0;
+                loadSession.RebuildPassengerSplit();
+            }
+            else if (selectedIndex == 1)
+            {
+                loadSession.CabinIndex = Wrap(loadSession.CabinIndex + direction, loadSession.Aircraft.CabinConfigurations.Count);
+                loadSession.RebuildPassengerSplit();
+            }
+            else if (selectedIndex == 2)
+            {
+                loadSession.FormatIndex = Wrap(loadSession.FormatIndex + direction, loadSession.Reference.Formats.Count);
+            }
+            else
+            {
+                int passengerIndex = selectedIndex - 3;
+                if (passengerIndex >= 0 && passengerIndex < loadSession.PassengerSplit.Count)
+                {
+                    PassengerClassAllocation allocation = loadSession.PassengerSplit[passengerIndex];
+                    allocation.Passengers = Math.Clamp(allocation.Passengers + direction, 0, 999);
+                }
+            }
+        }
+
+        private async Task OpenLoadControlAsync()
+        {
+            SetPage(Gns430Page.LoadControl, true, Gns430PageGroup.Aux);
+            operationBusy = true;
+            operationStatus = "LOADING SIMBRIEF / ELOAD";
+            try
+            {
+                loadSession = await backend.Gns430PrepareLoadControlAsync();
+                operationStatus = "REVIEW LOAD DATA";
+            }
+            catch (Exception ex)
+            {
+                loadSession = null;
+                operationStatus = CollapseWhitespace(ex.Message).ToUpperInvariant();
+            }
+            finally
+            {
+                operationBusy = false;
+            }
+        }
+
+        private async Task SendWorkflowAsync()
+        {
+            if (operationBusy || workflow == null)
+            {
+                return;
+            }
+
+            operationBusy = true;
+            operationStatus = "SENDING REQUEST";
+            Gns430OperationResult result = await backend.Gns430SendWorkflowAsync(workflow, snapshot);
+            operationBusy = false;
+            operationStatus = result.Status;
+            SetTransient(result.Status);
+            if (result.Success)
+            {
+                RefreshSnapshot();
+                selectedIndex = 0;
+                SetPage(Gns430Page.Messages, true, Gns430PageGroup.Nav);
+            }
+        }
+
+        private async Task GenerateLoadsheetAsync()
+        {
+            if (operationBusy || loadSession == null)
+            {
+                return;
+            }
+
+            operationBusy = true;
+            operationStatus = "GENERATING LOADSHEET";
+            Gns430OperationResult result = await backend.Gns430GenerateLoadsheetAsync(loadSession);
+            operationBusy = false;
+            operationStatus = result.Status;
+            SetTransient(result.Status);
+            if (result.Success)
+            {
+                RefreshSnapshot();
+                int received = snapshot.Messages.ToList().FindIndex(message =>
+                    message.Unread && string.Equals(message.Type, "LOADSHEET", StringComparison.OrdinalIgnoreCase));
+                selectedIndex = Math.Max(0, received);
+                SetPage(received >= 0 ? Gns430Page.MessageDetail : Gns430Page.Messages, true, Gns430PageGroup.Nrst);
+                if (received >= 0)
+                {
+                    backend.Gns430MarkRead(SelectedMessage());
+                }
+            }
         }
 
         private void SetTransient(string text)
@@ -697,7 +990,12 @@ namespace EasyCPDLC.GNS430
                 LogonCode = logonCode,
                 LogonCharacter = logonCharacter,
                 TransientStatus = DateTime.UtcNow < transientStatusUntilUtc ? transientStatus : string.Empty,
-                MenuItems = MenuItems()
+                MenuItems = MenuItems(),
+                Workflow = workflow,
+                WorkflowCharacter = workflowCharacter,
+                LoadSession = loadSession,
+                OperationBusy = operationBusy,
+                OperationStatus = operationStatus
             };
             using Bitmap lcd = Gns430LcdRenderer.Render(state);
             InterpolationMode previousInterpolation = graphics.InterpolationMode;
@@ -1202,6 +1500,49 @@ namespace EasyCPDLC.GNS430
             Invalidate();
         }
 
+        private void HandleCompanionCommand(Gns430Command command)
+        {
+            if (command >= Gns430Command.DcduLeftLsk1)
+            {
+                if (preferences.DcduCompanionMode)
+                {
+                    backend.HandleDcduCompanionCommand(command);
+                }
+
+                return;
+            }
+
+            if (!preferences.DcduCompanionMode)
+            {
+                ExecuteCommand(command);
+            }
+        }
+
+        internal bool DcduCompanionMode => preferences.DcduCompanionMode;
+
+        internal bool SetDcduCompanionMode(bool enabled, out string error)
+        {
+            error = string.Empty;
+            preferences.DcduCompanionMode = enabled;
+            if (enabled)
+            {
+                preferences.CompanionModuleEnabled = true;
+            }
+
+            if (enabled && !companionInput.Enabled)
+            {
+                if (!companionInput.TryEnable(Handle, WmAppSimConnect, out error))
+                {
+                    preferences.Save(Bounds);
+                    return true;
+                }
+            }
+
+            preferences.Save(Bounds);
+            Invalidate();
+            return true;
+        }
+
         private void PanelMouseWheel(object sender, MouseEventArgs e)
         {
             Gns430Command command = KnobWheelCommandAt(ToLogicalPoint(e.Location), new PointF(878, 326), e.Delta);
@@ -1301,6 +1642,27 @@ namespace EasyCPDLC.GNS430
                 int first = Math.Max(0, selectedIndex - 5);
                 selectedIndex = Math.Clamp(first + (int)((screenY - 40) / 9), 0, MenuItems().Count - 1);
                 ActivateSelection();
+            }
+            else if ((page == Gns430Page.AtcMenu || page == Gns430Page.AocMenu) && screenY >= 12 && screenY < 112 && screenX >= 59)
+            {
+                int count = page == Gns430Page.AtcMenu ? AtcMenuItems.Length : AocMenuItems.Length;
+                int first = Math.Max(0, selectedIndex - 5);
+                selectedIndex = Math.Clamp(first + (int)((screenY - 12) / 14), 0, count - 1);
+                cursorActive = true;
+                ActivateSelection();
+            }
+            else if ((page == Gns430Page.AtcRequest || page == Gns430Page.AocRequest) && workflow != null && screenY >= 10 && screenY < 113 && screenX >= 59)
+            {
+                int first = Math.Max(0, selectedIndex - 2);
+                selectedIndex = Math.Clamp(first + (int)((screenY - 11) / 22), 0, workflow.Fields.Count - 1);
+                workflowCharacter = 0;
+                cursorActive = true;
+            }
+            else if (page == Gns430Page.LoadControl && loadSession != null && screenY >= 10 && screenY < 105 && screenX >= 59)
+            {
+                int first = Math.Max(0, selectedIndex - 4);
+                selectedIndex = Math.Clamp(first + (int)((screenY - 12) / 15), 0, loadSession.FieldCount - 1);
+                cursorActive = true;
             }
         }
 

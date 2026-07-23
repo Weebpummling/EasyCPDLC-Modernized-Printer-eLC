@@ -9,7 +9,7 @@
 
 > **Testing only:** the GNS 430 interface mod is experimental, incomplete, and not part of the supported release. Use it only in a simulator test environment.
 
-A separate [GNS 430-style interface mod](https://github.com/Weebpummling/EasyCPDLC-Modernized-Printer-eLC/tree/testing/gns430-interface/EasyCPDLC/GNS430) is available for mixed-equipment home cockpits on the `testing/gns430-interface` branch. It reuses the live EasyCPDLC backend and supports dual-encoder interaction through a private MSFS 2024 companion module. The test package contains a ready-to-import MobiFlight project whose actions address only EasyCPDLC private L-vars; it does not send Garmin, radio, flight-plan, or aircraft GPS events. The mod's own [README](EasyCPDLC/GNS430/README.md) explains its current functionality and limitations.
+A separate [GNS 430-style interface mod](https://github.com/Weebpummling/EasyCPDLC-Modernized-Printer-eLC/tree/testing/gns430-interface/EasyCPDLC/GNS430) is available for mixed-equipment home cockpits on the `testing/gns430-interface` branch. It reuses the live EasyCPDLC backend and supports dual-encoder interaction through a private MSFS 2024 companion module. The test package contains a ready-to-import MobiFlight project whose actions address only EasyCPDLC private L-vars; it does not send Garmin, radio, flight-plan, or aircraft GPS events. A tray editor saves one shared credential set across DCDU and GNS interfaces. An optional, explicitly gated DCDU companion mode exposes private LSK and panel-button L-vars without enabling them in GNS mode. The mod's own [README](EasyCPDLC/GNS430/README.md) and [illustrated tutorial](EasyCPDLC/GNS430/Tutorial/README.md) explain its current functionality and limitations.
 
 > **Hoppie warning:** before connecting EasyCPDLC, set the aircraft's internal Hoppie/ATC network to **NONE** and remove or disable its Hoppie code. EasyCPDLC must be the only Hoppie client using the flight's callsign. Running the aircraft and EasyCPDLC as simultaneous Hoppie clients can divide pending messages unpredictably between them.
 
@@ -176,9 +176,9 @@ See [README.UPSTREAM.md](README.UPSTREAM.md) for the full upstream documentation
 
 ## Screenshots
 
-| Login | Airbus DCDU | Boeing DCDU |
-|---|---|---|
-| ![Login screen](assets/screenshots/login.png) | ![Airbus-style DCDU](assets/screenshots/dcdu-airbus1.png) | ![Boeing-style DCDU](assets/screenshots/dcdu-boeing1.png) |
+| Login | Airbus DCDU | Boeing DCDU | Experimental GNS 430 |
+|---|---|---|---|
+| ![Login screen](assets/screenshots/login.png) | ![Airbus-style DCDU](assets/screenshots/dcdu-airbus1.png) | ![Boeing-style DCDU](assets/screenshots/dcdu-boeing1.png) | [![GNS 430 direct request](EasyCPDLC/GNS430/Screenshots/gns430-direct-request.png)](EasyCPDLC/GNS430/Tutorial/README.md) |
 
 ## Requirements
 

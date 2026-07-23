@@ -1,0 +1,277 @@
+{
+  "Name": "EasyCPDLC DCDU Companion Module",
+  "Sim": "msfs",
+  "Aircraft": [],
+  "Features": { "FSUIPC": false, "ProSim": false },
+  "ControllerBindings": null,
+  "ConfigFiles": [
+    {
+      "Label": "EasyCPDLC DCDU Companion Module",
+      "FileName": null,
+      "ReferenceOnly": false,
+      "EmbedContent": true,
+      "ConfigItems": [
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_L1)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_L1" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_L1",
+          "GUID": "ec430000-0000-4000-8000-000000000001", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_L1", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_L2)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_L2" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_L2",
+          "GUID": "ec430000-0000-4000-8000-000000000002", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_L2", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_L3)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_L3" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_L3",
+          "GUID": "ec430000-0000-4000-8000-000000000003", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_L3", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_L4)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_L4" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_L4",
+          "GUID": "ec430000-0000-4000-8000-000000000004", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_L4", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_L5)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_L5" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_L5",
+          "GUID": "ec430000-0000-4000-8000-000000000005", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_L5", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_L6)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_L6" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_L6",
+          "GUID": "ec430000-0000-4000-8000-000000000006", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_L6", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_R1)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_R1" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_R1",
+          "GUID": "ec430000-0000-4000-8000-000000000007", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_R1", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_R2)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_R2" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_R2",
+          "GUID": "ec430000-0000-4000-8000-000000000008", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_R2", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_R3)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_R3" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_R3",
+          "GUID": "ec430000-0000-4000-8000-000000000009", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_R3", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_R4)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_R4" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_R4",
+          "GUID": "ec430000-0000-4000-8000-000000000010", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_R4", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_R5)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_R5" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_R5",
+          "GUID": "ec430000-0000-4000-8000-000000000011", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_R5", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_LSK_R6)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_LSK_R6" },
+          "DeviceType": "Button", "DeviceName": "BTN_LSK_R6",
+          "GUID": "ec430000-0000-4000-8000-000000000012", "Active": true,
+          "Name": "EASYCPDLC_DCDU_LSK_R6", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_CONNECT)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_CONNECT" },
+          "DeviceType": "Button", "DeviceName": "BTN_CONNECT",
+          "GUID": "ec430000-0000-4000-8000-000000000013", "Active": true,
+          "Name": "EASYCPDLC_DCDU_CONNECT", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_AOC)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_AOC" },
+          "DeviceType": "Button", "DeviceName": "BTN_AOC",
+          "GUID": "ec430000-0000-4000-8000-000000000014", "Active": true,
+          "Name": "EASYCPDLC_DCDU_AOC", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_ATC)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_ATC" },
+          "DeviceType": "Button", "DeviceName": "BTN_ATC",
+          "GUID": "ec430000-0000-4000-8000-000000000015", "Active": true,
+          "Name": "EASYCPDLC_DCDU_ATC", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_SETTINGS)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_SETTINGS" },
+          "DeviceType": "Button", "DeviceName": "BTN_SETTINGS",
+          "GUID": "ec430000-0000-4000-8000-000000000016", "Active": true,
+          "Name": "EASYCPDLC_DCDU_SETTINGS", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_RELOAD)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_RELOAD" },
+          "DeviceType": "Button", "DeviceName": "BTN_RELOAD",
+          "GUID": "ec430000-0000-4000-8000-000000000017", "Active": true,
+          "Name": "EASYCPDLC_DCDU_RELOAD", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_PRINT)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_PRINT" },
+          "DeviceType": "Button", "DeviceName": "BTN_PRINT",
+          "GUID": "ec430000-0000-4000-8000-000000000018", "Active": true,
+          "Name": "EASYCPDLC_DCDU_PRINT", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_REPRINT)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_REPRINT" },
+          "DeviceType": "Button", "DeviceName": "BTN_REPRINT",
+          "GUID": "ec430000-0000-4000-8000-000000000019", "Active": true,
+          "Name": "EASYCPDLC_DCDU_REPRINT", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        },
+        {
+          "button": {
+            "onPress": { "Command": "1 (>L:EASYCPDLC_DCDU_HIDE)", "Type": "MSFS2020CustomInputAction" },
+            "onRelease": null, "onLongRelease": null, "onHold": null,
+            "LongReleaseDelay": 350, "HoldDelay": 350, "RepeatDelay": 0
+          },
+          "Device": { "Type": "Button", "Name": "BTN_HIDE" },
+          "DeviceType": "Button", "DeviceName": "BTN_HIDE",
+          "GUID": "ec430000-0000-4000-8000-000000000020", "Active": true,
+          "Name": "EASYCPDLC_DCDU_HIDE", "Type": "InputConfigItem",
+          "Controller": { "Name": "EasyCPDLC DCDU Template", "Serial": "EASYCPDLC-DCDU-TEMPLATE" },
+          "Preconditions": [], "Modifiers": { "Items": [] }, "ConfigRefs": [], "Status": {}
+        }
+      ]
+    }
+  ]
+}

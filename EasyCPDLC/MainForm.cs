@@ -3423,6 +3423,7 @@ private TelexForm tForm;
         private ContextMenuStrip trayMenu;
         private ToolStripMenuItem trayArtworkMenuItem;
         private ToolStripMenuItem trayOnScreenButtonsMenuItem;
+        private ToolStripMenuItem trayDcduCompanionMenuItem;
         private bool applyingMainWindowLayout;
         private readonly DcduHotspotButton mainMinimizeButton = new();
         private readonly DcduHotspotButton mainReloadFlightPlanButton = new();
@@ -3676,6 +3677,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             ApplyDisplayStyle();
             this.ShowInTaskbar = false;
             ConfigureTrayIcon();
+            RestoreDcduCompanionMode();
             ConfigureMainFrameButtonHotspots();
             StartVpilotBridge();
             dcduFrame.Paint += DcduFrame_PaintPrinterButton;
@@ -17198,7 +17200,10 @@ airbusAocSendLabel = null;
             form.ShowDialog(this);
         }
 
-        internal void ReceiveELoadControlLoadsheet(ELoadLoadsheetResult result, SimbriefLoadsheetData flight)
+        internal void ReceiveELoadControlLoadsheet(
+            ELoadLoadsheetResult result,
+            SimbriefLoadsheetData flight,
+            bool openForReview = true)
         {
             string body = string.IsNullOrWhiteSpace(result?.AcarsMessage)
                 ? result?.Loadsheet
@@ -17223,6 +17228,11 @@ airbusAocSendLabel = null;
                 true);
 
             if (message == null)
+            {
+                return;
+            }
+
+            if (!openForReview)
             {
                 return;
             }
@@ -18993,6 +19003,13 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 trayMenu.Items.Add("Open GNS 430 panel", null, (_, __) => ShowGns430Panel());
                 trayMenu.Items.Add("Hide EasyCPDLC", null, (_, __) => Hide());
                 trayMenu.Items.Add(new ToolStripSeparator());
+                trayMenu.Items.Add("Connection credentials...", null, (_, __) => ShowSharedCredentialEditor());
+                trayDcduCompanionMenuItem = new ToolStripMenuItem("Use MSFS companion for DCDU controls")
+                {
+                    CheckOnClick = false
+                };
+                trayDcduCompanionMenuItem.Click += (_, __) => ToggleDcduCompanionMode();
+                trayMenu.Items.Add(trayDcduCompanionMenuItem);
                 trayMenu.Items.Add("Open Display Settings", null, (_, __) =>
                 {
                     BringEasyCpdlcWindowToFront();
@@ -19006,6 +19023,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 trayMenu.Items.Add(new ToolStripSeparator());
                 trayMenu.Items.Add("Exit EasyCPDLC", null, (_, __) => ExitButton_Click(exitButton, EventArgs.Empty));
                 SyncTrayDisplayMenuState();
+                SyncTrayCompanionMenuState();
 
                 trayIcon?.Dispose();
                 trayIcon = new NotifyIcon
@@ -19021,6 +19039,52 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             catch (Exception ex)
             {
                 Logger.Warn(ex, "Could not create EasyCPDLC tray icon");
+            }
+        }
+
+        private void ShowSharedCredentialEditor()
+        {
+            using CredentialSettingsForm form = new();
+            if (form.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
+
+            if (!Connected)
+            {
+                cid = SavedCID;
+                logonCode = SavedHoppieCode;
+            }
+
+            string note = Connected
+                ? "Credentials saved. The active Hoppie session is unchanged; reconnect to use the new CID or Hoppie code."
+                : "Credentials saved for the DCDU, GNS 430, SimBrief, and eLoadControl interfaces.";
+            trayIcon?.ShowBalloonTip(3500, "EasyCPDLC credentials", note, ToolTipIcon.Info);
+        }
+
+        private void ToggleDcduCompanionMode()
+        {
+            bool enable = !IsDcduCompanionModeEnabled();
+            if (!SetDcduCompanionMode(enable, out string error))
+            {
+                MessageBox.Show(this, error, "DCDU companion mode", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            SyncTrayCompanionMenuState();
+            string note = enable
+                ? string.IsNullOrWhiteSpace(error)
+                    ? "DCDU LSK and button L-vars are enabled. GNS command L-vars are ignored while this mode is active."
+                    : "DCDU mode is saved and will connect automatically when MSFS/SimConnect becomes available."
+                : "DCDU LSK and button L-vars are disabled.";
+            trayIcon?.ShowBalloonTip(4000, "EasyCPDLC MSFS companion", note, ToolTipIcon.Info);
+        }
+
+        private void SyncTrayCompanionMenuState()
+        {
+            if (trayDcduCompanionMenuItem != null)
+            {
+                trayDcduCompanionMenuItem.Checked = IsDcduCompanionModeEnabled();
             }
         }
 

@@ -12,7 +12,7 @@ Do not run EasyCPDLC and the aircraft's native Hoppie client together. Hoppie pr
 
 The visual and interaction model follows the Garmin GNS 430 Pilot's Guide (190-00140-00 Rev. P), especially sections 1.2 and 1.3:
 
-- Large right knob: change the `NAV`/`WPT`/`AUX`/`NRST` page group with the cursor off; move the cursor through fields or list items with it on.
+- Large right knob: change the `DLK`/`ATC`/`AOC`/`MSG` page group with the cursor off; move the cursor through fields or list items with it on.
 - Small right knob: change the page within a group with the cursor off; change the selected value with it on.
 - Push `CRSR`: enable or disable the cursor.
 - `ENT`: accept or activate.
@@ -23,6 +23,8 @@ The visual and interaction model follows the Garmin GNS 430 Pilot's Guide (190-0
 - Direct-to: CPDLC direct-logon page.
 - `RNG`: display text size.
 - `CDI`: connect or disconnect VATSIM.
+
+The page-group abbreviations describe this datalink adaptation rather than navigation functions: `DLK` contains status and the inbox, `ATC` contains logon and ATC requests, `AOC` contains company/weather/clearance/load functions, and `MSG` is the dedicated message shortcut group.
 
 The LCD is rendered at the real unit's native `240x128` raster resolution and enlarged with nearest-neighbor scaling. It uses a purpose-built 5x7 bitmap alphabet instead of WinForms font rendering, plus the palette sampled from every display capture in the Pilot's Guide: `#3853A4` blue, `#040707` black, `#6ECDDD` cyan, `#69BD45` green, `#F3EC19` yellow, `#B9519F` magenta, and white. Fields, menus, inverse-video selections, scrollbars, page groups, page squares, and bottom annunciators are drawn using the same pixel-coordinate grammar as the guide.
 
@@ -49,6 +51,16 @@ EasyCPDLC.exe --gns430
 
 Closing the panel hides it; the EasyCPDLC backend remains active in the tray.
 
+## Screenshot and tutorial
+
+![EasyCPDLC GNS 430 direct request in use](Screenshots/gns430-direct-request.png)
+
+The illustrated [GNS 430 datalink tutorial](Tutorial/README.md) covers shared credential setup, the page groups, mouse controls, dual-encoder behavior, ATC edit/review/send flow, messages, and MobiFlight operation.
+
+## Shared credentials
+
+Right-click the tray icon and choose **Connection credentials...** to edit the VATSIM CID, Hoppie logon code, SimBrief username or pilot ID, and eLoadControl API key without opening either display's setup pages. The dialog writes the same persistent settings used by the Airbus DCDU, Boeing DCDU, GNS 430, Hoppie, SimBrief, and eLoadControl workflows. Switching or hiding interfaces does not create a second account store. If a Hoppie session is already connected, reconnect before expecting a changed CID or logon code to take effect.
+
 ## Mouse interaction
 
 Physical buttons use press-and-release behavior: hold the left mouse button to depress the photographed key, then release over the same key to activate it and return the artwork to normal. Dragging away before release cancels the action. Click and release the center of the right encoder for `PUSH CRSR`.
@@ -63,11 +75,21 @@ The simulator-facing path is a private standalone WASM companion, documented und
 
 MobiFlight writes command numbers to `L:EASYCPDLC_GNS_COMMAND`. The companion validates the value, clears it, and passes a checksummed command packet through named SimConnect Client Data. EasyCPDLC returns module status, VATSIM connection state, unread count, current page, and cursor state for MobiFlight output devices.
 
-Use **MSFS MODULE** in the panel menu. `WAITING` means SimConnect is open but the standalone module heartbeat has not arrived; `ACTIVE` means the complete module path is working. The ready-made MobiFlight 11 project is [`EasyCPDLC-GNS430-Companion.mfproj`](MSFS2024Companion/MobiFlight/EasyCPDLC-GNS430-Companion.mfproj).
+Use **MSFS MODULE** in the panel menu. `WAITING` means SimConnect is open but the standalone module heartbeat has not arrived; `ACTIVE` means the complete module path is working. Ready-made MobiFlight 11 projects are provided for the [GNS 430 controls](MSFS2024Companion/MobiFlight/EasyCPDLC-GNS430-Companion.mfproj) and [DCDU LSK/buttons](MSFS2024Companion/MobiFlight/EasyCPDLC-DCDU-Companion.mfproj).
 
-## Current boundary and next integration step
+For users who prefer a physical Airbus/Boeing DCDU, the tray option **Use MSFS companion for DCDU controls** switches the private module to DCDU mode. Only in that mode does it accept the twelve `EASYCPDLC_DCDU_LSK_*` and eight `EASYCPDLC_DCDU_*` button L-vars. The generic GNS command variable is ignored until DCDU mode is disabled. The selection is persistent and reconnects automatically when MSFS/SimConnect becomes available.
 
-Message browsing, CPDLC replies, VATSIM connect/disconnect, and direct logon are native to the GNS panel. Complex ATC request, AOC/telex, and settings editors open the existing EasyCPDLC pages so they continue using their mature validation and send logic.
+## Native datalink workflows
+
+Message browsing, CPDLC replies, VATSIM connect/disconnect, direct logon, complex ATC requests, AOC/telex, METAR, ATIS with optional auto-refresh, pre-departure clearance, oceanic clearance, and eLoadControl are native GNS pages. The rotary editors validate and display a review page before sending through the existing EasyCPDLC backend. They do not open the legacy DCDU request pages.
+
+For eLoadControl, save the SimBrief user and eLoadControl API key in the normal EasyCPDLC setup once. The GNS `AOC` group then loads the OFP and reference data, permits aircraft/cabin/format and passenger-split adjustment, reviews the request, generates the loadsheet, and delivers the result as a normal unread `LOADSHEET` message.
+
+The normal rendered LCD annunciator row mirrors the physical controls without placing anything over the panel photograph: `GPS` is positioned over CDI, `CRSR` over OBS while the cursor is active, and amber `MSG` over the MSG key while unread inbound traffic exists. Pressing MSG opens an unread message first and marks it read when it is displayed; when no unread message remains, it opens the complete message list.
+
+General EasyCPDLC settings still open the existing setup page because account credentials and application-wide preferences are shared with the main program.
+
+## Next integration step
 
 The companion protocol is intentionally aircraft-independent. Do not add aircraft-specific GNS events to it; extend the versioned `EasyCPDLC.GNS430.*` client-data protocol or private `EASYCPDLC_GNS_*` L-vars instead.
 

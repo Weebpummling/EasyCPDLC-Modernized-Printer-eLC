@@ -1,0 +1,212 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace EasyCPDLC.GNS430
+{
+    internal sealed class Gns430EditField
+    {
+        internal string Key { get; init; } = string.Empty;
+        internal string Label { get; init; } = string.Empty;
+        internal string Value { get; set; } = string.Empty;
+        internal int MaxLength { get; init; } = 8;
+        internal bool Required { get; init; }
+        internal IReadOnlyList<string> Options { get; init; } = Array.Empty<string>();
+
+        internal bool IsOption => Options.Count > 0;
+
+        internal void Step(int character, int direction)
+        {
+            if (IsOption)
+            {
+                int current = Options.ToList().FindIndex(option =>
+                    string.Equals(option, Value, StringComparison.OrdinalIgnoreCase));
+                Value = Options[Gns430Form.Wrap(current + direction, Options.Count)];
+                return;
+            }
+
+            const string characters = "_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ./-";
+            char[] value = (Value ?? string.Empty).PadRight(MaxLength, '_').Substring(0, MaxLength).ToCharArray();
+            int position = Math.Clamp(character, 0, Math.Max(0, MaxLength - 1));
+            int index = characters.IndexOf(value[position]);
+            value[position] = characters[Gns430Form.Wrap(index + direction, characters.Length)];
+            Value = new string(value).TrimEnd('_');
+        }
+
+        internal void ClearCharacter(int character)
+        {
+            if (IsOption)
+            {
+                Value = Options.FirstOrDefault() ?? string.Empty;
+                return;
+            }
+
+            char[] value = (Value ?? string.Empty).PadRight(MaxLength, '_').Substring(0, MaxLength).ToCharArray();
+            value[Math.Clamp(character, 0, Math.Max(0, MaxLength - 1))] = '_';
+            Value = new string(value).TrimEnd('_');
+        }
+
+        internal string CleanValue => (Value ?? string.Empty).Replace('_', ' ').Trim().ToUpperInvariant();
+    }
+
+    internal sealed class Gns430Workflow
+    {
+        internal Gns430WorkflowKind Kind { get; init; }
+        internal string Title { get; init; } = string.Empty;
+        internal List<Gns430EditField> Fields { get; init; } = new();
+
+        internal string Value(string key) => Fields.FirstOrDefault(field => field.Key == key)?.CleanValue ?? string.Empty;
+
+        internal string ValidationError()
+        {
+            Gns430EditField missing = Fields.FirstOrDefault(field => field.Required && string.IsNullOrWhiteSpace(field.CleanValue));
+            if (missing != null)
+            {
+                return missing.Label + " REQUIRED";
+            }
+
+            string recipient = Value("RECIPIENT");
+            if (Fields.Any(field => field.Key == "RECIPIENT") && recipient.Length < 3)
+            {
+                return "RECIPIENT TOO SHORT";
+            }
+
+            if (Kind == Gns430WorkflowKind.AocMetar && Value("STATION").Length != 4)
+            {
+                return "ENTER 4-CHAR ICAO";
+            }
+
+            if (Kind == Gns430WorkflowKind.AocAtis && Value("STATION").Length != 4)
+            {
+                return "ENTER 4-CHAR ICAO";
+            }
+
+            if (Kind == Gns430WorkflowKind.AocPreDeparture && Value("ATIS").Length != 1)
+            {
+                return "ATIS LETTER REQUIRED";
+            }
+
+            if (Kind == Gns430WorkflowKind.AocOceanic &&
+                (Value("ETA").Length != 4 || Value("MACH").Length != 2 || Value("LEVEL").Length != 3))
+            {
+                return "CHECK ETA/MACH/LEVEL";
+            }
+
+            string whenType = Value("TYPE");
+            if (Kind == Gns430WorkflowKind.AtcWhenCanWe &&
+                new[] { "CLIMB", "DESCENT", "MACH", "SPEED", "DIRECT" }.Contains(whenType) &&
+                string.IsNullOrWhiteSpace(Value("VALUE")))
+            {
+                return "REQUEST VALUE REQUIRED";
+            }
+
+            return string.Empty;
+        }
+
+        internal string BuildMessage(Gns430BackendSnapshot snapshot)
+        {
+            string due = Value("DUE") switch
+            {
+                "WX" => " DUE TO WEATHER",
+                "A/C" => " DUE TO PERFORMANCE",
+                _ => string.Empty
+            };
+            string remarks = Value("REMARKS");
+            string suffix = due + (string.IsNullOrWhiteSpace(remarks) ? string.Empty : " " + remarks);
+
+            return Kind switch
+            {
+                Gns430WorkflowKind.AtcDirect => "REQUEST DIRECT TO " + Value("VALUE") + suffix,
+                Gns430WorkflowKind.AtcLevel => "REQUEST FL" + Value("VALUE") + suffix,
+                Gns430WorkflowKind.AtcSpeed => "REQUEST " +
+                    (Value("SPEED TYPE") == "MACH" ? "M" + Value("VALUE") : Value("VALUE") + "K") + suffix,
+                Gns430WorkflowKind.AtcWhenCanWe => BuildWhenCanWe(Value("TYPE"), Value("VALUE"), remarks),
+                Gns430WorkflowKind.AtcFreeText => Value("TEXT"),
+                Gns430WorkflowKind.AocTelex => Value("TEXT"),
+                Gns430WorkflowKind.AocPreDeparture =>
+                    "REQUEST PREDEP CLEARANCE " + snapshot.Callsign + " " + snapshot.Aircraft +
+                    " TO " + snapshot.Arrival + " AT " + snapshot.Departure + " STAND " + Value("GATE") +
+                    " ATIS " + Value("ATIS") + (string.IsNullOrWhiteSpace(remarks) ? string.Empty : " " + remarks),
+                Gns430WorkflowKind.AocOceanic =>
+                    "OCEANIC CLEARANCE REQUEST CALLSIGN " + snapshot.Callsign + " ENTRY POINT " + Value("ENTRY") +
+                    " AT " + Value("ETA") + " REQ M" + Value("MACH") + " FL" + Value("LEVEL") +
+                    (string.IsNullOrWhiteSpace(remarks) ? string.Empty : " " + remarks),
+                Gns430WorkflowKind.AocMetar => "METAR " + Value("STATION"),
+                Gns430WorkflowKind.AocAtis => "ATIS " + Value("STATION") + " " + Value("TYPE"),
+                _ => string.Empty
+            };
+        }
+
+        private static string BuildWhenCanWe(string type, string value, string remarks)
+        {
+            string request = type switch
+            {
+                "HIGHER" => "WHEN CAN WE EXPECT HIGHER LEVEL",
+                "LOWER" => "WHEN CAN WE EXPECT LOWER LEVEL",
+                "BACK ROUTE" => "WHEN CAN WE EXPECT BACK ON ROUTE",
+                "CLIMB" => "WHEN CAN WE EXPECT CLIMB TO FL" + value,
+                "DESCENT" => "WHEN CAN WE EXPECT DESCENT TO FL" + value,
+                "MACH" => "WHEN CAN WE EXPECT M" + value,
+                "SPEED" => "WHEN CAN WE EXPECT " + value + "K",
+                "DIRECT" => "WHEN CAN WE EXPECT DIRECT TO " + value,
+                _ => "WHEN CAN WE EXPECT " + value
+            };
+            return request + (string.IsNullOrWhiteSpace(remarks) ? string.Empty : " " + remarks);
+        }
+
+        internal static Gns430Workflow Create(Gns430WorkflowKind kind, Gns430BackendSnapshot snapshot)
+        {
+            string recipient = !string.IsNullOrWhiteSpace(snapshot.CurrentAtcUnit)
+                ? snapshot.CurrentAtcUnit
+                : snapshot.PendingLogon;
+            string station = !string.IsNullOrWhiteSpace(snapshot.Arrival) ? snapshot.Arrival : snapshot.Departure;
+            Gns430EditField Text(string key, string label, int length, bool required = false, string value = "") =>
+                new() { Key = key, Label = label, MaxLength = length, Required = required, Value = value };
+            Gns430EditField Options(string key, string label, params string[] values) =>
+                new() { Key = key, Label = label, Options = values, Value = values.FirstOrDefault() ?? string.Empty };
+
+            return kind switch
+            {
+                Gns430WorkflowKind.AtcDirect => new() { Kind = kind, Title = "DIRECT REQUEST", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true, recipient), Text("VALUE", "WAYPOINT", 8, true), Options("DUE", "DUE TO", "NONE", "WX", "A/C"), Text("REMARKS", "REMARKS", 48) } },
+                Gns430WorkflowKind.AtcLevel => new() { Kind = kind, Title = "LEVEL REQUEST", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true, recipient), Text("VALUE", "FL", 3, true), Options("DUE", "DUE TO", "NONE", "WX", "A/C"), Text("REMARKS", "REMARKS", 48) } },
+                Gns430WorkflowKind.AtcSpeed => new() { Kind = kind, Title = "SPEED REQUEST", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true, recipient), Options("SPEED TYPE", "FORMAT", "MACH", "KNOTS"), Text("VALUE", "SPEED", 3, true), Options("DUE", "DUE TO", "NONE", "WX", "A/C"), Text("REMARKS", "REMARKS", 48) } },
+                Gns430WorkflowKind.AtcWhenCanWe => new() { Kind = kind, Title = "WHEN CAN WE", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true, recipient), Options("TYPE", "REQUEST", "HIGHER", "LOWER", "BACK ROUTE", "CLIMB", "DESCENT", "MACH", "SPEED", "DIRECT"), Text("VALUE", "VALUE", 8), Text("REMARKS", "REMARKS", 48) } },
+                Gns430WorkflowKind.AtcFreeText => new() { Kind = kind, Title = "ATC FREE TEXT", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true, recipient), Text("TEXT", "MESSAGE", 80, true) } },
+                Gns430WorkflowKind.AocTelex => new() { Kind = kind, Title = "AOC TELEX", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true), Text("TEXT", "MESSAGE", 80, true) } },
+                Gns430WorkflowKind.AocMetar => new() { Kind = kind, Title = "METAR REQUEST", Fields = { Text("STATION", "STATION", 4, true, station) } },
+                Gns430WorkflowKind.AocAtis => new() { Kind = kind, Title = "ATIS REQUEST", Fields = { Text("STATION", "STATION", 4, true, station), Options("TYPE", "ATIS TYPE", "ARRIVAL", "DEPARTURE"), Options("AUTO", "AUTO REFRESH", "OFF", "ON") } },
+                Gns430WorkflowKind.AocPreDeparture => new() { Kind = kind, Title = "PREDEP CLEARANCE", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true, recipient), Text("GATE", "STAND/GATE", 5, true), Text("ATIS", "ATIS", 1, true), Text("REMARKS", "REMARKS", 40) } },
+                Gns430WorkflowKind.AocOceanic => new() { Kind = kind, Title = "OCEANIC CLEARANCE", Fields = { Text("RECIPIENT", "RECIPIENT", 8, true, recipient), Text("ENTRY", "ENTRY POINT", 8, true), Text("ETA", "ENTRY ETA", 4, true), Text("MACH", "MACH", 2, true), Text("LEVEL", "FL", 3, true), Text("REMARKS", "REMARKS", 40) } },
+                _ => new() { Kind = kind, Title = "REQUEST" }
+            };
+        }
+    }
+
+    internal sealed class Gns430OperationResult
+    {
+        internal bool Success { get; init; }
+        internal string Status { get; init; } = string.Empty;
+    }
+
+    internal sealed class Gns430LoadControlSession
+    {
+        internal SimbriefLoadsheetData Flight { get; init; }
+        internal ELoadReferenceData Reference { get; init; }
+        internal int AircraftIndex { get; set; }
+        internal int CabinIndex { get; set; }
+        internal int FormatIndex { get; set; }
+        internal List<PassengerClassAllocation> PassengerSplit { get; private set; } = new();
+
+        internal ELoadAircraft Aircraft => Reference.Aircraft[Math.Clamp(AircraftIndex, 0, Reference.Aircraft.Count - 1)];
+        internal string Cabin => Aircraft.CabinConfigurations[Math.Clamp(CabinIndex, 0, Aircraft.CabinConfigurations.Count - 1)];
+        internal ELoadFormat Format => Reference.Formats[Math.Clamp(FormatIndex, 0, Reference.Formats.Count - 1)];
+        internal int FieldCount => 3 + PassengerSplit.Count;
+
+        internal void RebuildPassengerSplit()
+        {
+            PassengerSplit = ELoadPassengerSplitter.Split(Cabin, Flight.PassengerCount)
+                .Select(item => new PassengerClassAllocation { Code = item.Code, Capacity = item.Capacity, Passengers = item.Passengers })
+                .ToList();
+        }
+    }
+}

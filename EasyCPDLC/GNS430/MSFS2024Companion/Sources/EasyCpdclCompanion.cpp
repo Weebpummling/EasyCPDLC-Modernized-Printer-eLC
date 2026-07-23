@@ -39,6 +39,39 @@ namespace
     FsLVarId g_unreadCount = FS_VAR_INVALID_ID;
     FsLVarId g_page = FS_VAR_INVALID_ID;
     FsLVarId g_cursorActive = FS_VAR_INVALID_ID;
+    FsLVarId g_dcduModeLVar = FS_VAR_INVALID_ID;
+    bool g_dcduMode = false;
+
+    struct DcduInput
+    {
+        const char* name;
+        std::uint32_t command;
+        FsLVarId id;
+    };
+
+    DcduInput g_dcduInputs[] =
+    {
+        { "EASYCPDLC_DCDU_LSK_L1", 19, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_L2", 20, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_L3", 21, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_L4", 22, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_L5", 23, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_L6", 24, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_R1", 25, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_R2", 26, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_R3", 27, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_R4", 28, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_R5", 29, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_LSK_R6", 30, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_CONNECT", 31, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_AOC", 32, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_ATC", 33, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_SETTINGS", 34, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_RELOAD", 35, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_PRINT", 36, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_REPRINT", 37, FS_VAR_INVALID_ID },
+        { "EASYCPDLC_DCDU_HIDE", 38, FS_VAR_INVALID_ID }
+    };
 
     void SetLVar(FsLVarId id, double value)
     {
@@ -72,6 +105,14 @@ namespace
             &packet);
     }
 
+    void ClearDcduInputs()
+    {
+        for (auto& input : g_dcduInputs)
+        {
+            SetLVar(input.id, 0.0);
+        }
+    }
+
     void ApplyStatus(const easycpdlc::StatusPacket& packet)
     {
         if (packet.magic != easycpdlc::kMagic || packet.version != easycpdlc::kVersion)
@@ -83,6 +124,13 @@ namespace
         SetLVar(g_appConnected, (packet.flags & easycpdlc::kStatusAppOnline) != 0 ? 1.0 : 0.0);
         SetLVar(g_vatsimConnected, (packet.flags & easycpdlc::kStatusVatsimConnected) != 0 ? 1.0 : 0.0);
         SetLVar(g_cursorActive, (packet.flags & easycpdlc::kStatusCursorActive) != 0 ? 1.0 : 0.0);
+        const bool dcduMode = (packet.flags & easycpdlc::kStatusDcduMode) != 0;
+        if (g_dcduMode && !dcduMode)
+        {
+            ClearDcduInputs();
+        }
+        g_dcduMode = dcduMode;
+        SetLVar(g_dcduModeLVar, g_dcduMode ? 1.0 : 0.0);
         SetLVar(g_unreadCount, static_cast<double>(packet.unreadCount));
         SetLVar(g_page, static_cast<double>(packet.page));
     }
@@ -156,6 +204,11 @@ namespace
         g_unreadCount = fsVarsRegisterLVar(easycpdlc::kUnreadCountLVar);
         g_page = fsVarsRegisterLVar(easycpdlc::kPageLVar);
         g_cursorActive = fsVarsRegisterLVar(easycpdlc::kCursorActiveLVar);
+        g_dcduModeLVar = fsVarsRegisterLVar(easycpdlc::kDcduModeLVar);
+        for (auto& input : g_dcduInputs)
+        {
+            input.id = fsVarsRegisterLVar(input.name);
+        }
 
         SetLVar(g_command, 0.0);
         SetLVar(g_moduleAlive, 0.0);
@@ -164,6 +217,8 @@ namespace
         SetLVar(g_unreadCount, 0.0);
         SetLVar(g_page, 0.0);
         SetLVar(g_cursorActive, 0.0);
+        SetLVar(g_dcduModeLVar, 0.0);
+        ClearDcduInputs();
     }
 }
 
@@ -192,10 +247,27 @@ extern "C" MSFS_CALLBACK void module_update(float deltaSeconds)
     {
         SetLVar(g_command, 0.0);
         const auto command = static_cast<std::uint32_t>(commandValue + 0.5);
-        if (command >= 1 && command <= 18)
+        if (!g_dcduMode && command >= 1 && command <= 18)
         {
             PublishCommand(command);
         }
+    }
+
+    if (g_dcduMode)
+    {
+        for (auto& input : g_dcduInputs)
+        {
+            double value = 0.0;
+            if (fsVarsLVarGet(input.id, g_numberUnit, &value) == FS_VAR_ERROR_NONE && value != 0.0)
+            {
+                SetLVar(input.id, 0.0);
+                PublishCommand(input.command);
+            }
+        }
+    }
+    else
+    {
+        ClearDcduInputs();
     }
 
     if (g_heartbeatSeconds >= 1.0f)
@@ -209,6 +281,9 @@ extern "C" MSFS_CALLBACK void module_update(float deltaSeconds)
     {
         SetLVar(g_appConnected, 0.0);
         SetLVar(g_vatsimConnected, 0.0);
+        SetLVar(g_dcduModeLVar, 0.0);
+        g_dcduMode = false;
+        ClearDcduInputs();
     }
 }
 
@@ -216,6 +291,8 @@ extern "C" MSFS_CALLBACK void module_deinit(void)
 {
     SetLVar(g_moduleAlive, 0.0);
     SetLVar(g_appConnected, 0.0);
+    SetLVar(g_dcduModeLVar, 0.0);
+    ClearDcduInputs();
     if (g_simConnect != nullptr)
     {
         SimConnect_Close(g_simConnect);

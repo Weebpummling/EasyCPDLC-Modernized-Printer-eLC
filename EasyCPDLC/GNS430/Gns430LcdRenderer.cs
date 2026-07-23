@@ -20,6 +20,11 @@ namespace EasyCPDLC.GNS430
         internal int LogonCharacter { get; init; }
         internal string TransientStatus { get; init; } = string.Empty;
         internal IReadOnlyList<string> MenuItems { get; init; } = Array.Empty<string>();
+        internal Gns430Workflow Workflow { get; init; }
+        internal int WorkflowCharacter { get; init; }
+        internal Gns430LoadControlSession LoadSession { get; init; }
+        internal bool OperationBusy { get; init; }
+        internal string OperationStatus { get; init; } = string.Empty;
     }
 
     internal static class Gns430LcdRenderer
@@ -64,6 +69,26 @@ namespace EasyCPDLC.GNS430
                     break;
                 case Gns430Page.Logon:
                     DrawLogon(display, state);
+                    break;
+                case Gns430Page.AtcMenu:
+                    DrawChoiceMenu(display, "ATC REQUESTS", new[] { "DIRECT TO", "LEVEL", "SPEED", "WHEN CAN WE", "FREE TEXT" }, state);
+                    break;
+                case Gns430Page.AocMenu:
+                    DrawChoiceMenu(display, "AOC / COMPANY", new[] { "AOC TELEX", "METAR", "ATIS", "PREDEP CLEARANCE", "OCEANIC CLEARANCE", "LOAD CONTROL" }, state);
+                    break;
+                case Gns430Page.AtcRequest:
+                case Gns430Page.AocRequest:
+                    DrawWorkflow(display, state);
+                    break;
+                case Gns430Page.RequestReview:
+                case Gns430Page.AocReview:
+                    DrawWorkflowReview(display, state);
+                    break;
+                case Gns430Page.LoadControl:
+                    DrawLoadControl(display, state);
+                    break;
+                case Gns430Page.LoadReview:
+                    DrawLoadReview(display, state);
                     break;
                 case Gns430Page.Menu:
                     DrawStatus(display, state, drawFooter: false);
@@ -257,6 +282,142 @@ namespace EasyCPDLC.GNS430
             }
         }
 
+        private static void DrawChoiceMenu(Bitmap display, string title, IReadOnlyList<string> items, Gns430LcdState state)
+        {
+            Header(display, title);
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            int first = Math.Max(0, state.SelectedIndex - 5);
+            for (int index = first; index < Math.Min(items.Count, first + 7); index++)
+            {
+                int y = 14 + ((index - first) * 14);
+                bool selected = state.CursorActive && index == state.SelectedIndex;
+                if (selected)
+                {
+                    Fill(display, new Rectangle(61, y - 2, 173, 12), Green);
+                }
+                Text(display, 64, y, Fit(items[index], 27, string.Empty), selected ? Black : Green);
+                TextRight(display, 230, y, ">", selected ? Black : White);
+            }
+        }
+
+        private static void DrawWorkflow(Bitmap display, Gns430LcdState state)
+        {
+            Gns430Workflow workflow = state.Workflow;
+            Header(display, workflow?.Title ?? "REQUEST");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            if (workflow == null || workflow.Fields.Count == 0)
+            {
+                Text(display, 64, 18, "NO REQUEST SELECTED", Yellow);
+                return;
+            }
+
+            int first = Math.Max(0, state.SelectedIndex - 2);
+            for (int index = first; index < Math.Min(workflow.Fields.Count, first + 4); index++)
+            {
+                Gns430EditField field = workflow.Fields[index];
+                int y = 13 + ((index - first) * 22);
+                bool selected = state.CursorActive && index == state.SelectedIndex;
+                Text(display, 63, y, Fit(field.Label, 13, string.Empty), Cyan);
+                string value = field.IsOption
+                    ? field.CleanValue
+                    : EditWindow(field, selected ? state.WorkflowCharacter : 0, 14);
+                Rectangle valueBounds = new(145, y - 2, 88, 12);
+                Box(display, valueBounds, selected ? White : Cyan, selected ? White : Black);
+                TextRight(display, 230, y, Fit(value, 14, "_"), selected ? Black : Green);
+                if (selected && !field.IsOption)
+                {
+                    int cursor = Math.Clamp(state.WorkflowCharacter, 0, Math.Max(0, field.MaxLength - 1));
+                    Text(display, 63, y + 9, "POS " + (cursor + 1) + "/" + field.MaxLength, Yellow);
+                }
+            }
+            Text(display, 63, 103, "ENT REVIEW   CLR ERASE", White);
+            ScrollBar(display, first, workflow.Fields.Count, 4);
+        }
+
+        private static string EditWindow(Gns430EditField field, int cursor, int width)
+        {
+            string value = (field.Value ?? string.Empty).PadRight(field.MaxLength, '_').Substring(0, field.MaxLength);
+            int first = Math.Clamp(cursor - width + 1, 0, Math.Max(0, value.Length - width));
+            return value.Substring(first, Math.Min(width, value.Length - first));
+        }
+
+        private static void DrawWorkflowReview(Bitmap display, Gns430LcdState state)
+        {
+            Header(display, "REVIEW / SEND");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            if (state.Workflow == null)
+            {
+                Text(display, 64, 18, "NO REQUEST", Yellow);
+                return;
+            }
+
+            Text(display, 63, 13, Fit(state.Workflow.Title, 28, string.Empty), Cyan);
+            string message = state.Workflow.BuildMessage(state.Snapshot);
+            List<string> lines = Gns430Form.WrapText(message, 28);
+            for (int index = 0; index < Math.Min(8, lines.Count); index++)
+            {
+                Text(display, 63, 26 + (index * 9), Fit(lines[index], 28, string.Empty), Green);
+            }
+            Text(display, 63, 102, state.OperationBusy ? "SENDING..." : "ENT SEND   CLR EDIT", state.OperationBusy ? Yellow : White);
+        }
+
+        private static void DrawLoadControl(Bitmap display, Gns430LcdState state)
+        {
+            Header(display, "ELOADCONTROL");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            if (state.LoadSession == null)
+            {
+                Text(display, 64, 18, Fit(state.OperationStatus, 27, "ENT LOAD SIMBRIEF"), state.OperationBusy ? Yellow : Green);
+                Text(display, 64, 34, state.OperationBusy ? "PLEASE WAIT" : "ENT TO RETRY", White);
+                return;
+            }
+
+            Gns430LoadControlSession load = state.LoadSession;
+            string[] labels = new[] { "AIRCRAFT", "CABIN", "FORMAT" }
+                .Concat(load.PassengerSplit.Select(item => "PAX " + item.Code + "/" + item.Capacity))
+                .ToArray();
+            string[] values = new[] { load.Aircraft.Icao, load.Cabin, load.Format.Name }
+                .Concat(load.PassengerSplit.Select(item => item.Passengers.ToString()))
+                .ToArray();
+            int first = Math.Max(0, state.SelectedIndex - 4);
+            for (int index = first; index < Math.Min(labels.Length, first + 6); index++)
+            {
+                int y = 14 + ((index - first) * 15);
+                bool selected = state.CursorActive && index == state.SelectedIndex;
+                if (selected)
+                {
+                    Fill(display, new Rectangle(61, y - 2, 173, 12), Green);
+                }
+                Text(display, 63, y, Fit(labels[index], 15, string.Empty), selected ? Black : Cyan);
+                TextRight(display, 231, y, Fit(values[index], 12, string.Empty), selected ? Black : Green);
+            }
+            int total = load.PassengerSplit.Sum(item => item.Passengers);
+            Text(display, 63, 103, "TOTAL " + total + "/" + load.Flight.PassengerCount + "  ENT REVIEW", total == load.Flight.PassengerCount ? White : Yellow);
+        }
+
+        private static void DrawLoadReview(Bitmap display, Gns430LcdState state)
+        {
+            Header(display, "LOADSHEET REVIEW");
+            Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
+            Gns430LoadControlSession load = state.LoadSession;
+            if (load == null)
+            {
+                Text(display, 64, 18, "LOAD DATA NOT READY", Yellow);
+                return;
+            }
+            Text(display, 63, 14, Fit(load.Flight.Airline + load.Flight.FlightNumber, 14, string.Empty), Green);
+            TextRight(display, 231, 14, Fit(load.Flight.Departure + "-" + load.Flight.Destination, 11, string.Empty), Cyan);
+            Text(display, 63, 30, "TYPE", Cyan);
+            TextRight(display, 231, 30, Fit(load.Aircraft.Icao + " " + load.Flight.AircraftRegistration, 18, string.Empty), Green);
+            Text(display, 63, 46, "CABIN", Cyan);
+            TextRight(display, 231, 46, Fit(load.Cabin, 18, string.Empty), Green);
+            Text(display, 63, 62, "PAX", Cyan);
+            TextRight(display, 231, 62, load.PassengerSplit.Sum(item => item.Passengers).ToString(), Green);
+            Text(display, 63, 78, "FORMAT", Cyan);
+            TextRight(display, 231, 78, Fit(load.Format.Name, 18, string.Empty), Green);
+            Text(display, 63, 101, state.OperationBusy ? "GENERATING..." : "ENT GENERATE  CLR EDIT", state.OperationBusy ? Yellow : White);
+        }
+
         private static void DrawHelp(Bitmap display, Gns430LcdState state)
         {
             Header(display, "UTILITY");
@@ -292,10 +453,11 @@ namespace EasyCPDLC.GNS430
         {
             Fill(display, new Rectangle(0, FooterTop, Width, Height - FooterTop), Black);
             Text(display, 2, 120, "GPS", Green);
-            bool unread = state.Snapshot.Messages.Any(message => message.Unread);
-            Text(display, 58, 120, unread ? "MSG" : state.CursorActive ? "CRSR" : string.Empty, unread ? Yellow : Green);
+            Text(display, 58, 120, state.CursorActive ? "CRSR" : string.Empty, Green);
+            bool unread = state.Snapshot.Messages.Any(message => message.Unread && !message.Outbound);
+            Text(display, 111, 120, unread ? "MSG" : string.Empty, Yellow);
 
-            string group = state.PageGroup.ToString().ToUpperInvariant();
+            string group = PageGroupLabel(state.PageGroup);
             int groupX = 219 - Gns430BitmapFont.Measure(group);
             int pageCount = Gns430Form.PagesForGroup(state.PageGroup).Length;
             Gns430Page[] pages = Gns430Form.PagesForGroup(state.PageGroup);
@@ -307,6 +469,18 @@ namespace EasyCPDLC.GNS430
                 Box(display, square, White, index == current ? White : Blue);
             }
             Text(display, groupX, 120, group, White);
+        }
+
+        internal static string PageGroupLabel(Gns430PageGroup group)
+        {
+            return group switch
+            {
+                Gns430PageGroup.Nav => "DLK",
+                Gns430PageGroup.Wpt => "ATC",
+                Gns430PageGroup.Aux => "AOC",
+                Gns430PageGroup.Nrst => "MSG",
+                _ => "DLK"
+            };
         }
 
         private static void DrawTransient(Bitmap display, string text)

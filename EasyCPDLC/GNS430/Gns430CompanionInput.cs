@@ -214,7 +214,7 @@ namespace EasyCPDLC.GNS430
             }
         }
 
-        internal void UpdateStatus(Gns430BackendSnapshot snapshot, Gns430Page page, bool cursorActive)
+        internal void UpdateStatus(Gns430BackendSnapshot snapshot, Gns430Page page, bool cursorActive, bool dcduMode)
         {
             if (!Enabled)
             {
@@ -235,6 +235,10 @@ namespace EasyCPDLC.GNS430
             if (cursorActive)
             {
                 flags |= Gns430CompanionProtocol.StatusCursorActive;
+            }
+            if (dcduMode)
+            {
+                flags |= Gns430CompanionProtocol.StatusDcduMode;
             }
 
             Gns430CompanionStatusPacket packet = new()

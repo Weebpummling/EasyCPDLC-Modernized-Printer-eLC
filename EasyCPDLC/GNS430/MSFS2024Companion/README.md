@@ -4,17 +4,17 @@ This is the simulator-side source for a standalone MSFS 2024 WASM module. It is 
 
 ## Data path
 
-1. MobiFlight writes a number from 1 through 18 to `L:EASYCPDLC_GNS_COMMAND` using its normal WASM calculator-code support.
+1. In GNS mode, MobiFlight writes a number from 1 through 18 to `L:EASYCPDLC_GNS_COMMAND` using its normal WASM calculator-code support. In the optional DCDU mode it pulses one of the private `L:EASYCPDLC_DCDU_*` inputs instead.
 2. This module reads and immediately clears that private L-var.
 3. It sends a versioned, checksummed packet through named SimConnect Client Data `EasyCPDLC.GNS430.Command.v1`.
-4. The desktop EasyCPDLC panel validates the packet and passes the command to its existing UI executor.
+4. The desktop EasyCPDLC panel validates the packet and passes the command to the selected GNS or DCDU UI executor.
 5. EasyCPDLC returns connection, unread-count, page, and cursor status through `EasyCPDLC.GNS430.Status.v1`; the module exposes those values as private output L-vars for MobiFlight.
 
-The module sends a command-zero heartbeat once per second. EasyCPDLC displays `MSFS MODULE: ACTIVE` only while that heartbeat is present.
+The module sends a command-zero heartbeat once per second. EasyCPDLC displays `MSFS MODULE: ACTIVE` only while that heartbeat is present. `L:EASYCPDLC_DCDU_MODE` reports the active gate. GNS commands are ignored while it is `1`; DCDU inputs are cleared and ignored while it is `0`.
 
 ## Release-package contents
 
-The normal EasyCPDLC publish output includes `MobiFlight/EasyCPDLC-GNS430-Companion.mfproj`. The full release builder additionally creates a `Companion` folder containing that importable project, these SDK sources, and—when a real SDK-built `.wasm` is present under `BuiltPackage`—the Community-package contents.
+The normal EasyCPDLC publish output includes the importable GNS and DCDU projects under `MobiFlight/`. The full release builder additionally creates a `Companion` folder containing both projects, these SDK sources, and—when a real SDK-built `.wasm` is present under `BuiltPackage`—the Community-package contents.
 
 This module is not an aircraft ACARS adapter. Hoppie and future aircraft-inbox routing are documented in `docs/HOPPIE-AIRCRAFT-ACARS-ROUTING.md`.
 
@@ -59,3 +59,25 @@ MobiFlight calculator-code example for MENU:
 - `L:EASYCPDLC_GNS_UNREAD_COUNT`
 - `L:EASYCPDLC_GNS_PAGE`
 - `L:EASYCPDLC_GNS_CURSOR_ACTIVE`
+- `L:EASYCPDLC_DCDU_MODE`
+
+## DCDU-only momentary input L-vars
+
+Enable **Use MSFS companion for DCDU controls** from the EasyCPDLC tray before using these inputs. Write `1` on press; the module clears the value after consuming it.
+
+- `L:EASYCPDLC_DCDU_LSK_L1` through `L:EASYCPDLC_DCDU_LSK_L6`
+- `L:EASYCPDLC_DCDU_LSK_R1` through `L:EASYCPDLC_DCDU_LSK_R6`
+- `L:EASYCPDLC_DCDU_CONNECT`
+- `L:EASYCPDLC_DCDU_AOC`
+- `L:EASYCPDLC_DCDU_ATC`
+- `L:EASYCPDLC_DCDU_SETTINGS`
+- `L:EASYCPDLC_DCDU_RELOAD`
+- `L:EASYCPDLC_DCDU_PRINT`
+- `L:EASYCPDLC_DCDU_REPRINT`
+- `L:EASYCPDLC_DCDU_HIDE`
+
+MobiFlight example for left LSK 1:
+
+```text
+1 (>L:EASYCPDLC_DCDU_LSK_L1)
+```

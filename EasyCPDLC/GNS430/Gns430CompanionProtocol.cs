@@ -17,10 +17,12 @@ namespace EasyCPDLC.GNS430
         internal const string UnreadCountLVar = "EASYCPDLC_GNS_UNREAD_COUNT";
         internal const string PageLVar = "EASYCPDLC_GNS_PAGE";
         internal const string CursorActiveLVar = "EASYCPDLC_GNS_CURSOR_ACTIVE";
+        internal const string DcduModeLVar = "EASYCPDLC_DCDU_MODE";
 
         internal const uint StatusAppOnline = 1 << 0;
         internal const uint StatusVatsimConnected = 1 << 1;
         internal const uint StatusCursorActive = 1 << 2;
+        internal const uint StatusDcduMode = 1 << 3;
         internal const uint ChecksumSeed = 0x430C0DEC;
 
         internal static uint CalculateCommandChecksum(uint sequence, uint command)

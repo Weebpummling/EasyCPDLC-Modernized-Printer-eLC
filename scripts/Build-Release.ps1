@@ -89,8 +89,12 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $packageDi
 
 $companionRoot = Join-Path $repoRoot 'EasyCPDLC\GNS430\MSFS2024Companion'
 $mobiFlightProfile = Join-Path $companionRoot 'MobiFlight\EasyCPDLC-GNS430-Companion.mfproj'
+$dcduMobiFlightProfile = Join-Path $companionRoot 'MobiFlight\EasyCPDLC-DCDU-Companion.mfproj'
 if (-not (Test-Path -LiteralPath $mobiFlightProfile -PathType Leaf)) {
     throw "The required MobiFlight companion profile was not found at '$mobiFlightProfile'."
+}
+if (-not (Test-Path -LiteralPath $dcduMobiFlightProfile -PathType Leaf)) {
+    throw "The required DCDU MobiFlight companion profile was not found at '$dcduMobiFlightProfile'."
 }
 
 $companionPackageDirectory = Join-Path $packageDirectory 'Companion'
@@ -99,6 +103,7 @@ $companionSourceDirectory = Join-Path $companionPackageDirectory 'MSFS2024-SDK-S
 New-Item -ItemType Directory -Path $companionMobiFlightDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $companionSourceDirectory -Force | Out-Null
 Copy-Item -LiteralPath $mobiFlightProfile -Destination $companionMobiFlightDirectory -Force
+Copy-Item -LiteralPath $dcduMobiFlightProfile -Destination $companionMobiFlightDirectory -Force
 Copy-Item -LiteralPath (Join-Path $companionRoot 'MobiFlight\README.md') -Destination $companionMobiFlightDirectory -Force
 Copy-Item -LiteralPath (Join-Path $companionRoot 'README.md') -Destination $companionPackageDirectory -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\HOPPIE-AIRCRAFT-ACARS-ROUTING.md') -Destination $companionPackageDirectory -Force
@@ -126,6 +131,7 @@ $manifest = [ordered]@{
     bridgeSha256 = $bridgeHash
     bridgeInstaller = 'Install-vPilot-Bridge.cmd'
     mobiFlightProfile = 'Companion/MobiFlight/EasyCPDLC-GNS430-Companion.mfproj'
+    dcduMobiFlightProfile = 'Companion/MobiFlight/EasyCPDLC-DCDU-Companion.mfproj'
     companionWasmIncluded = $companionWasmIncluded
     companionCommunityPackage = if ($companionWasmIncluded) { 'Companion/Community' } else { $null }
     companionSdkSources = 'Companion/MSFS2024-SDK-Sources'

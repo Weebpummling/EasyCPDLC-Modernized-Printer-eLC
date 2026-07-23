@@ -18,6 +18,8 @@ namespace EasyCPDLC.Tests
         [InlineData(1)]
         [InlineData(8)]
         [InlineData(18)]
+        [InlineData(19)]
+        [InlineData(38)]
         public void CompanionPackets_ValidateEveryDefinedCommand(byte value)
         {
             Gns430CompanionCommandPacket packet = new()
@@ -61,6 +63,35 @@ namespace EasyCPDLC.Tests
             Assert.StartsWith("EASYCPDLC_", Gns430CompanionProtocol.CommandLVar);
             Assert.DoesNotContain("GPS_", Gns430CompanionProtocol.CommandClientDataName);
             Assert.DoesNotContain("AS430", Gns430CompanionProtocol.CommandClientDataName);
+            Assert.Equal(1u << 3, Gns430CompanionProtocol.StatusDcduMode);
+            Assert.Equal("EASYCPDLC_DCDU_MODE", Gns430CompanionProtocol.DcduModeLVar);
+        }
+
+        [Fact]
+        public void CompanionModule_DcduInputsArePrivateAndModeGated()
+        {
+            string source = File.ReadAllText(Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory,
+                "..", "..", "..", "..",
+                "EasyCPDLC", "GNS430", "MSFS2024Companion", "Sources", "EasyCpdclCompanion.cpp")));
+
+            Assert.Equal(12, Regex.Matches(source, @"EASYCPDLC_DCDU_LSK_[LR][1-6]").Count);
+            Assert.Contains("EASYCPDLC_DCDU_CONNECT", source);
+            Assert.Contains("EASYCPDLC_DCDU_REPRINT", source);
+            Assert.Contains("if (g_dcduMode)", source);
+            Assert.Contains("if (!g_dcduMode && command >= 1 && command <= 18)", source);
+            Assert.DoesNotContain("AS430_", source);
+            Assert.DoesNotContain(">K:", source);
+        }
+
+        [Theory]
+        [InlineData("123456", "secret", true)]
+        [InlineData("", "", true)]
+        [InlineData("ABC", "secret", false)]
+        [InlineData("-1", "secret", false)]
+        public void TrayCredentialEditor_ValidatesCid(string cid, string hoppie, bool expected)
+        {
+            Assert.Equal(expected, CredentialSettingsForm.TryValidate(cid, hoppie, out _, out _));
         }
 
         [Fact]
@@ -75,6 +106,26 @@ namespace EasyCPDLC.Tests
             Assert.Equal("EasyCPDLC GNS 430 Companion Module", document.RootElement.GetProperty("Name").GetString());
             Assert.Equal(18, Regex.Matches(profile, @"\(>L:EASYCPDLC_GNS_COMMAND\)").Count);
             Assert.Equal(18, Regex.Matches(profile, @"MSFS2020CustomInputAction").Count);
+            Assert.DoesNotContain("KeyInputAction", profile);
+            Assert.DoesNotContain("AS430_", profile);
+            Assert.DoesNotContain("GPS_", profile);
+            Assert.DoesNotContain(">K:", profile);
+        }
+
+        [Fact]
+        public void MobiFlightDcduProfile_ProvidesTwentyModeGatedPrivateInputs()
+        {
+            string profile = File.ReadAllText(Path.Combine(
+                AppContext.BaseDirectory,
+                "MobiFlight",
+                "EasyCPDLC-DCDU-Companion.mfproj"));
+
+            using JsonDocument document = JsonDocument.Parse(profile);
+            Assert.Equal("EasyCPDLC DCDU Companion Module", document.RootElement.GetProperty("Name").GetString());
+            Assert.Equal(20, Regex.Matches(profile, @"\(>L:EASYCPDLC_DCDU_").Count);
+            Assert.Equal(20, Regex.Matches(profile, @"MSFS2020CustomInputAction").Count);
+            Assert.Equal(12, Regex.Matches(profile, @"EASYCPDLC_DCDU_LSK_[LR][1-6]").Count / 2);
+            Assert.DoesNotContain("EASYCPDLC_GNS_COMMAND", profile);
             Assert.DoesNotContain("KeyInputAction", profile);
             Assert.DoesNotContain("AS430_", profile);
             Assert.DoesNotContain("GPS_", profile);
@@ -109,8 +160,8 @@ namespace EasyCPDLC.Tests
 
         [Theory]
         [InlineData((int)Gns430PageGroup.Nav, (int)Gns430Page.Status, 2)]
-        [InlineData((int)Gns430PageGroup.Wpt, (int)Gns430Page.Logon, 1)]
-        [InlineData((int)Gns430PageGroup.Aux, (int)Gns430Page.Help, 1)]
+        [InlineData((int)Gns430PageGroup.Wpt, (int)Gns430Page.Logon, 2)]
+        [InlineData((int)Gns430PageGroup.Aux, (int)Gns430Page.AocMenu, 3)]
         [InlineData((int)Gns430PageGroup.Nrst, (int)Gns430Page.Messages, 1)]
         public void PageGroups_FollowThePhysicalLargeAndSmallKnobModel(int group, int firstPage, int count)
         {
@@ -179,6 +230,66 @@ namespace EasyCPDLC.Tests
             Assert.True(increase.Right < control.Right);
             Assert.Equal(decrease.Top, increase.Top);
             Assert.Equal(decrease.Height, increase.Height);
+        }
+
+        [Theory]
+        [InlineData((int)Gns430PageGroup.Nav, "DLK")]
+        [InlineData((int)Gns430PageGroup.Wpt, "ATC")]
+        [InlineData((int)Gns430PageGroup.Aux, "AOC")]
+        [InlineData((int)Gns430PageGroup.Nrst, "MSG")]
+        public void PageGroupLabels_DescribeTheDatalinkFunctions(int group, string expected)
+        {
+            Assert.Equal(expected, Gns430LcdRenderer.PageGroupLabel((Gns430PageGroup)group));
+        }
+
+        [Fact]
+        public void ComplexAtcWorkflow_BuildsTheBackendPacketTextFromRotaryFields()
+        {
+            Gns430BackendSnapshot snapshot = new() { CurrentAtcUnit = "KZAK" };
+            Gns430Workflow workflow = Gns430Workflow.Create(Gns430WorkflowKind.AtcDirect, snapshot);
+            workflow.Fields.Single(field => field.Key == "VALUE").Value = "DAG";
+            workflow.Fields.Single(field => field.Key == "DUE").Value = "WX";
+            workflow.Fields.Single(field => field.Key == "REMARKS").Value = "RIDE";
+
+            Assert.Equal(string.Empty, workflow.ValidationError());
+            Assert.Equal("REQUEST DIRECT TO DAG DUE TO WEATHER RIDE", workflow.BuildMessage(snapshot));
+        }
+
+        [Fact]
+        public void AocAndLoadPages_RenderNativelyWithoutOpeningLegacyForms()
+        {
+            Gns430BackendSnapshot snapshot = new()
+            {
+                Connected = true,
+                Callsign = "DAL123",
+                Departure = "KSEA",
+                Arrival = "KSFO",
+                Aircraft = "B738"
+            };
+            foreach (Gns430Page page in new[]
+            {
+                Gns430Page.AtcMenu, Gns430Page.AtcRequest, Gns430Page.RequestReview,
+                Gns430Page.AocMenu, Gns430Page.AocRequest, Gns430Page.AocReview,
+                Gns430Page.LoadControl, Gns430Page.LoadReview
+            })
+            {
+                Gns430Workflow workflow = page is Gns430Page.AtcRequest or Gns430Page.RequestReview
+                    ? Gns430Workflow.Create(Gns430WorkflowKind.AtcLevel, snapshot)
+                    : Gns430Workflow.Create(Gns430WorkflowKind.AocTelex, snapshot);
+                using Bitmap image = Gns430LcdRenderer.Render(new Gns430LcdState
+                {
+                    Snapshot = snapshot,
+                    Page = page,
+                    PageGroup = page is Gns430Page.AtcMenu or Gns430Page.AtcRequest or Gns430Page.RequestReview
+                        ? Gns430PageGroup.Wpt
+                        : Gns430PageGroup.Aux,
+                    Workflow = workflow,
+                    CursorActive = true,
+                    OperationStatus = "ENT LOAD SIMBRIEF"
+                });
+                Assert.Equal(240, image.Width);
+                Assert.Equal(128, image.Height);
+            }
         }
 
         [Theory]

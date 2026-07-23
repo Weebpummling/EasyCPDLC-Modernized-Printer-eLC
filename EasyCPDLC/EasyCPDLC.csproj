@@ -96,9 +96,14 @@
 			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
 		</None>
 		<None Remove="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-GNS430-Companion.mfproj" />
+		<None Remove="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-DCDU-Companion.mfproj" />
 		<None Remove="GNS430\MSFS2024Companion\MobiFlight\README.md" />
 		<None Include="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-GNS430-Companion.mfproj">
 			<TargetPath>MobiFlight\EasyCPDLC-GNS430-Companion.mfproj</TargetPath>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</None>
+		<None Include="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-DCDU-Companion.mfproj">
+			<TargetPath>MobiFlight\EasyCPDLC-DCDU-Companion.mfproj</TargetPath>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 		</None>
 		<None Include="GNS430\MSFS2024Companion\MobiFlight\README.md">

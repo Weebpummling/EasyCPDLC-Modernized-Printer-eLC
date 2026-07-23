@@ -8,6 +8,7 @@ namespace EasyCPDLC.GNS430
     internal sealed class Gns430Preferences
     {
         public bool CompanionModuleEnabled { get; set; }
+        public bool DcduCompanionMode { get; set; }
         public int Left { get; set; } = -1;
         public int Top { get; set; } = -1;
         public int Width { get; set; } = 960;

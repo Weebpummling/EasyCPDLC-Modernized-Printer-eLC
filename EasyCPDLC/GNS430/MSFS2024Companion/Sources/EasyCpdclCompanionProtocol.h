@@ -17,10 +17,12 @@ namespace easycpdlc
     constexpr const char* kUnreadCountLVar = "EASYCPDLC_GNS_UNREAD_COUNT";
     constexpr const char* kPageLVar = "EASYCPDLC_GNS_PAGE";
     constexpr const char* kCursorActiveLVar = "EASYCPDLC_GNS_CURSOR_ACTIVE";
+    constexpr const char* kDcduModeLVar = "EASYCPDLC_DCDU_MODE";
 
     constexpr std::uint32_t kStatusAppOnline = 1u << 0;
     constexpr std::uint32_t kStatusVatsimConnected = 1u << 1;
     constexpr std::uint32_t kStatusCursorActive = 1u << 2;
+    constexpr std::uint32_t kStatusDcduMode = 1u << 3;
 
 #pragma pack(push, 1)
     struct CommandPacket
