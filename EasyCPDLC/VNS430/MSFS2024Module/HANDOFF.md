@@ -36,4 +36,3 @@ machine with the MSFS 2024 SDK installed.
 - The in-cockpit LCD matches the desktop VNS430 page and annunciator state.
 - LCD softness is visible at normal viewing distance but text remains legible.
 - Restart and package-cache behavior is retested and documented.
-
