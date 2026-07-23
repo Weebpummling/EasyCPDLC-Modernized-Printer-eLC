@@ -338,3 +338,7 @@ ASALocalRun/
 
 # BeatPulse healthcheck temp database
 healthchecksdb
+
+# Locally generated GNS 430 Pilot's Guide reference sheets.
+# These are design-analysis output and are not redistributed with the mod.
+output/gns430-reference/

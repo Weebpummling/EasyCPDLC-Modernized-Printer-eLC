@@ -38,6 +38,21 @@ namespace EasyCPDLC.Tests
             Assert.False(MainForm.IsStyledPreviewReprintLsk(true, false, 5));
         }
 
+        [Theory]
+        [InlineData(false, true, true)]
+        [InlineData(true, true, false)]
+        [InlineData(false, false, false)]
+        [InlineData(true, false, false)]
+        public void SuccessfulFirstPrint_RefreshesOnlyAVisibleMessagePreview(
+            bool reprintWasAvailable,
+            bool hasVisiblePreview,
+            bool expected)
+        {
+            Assert.Equal(
+                expected,
+                MainForm.ShouldRefreshStyledPreviewAfterPrint(reprintWasAvailable, hasVisiblePreview));
+        }
+
         [Fact]
         public void BoeingConnectHotspot_CoversTheCompletePaintedKey()
         {
@@ -72,6 +87,59 @@ namespace EasyCPDLC.Tests
 
             Assert.False(MainForm.ShouldCaptureFocusForControl(printerSelector));
             Assert.True(MainForm.ShouldCaptureFocusForControl(ordinaryButton));
+        }
+
+        [Theory]
+        [InlineData("55", 60)]
+        [InlineData("63", 65)]
+        [InlineData("110", 110)]
+        [InlineData("123%", 125)]
+        [InlineData("250", 200)]
+        [InlineData("invalid", 100)]
+        public void WindowScale_AllowsFlexibleSafeFivePercentSteps(string value, int expected)
+        {
+            Assert.Equal(expected, MainForm.NormalizeWindowScalePercent(value));
+        }
+
+        [Fact]
+        public void ScreenOnlyMode_UsesTheNativeDisplayAreaAsItsWindowBase()
+        {
+            Assert.Equal(new Size(493, 282), MainForm.MainWindowBaseSize(false, false));
+            Assert.Equal(new Size(496, 282), MainForm.MainWindowBaseSize(true, false));
+            Assert.Equal(new Size(700, 350), MainForm.MainWindowBaseSize(false, true));
+            Assert.Equal(new Size(660, 450), MainForm.MainWindowBaseSize(true, true));
+        }
+
+        [Theory]
+        [InlineData(true, false, true)]
+        [InlineData(false, true, true)]
+        [InlineData(false, false, false)]
+        public void PanelHotspots_RemainAvailableInsideSetupForRecovery(
+            bool enabled,
+            bool setupActive,
+            bool expected)
+        {
+            Assert.Equal(expected, MainForm.ArePanelHotspotsActive(enabled, setupActive));
+        }
+
+        [Fact]
+        public void DragResize_IsConvertedBackToAProportionalSavedScale()
+        {
+            Assert.Equal(150, MainForm.CalculateWindowScalePercent(new Size(1050, 525), false, true));
+            Assert.Equal(75, MainForm.CalculateWindowScalePercent(new Size(372, 212), true, false));
+        }
+
+        [Fact]
+        public void AssetPanel_CanDisableArtworkWithoutDiscardingItsConfiguredAsset()
+        {
+            using DcduAssetPanel panel = new()
+            {
+                AssetFileName = "DCDU_Main_V15.png",
+                ShowArtwork = false
+            };
+
+            Assert.False(panel.ShowArtwork);
+            Assert.Equal("DCDU_Main_V15.png", panel.AssetFileName);
         }
     }
 }

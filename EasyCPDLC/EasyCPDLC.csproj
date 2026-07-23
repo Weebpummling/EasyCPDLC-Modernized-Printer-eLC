@@ -56,6 +56,7 @@
 	</ItemGroup>
 	<ItemGroup>
 		<Compile Include="..\Shared\VpilotBridgeProtocol.cs" Link="VPilotBridge\VpilotBridgeProtocol.cs" />
+		<Compile Include="..\Shared\VpilotContactMeParser.cs" Link="VPilotBridge\VpilotContactMeParser.cs" />
 		<Compile Update="CPDLCMessage.cs">
 			<SubType>Component</SubType>
 		</Compile>
@@ -94,6 +95,21 @@
 		<None Update="Resources\cog-wheel-gear-setting.png">
 			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
 		</None>
+		<None Remove="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-GNS430-Companion.mfproj" />
+		<None Remove="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-DCDU-Companion.mfproj" />
+		<None Remove="GNS430\MSFS2024Companion\MobiFlight\README.md" />
+		<None Include="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-GNS430-Companion.mfproj">
+			<TargetPath>MobiFlight\EasyCPDLC-GNS430-Companion.mfproj</TargetPath>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</None>
+		<None Include="GNS430\MSFS2024Companion\MobiFlight\EasyCPDLC-DCDU-Companion.mfproj">
+			<TargetPath>MobiFlight\EasyCPDLC-DCDU-Companion.mfproj</TargetPath>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</None>
+		<None Include="GNS430\MSFS2024Companion\MobiFlight\README.md">
+			<TargetPath>MobiFlight\README.md</TargetPath>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</None>
 	</ItemGroup>
 	<ItemGroup>
 		<None Update="Properties\Settings.settings">
@@ -118,6 +134,7 @@
 		<EmbeddedResource Include="Resources\**\*.*" Exclude="Resources\*.resx" />
 		<EmbeddedResource Include="Sounds\**\*.*" />
 		<EmbeddedResource Include="*.ico" />
+		<EmbeddedResource Include="GNS430\Assets\**\*.*" />
 	</ItemGroup>
 
 </Project>

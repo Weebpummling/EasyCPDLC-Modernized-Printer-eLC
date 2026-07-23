@@ -891,6 +891,8 @@ private TelexForm tForm;
         private const string MessageTextSizeSettingName = "MessageTextSize";
         private const string AutoDeleteRequestSecondsSettingName = "AutoDeleteRequestSeconds";
         private const string WindowScalePercentSettingName = "WindowScalePercent";
+        private const string ShowPanelArtworkSettingName = "ShowPanelArtwork";
+        private const string EnableOnScreenButtonsSettingName = "EnableOnScreenButtons";
         private const string PrinterModeSettingName = "PrinterMode";
         private const string PrinterNameSettingName = "PrinterName";
         private const string PrinterProfileSettingName = "PrinterProfile";
@@ -918,20 +920,32 @@ private TelexForm tForm;
             }
         }
 
-        private static int NormalizeWindowScalePercent(string value)
+        public static bool ShowPanelArtwork
+        {
+            get => ReadFixedBoolSetting(ShowPanelArtworkSettingName, true);
+            set => SaveFixedStringSetting(ShowPanelArtworkSettingName, value ? "true" : "false");
+        }
+
+        public static bool EnableOnScreenButtons
+        {
+            get => ReadFixedBoolSetting(EnableOnScreenButtonsSettingName, true);
+            set => SaveFixedStringSetting(EnableOnScreenButtonsSettingName, value ? "true" : "false");
+        }
+
+        internal static int NormalizeWindowScalePercent(string value)
         {
             if (!int.TryParse((value ?? string.Empty).Trim().TrimEnd('%'), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int percent))
             {
                 percent = 100;
             }
 
-            int[] supported = { 100, 110, 120 };
-            return supported.OrderBy(item => Math.Abs(item - percent)).First();
+            percent = Math.Max(60, Math.Min(200, percent));
+            return (int)Math.Round(percent / 5.0, MidpointRounding.AwayFromZero) * 5;
         }
 
         private static float WindowScaleFactor()
         {
-            return Math.Max(1.0f, Math.Min(1.20f, WindowScalePercent / 100.0f));
+            return Math.Max(0.60f, Math.Min(2.00f, WindowScalePercent / 100.0f));
         }
 
         private static int ScaleUi(int value)
@@ -3401,13 +3415,16 @@ private TelexForm tForm;
         private static readonly Regex cpdlcHeaderParse = new(@"(\/\s*)\w*");
         private static readonly Regex cpdlcUnitParse = new(@"_@([\w]*)@_");
 
-        private static readonly TimeSpan updateTimer = TimeSpan.FromSeconds(20);
         private CancellationTokenSource requestCancellationTokenSource;
         private CancellationToken requestCancellationToken;
         private CancellationTokenSource protocolPipeCancellationTokenSource;
         private DateTime lastProtocolCommandUtc = DateTime.MinValue;
         private NotifyIcon trayIcon;
         private ContextMenuStrip trayMenu;
+        private ToolStripMenuItem trayArtworkMenuItem;
+        private ToolStripMenuItem trayOnScreenButtonsMenuItem;
+        private ToolStripMenuItem trayDcduCompanionMenuItem;
+        private bool applyingMainWindowLayout;
         private readonly DcduHotspotButton mainMinimizeButton = new();
         private readonly DcduHotspotButton mainReloadFlightPlanButton = new();
         private readonly DcduHotspotButton boeingReprintButton = new();
@@ -3415,6 +3432,7 @@ private TelexForm tForm;
         private DatalinkPrintJob latestPrintedDatalinkPrintJob;
         private readonly DatalinkPrintDeduplicator automaticPrintDeduplicator = new();
         private readonly DatalinkPrintDeduplicator vpilotPdcDeduplicator = new(TimeSpan.FromHours(6));
+        private readonly DatalinkPrintDeduplicator vpilotContactDeduplicator = new(TimeSpan.FromMinutes(15));
         private VpilotBridgeClient vpilotBridgeClient;
         private string vpilotBridgeCallsign = string.Empty;
         private string embeddedPrinterStatus = string.Empty;
@@ -3441,7 +3459,7 @@ private TelexForm tForm;
         private const string HoppieConnectUrl = "https://www.hoppie.nl/acars/system/connect.html";
         private DateTime hoppiePollPausedUntilUtc = DateTime.MinValue;
         private DateTime lastHoppieNetworkLoadWarningUtc = DateTime.MinValue;
-        private static readonly TimeSpan hoppieInitialPollDelay = TimeSpan.FromSeconds(8);
+        private static readonly TimeSpan hoppieInitialPollDelay = TimeSpan.FromSeconds(20);
         private static readonly TimeSpan hoppieNetworkLoadBackoff = TimeSpan.FromSeconds(45);
 
 
@@ -3525,6 +3543,7 @@ private TelexForm tForm;
             PrinterAuto,
             PrinterFormat,
             Style,
+            Display,
             UpdateRollback,
             RollbackConfirm
         }
@@ -3658,6 +3677,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             ApplyDisplayStyle();
             this.ShowInTaskbar = false;
             ConfigureTrayIcon();
+            RestoreDcduCompanionMode();
             ConfigureMainFrameButtonHotspots();
             StartVpilotBridge();
             dcduFrame.Paint += DcduFrame_PaintPrinterButton;
@@ -3665,6 +3685,8 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             this.FormBorderStyle = FormBorderStyle.None;
             this.DoubleBuffered = true;
             this.SetStyle(ControlStyles.ResizeRedraw, true);
+            Resize += MainForm_ResizePreview;
+            ResizeEnd += MainForm_ResizeEnd;
             ApplyMainWindowBounds(DcduStyleManager.IsBoeing);
             CurrentATCUnit = null;
             ClearNextAtcUnitDisplay();
@@ -4338,6 +4360,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             ApplyMainWindowBounds(isBoeing);
             if (dcduFrame != null)
             {
+                dcduFrame.ShowArtwork = ShowPanelArtwork;
                 dcduFrame.AssetFileName = DcduStyleManager.AssetFile("DCDU_Main_V15.png");
                 dcduFrame.HighlightRectangle = Rectangle.Empty;
                 dcduFrame.HighlightPressed = false;
@@ -4345,6 +4368,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             }
 
             ApplyMainScreenLayout(isBoeing);
+            ApplyArtworkVisibilityLayout();
             ApplyMainButtonLayout(isBoeing);
             ConfigureInboundMessageSound();
             ApplyMainThemeColors();
@@ -5591,7 +5615,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
                 "LOADSHEET" => string.Equals(type, "LOADSHEET", StringComparison.OrdinalIgnoreCase) ||
                                string.Equals(message.transport, "ELOADCONTROL API", StringComparison.OrdinalIgnoreCase) ||
                                DatalinkPrinter.IsELoadControlLoadsheet(message),
-                "VPILOT" => string.Equals(message.transport, "VATSIM/VTDLS", StringComparison.OrdinalIgnoreCase),
+                "VPILOT" => (message.transport ?? string.Empty).StartsWith("VATSIM/", StringComparison.OrdinalIgnoreCase),
                 "ATIS" => looksAtis,
                 "METAR" => looksMetar,
                 "CPDLC" => string.Equals(type, "CPDLC", StringComparison.OrdinalIgnoreCase) && !looksAtis && !looksMetar,
@@ -13108,16 +13132,21 @@ private System.Windows.Forms.Label airbusAocSendLabel;
         private Rectangle AirbusAocLeftLskBounds(int index)
         {
             // Physical Airbus side-key hitboxes, tuned to DCDU_Main_V15.png.
-            int[] y = { 46, 88, 130, 172, 214 };
+            int[] y = ShowPanelArtwork
+                ? new[] { 46, 88, 130, 172, 214 }
+                : new[] { 8, 50, 92, 134, 176 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
             return SR(new Rectangle(8, y[i], 64, 36));
         }
 
         private Rectangle AirbusAocRightLskBounds(int index)
         {
-            int[] y = { 64, 106, 148, 190, 232 };
+            int[] y = ShowPanelArtwork
+                ? new[] { 64, 106, 148, 190, 232 }
+                : new[] { 26, 68, 110, 152, 194 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
-            return SR(new Rectangle(610, y[i], 66, 36));
+            int x = ShowPanelArtwork ? 610 : 427;
+            return SR(new Rectangle(x, y[i], 66, 36));
         }
 
         private bool TryGetAirbusAocLineSelect(Point location, out bool rightSide, out int index)
@@ -13416,16 +13445,21 @@ private System.Windows.Forms.Label airbusAocSendLabel;
         private Rectangle BoeingTelexLeftLskBounds(int index)
         {
             // Physical Boeing DCDU side-key hitboxes, tuned for DCDU_Main_V15 Boeing asset.
-            int[] y = { 66, 107, 149, 190, 232, 273 };
+            int[] y = ShowPanelArtwork
+                ? new[] { 66, 107, 149, 190, 232, 273 }
+                : new[] { 32, 73, 115, 156, 198, 239 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
             return SR(new Rectangle(4, y[i], 70, 35));
         }
 
         private Rectangle BoeingTelexRightLskBounds(int index)
         {
-            int[] y = { 66, 107, 149, 190, 232, 273 };
+            int[] y = ShowPanelArtwork
+                ? new[] { 66, 107, 149, 190, 232, 273 }
+                : new[] { 32, 73, 115, 156, 198, 239 };
             int i = Math.Max(0, Math.Min(index - 1, y.Length - 1));
-            return SR(new Rectangle(584, y[i], 70, 35));
+            int x = ShowPanelArtwork ? 584 : 426;
+            return SR(new Rectangle(x, y[i], 70, 35));
         }
 
         private bool TryGetBoeingTelexLineSelect(Point location, out bool rightSide, out int index)
@@ -13998,7 +14032,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             AddBoeingTelexLabel(page, "<METAR REQUEST", 4, BoeingTelexLskTextY(page, 2), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<ATIS REQUEST", 4, BoeingTelexLskTextY(page, 3), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<LOADSHEET", 4, BoeingTelexLskTextY(page, 4), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
-            AddBoeingTelexLabel(page, "<VPILOT PDC", 4, BoeingTelexLskTextY(page, 5), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddBoeingTelexLabel(page, "<VPILOT MSGS", 4, BoeingTelexLskTextY(page, 5), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
             AddBoeingTelexLabel(page, "<RETURN", 4, BoeingTelexLskTextY(page, 6), 180, 30, ContentAlignment.MiddleLeft, color, menuFont);
         }
 
@@ -15018,6 +15052,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             }
 
             ApplyMainScreenLayout(DcduStyleManager.IsBoeing);
+            ApplyArtworkVisibilityLayout();
             ApplyMainButtonLayout(DcduStyleManager.IsBoeing);
             SetAirbusAocChromeVisible(true);
             // Do not call SetSmartWidgetsVisible(true) here: that forces all top badges/actions on,
@@ -16308,7 +16343,7 @@ airbusAocSendLabel = null;
             AddAirbusAocLabel(page, "<ATIS REQUEST", leftMenuX, AirbusAocLskTextY(page, 2), 260, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
             AddAirbusAocLabel(page, "FREE TEXT>", rightMenuX, AirbusAocRightLskTextY(page, 2), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
             AddAirbusAocLabel(page, "<LOADSHEET", leftMenuX, AirbusAocLskTextY(page, 3), 260, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
-            AddAirbusAocLabel(page, "VPILOT PDC>", rightMenuX, AirbusAocRightLskTextY(page, 3), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
+            AddAirbusAocLabel(page, "VPILOT MSGS>", rightMenuX, AirbusAocRightLskTextY(page, 3), 206, 32, ContentAlignment.MiddleRight, labelColor, menuFont);
             AddAirbusAocLabel(page, "<RETURN", leftMenuX, AirbusAocLskTextY(page, 5), 190, 32, ContentAlignment.MiddleLeft, labelColor, menuFont);
         }
 
@@ -17165,7 +17200,10 @@ airbusAocSendLabel = null;
             form.ShowDialog(this);
         }
 
-        internal void ReceiveELoadControlLoadsheet(ELoadLoadsheetResult result, SimbriefLoadsheetData flight)
+        internal void ReceiveELoadControlLoadsheet(
+            ELoadLoadsheetResult result,
+            SimbriefLoadsheetData flight,
+            bool openForReview = true)
         {
             string body = string.IsNullOrWhiteSpace(result?.AcarsMessage)
                 ? result?.Loadsheet
@@ -17190,6 +17228,11 @@ airbusAocSendLabel = null;
                 true);
 
             if (message == null)
+            {
+                return;
+            }
+
+            if (!openForReview)
             {
                 return;
             }
@@ -17542,6 +17585,7 @@ airbusAocSendLabel = null;
 
         private bool ExecuteDatalinkPrintJob(DatalinkPrintJob job, bool automatic)
         {
+            bool reprintWasAvailable = latestPrintedDatalinkPrintJob != null;
             DatalinkPrintResult result = DatalinkPrinter.Print(job, CurrentPrinterSettings());
             embeddedPrinterStatus = result.Message ?? string.Empty;
 
@@ -17549,6 +17593,15 @@ airbusAocSendLabel = null;
             {
                 latestPrintedDatalinkPrintJob = job;
                 RefreshPrinterButtonState();
+                if (ShouldRefreshStyledPreviewAfterPrint(
+                    reprintWasAvailable,
+                    messageFormatPanel != null &&
+                    !messageFormatPanel.IsDisposed &&
+                    messageFormatPanel.Visible &&
+                    previewMessage != null))
+                {
+                    ShowStyledMessagePreview(previewMessage, new List<System.Windows.Forms.Label>());
+                }
                 Logger.Info((automatic ? "Automatic" : "Manual") + " printer job succeeded: " + result.Message);
                 return true;
             }
@@ -17563,6 +17616,11 @@ airbusAocSendLabel = null;
                 MessageBox.Show(this, result.Message, "DCDU PRINTER", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             return false;
+        }
+
+        internal static bool ShouldRefreshStyledPreviewAfterPrint(bool reprintWasAvailable, bool hasVisiblePreview)
+        {
+            return !reprintWasAvailable && hasVisiblePreview;
         }
 
         private static string ShortMessageId(string stableMessageId)
@@ -17597,13 +17655,13 @@ airbusAocSendLabel = null;
             {
                 vpilotBridgeClient = new VpilotBridgeClient();
                 vpilotBridgeClient.ConnectionChanged += (_, connected) =>
-                    Logger.Info("vPilot PDC bridge " + (connected ? "connected." : "waiting for vPilot plugin."));
+                    Logger.Info("vPilot bridge " + (connected ? "connected." : "waiting for vPilot plugin."));
                 vpilotBridgeClient.PacketReceived += VpilotBridgePacketReceived;
                 vpilotBridgeClient.Start();
             }
             catch (Exception ex)
             {
-                Logger.Warn("vPilot PDC bridge could not start: " + ex.Message);
+                Logger.Warn("vPilot bridge could not start: " + ex.Message);
             }
         }
 
@@ -17617,21 +17675,81 @@ airbusAocSendLabel = null;
             if (packet.Kind == VpilotBridgePacketKind.NetworkConnected)
             {
                 vpilotBridgeCallsign = (packet.Callsign ?? string.Empty).Trim().ToUpperInvariant();
-                Logger.Info("vPilot PDC bridge network session detected for " + SafeLogValue(vpilotBridgeCallsign) + ".");
+                Logger.Info("vPilot bridge network session detected for " + SafeLogValue(vpilotBridgeCallsign) + ".");
                 return;
             }
 
             if (packet.Kind == VpilotBridgePacketKind.NetworkDisconnected)
             {
                 vpilotBridgeCallsign = string.Empty;
-                Logger.Info("vPilot PDC bridge network session disconnected.");
+                Logger.Info("vPilot bridge network session disconnected.");
                 return;
             }
 
             if (packet.Kind == VpilotBridgePacketKind.PrivateMessage)
             {
                 SafeUi(() => HandleVpilotPrivateMessage(packet));
+                return;
             }
+
+            if (packet.Kind == VpilotBridgePacketKind.ContactMe)
+            {
+                SafeUi(() => HandleVpilotContactMe(packet));
+            }
+        }
+
+        private void HandleVpilotContactMe(VpilotBridgePacket packet)
+        {
+            string controllerCallsign = (packet.Peer ?? string.Empty).Trim().ToUpperInvariant();
+            string bridgeCallsign = (packet.Callsign ?? vpilotBridgeCallsign ?? string.Empty).Trim().ToUpperInvariant();
+            string frequency = (packet.Frequency ?? string.Empty).Trim();
+
+            if (!VpilotContactMeParser.IsControllerCallsign(controllerCallsign) || frequency.Length == 0)
+            {
+                Logger.Warn("Malformed vPilot ATC contact request ignored: from=" + SafeLogValue(controllerCallsign));
+                return;
+            }
+
+            string easyCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(easyCallsign) &&
+                !string.IsNullOrWhiteSpace(bridgeCallsign) &&
+                !string.Equals(easyCallsign, bridgeCallsign, StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Warn("vPilot ATC contact request ignored because callsigns differ: EasyCPDLC=" + SafeLogValue(easyCallsign) +
+                    " vPilot=" + SafeLogValue(bridgeCallsign));
+                return;
+            }
+
+            VpilotContactDetails details = new()
+            {
+                ControllerCallsign = controllerCallsign,
+                Facility = packet.Facility,
+                Frequency = frequency,
+                OriginalMessage = packet.Message
+            };
+            string displayMessage = VpilotContactMeParser.FormatDisplayMessage(details);
+            string stableId = DatalinkPrinter.DeriveStableMessageId(
+                "ATC CONTACT",
+                controllerCallsign,
+                bridgeCallsign,
+                displayMessage);
+            if (!vpilotContactDeduplicator.TryRegister(stableId, DateTime.UtcNow))
+            {
+                Logger.Info("Duplicate vPilot ATC contact request suppressed: " + ShortMessageId(stableId));
+                return;
+            }
+
+            WriteMessage(
+                displayMessage,
+                "INFO",
+                controllerCallsign,
+                false,
+                null,
+                "VATSIM/VPILOT",
+                bridgeCallsign,
+                true);
+            Logger.Info("vPilot ATC contact request received through bridge: from=" + SafeLogValue(controllerCallsign) +
+                " frequency=" + SafeLogValue(frequency) + " id=" + ShortMessageId(stableId));
         }
 
         private void HandleVpilotPrivateMessage(VpilotBridgePacket packet)
@@ -17930,26 +18048,126 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
         private void ApplyMainWindowBounds(bool isBoeing)
         {
-            Size baseTargetSize = isBoeing ? new Size(660, 450) : new Size(700, 350);
-            Size targetSize = SS(baseTargetSize);
+            Size baseTargetSize = MainWindowBaseSize(isBoeing, ShowPanelArtwork);
+            Size targetSize = new(
+                (int)Math.Round(baseTargetSize.Width * WindowScaleFactor(), MidpointRounding.AwayFromZero),
+                (int)Math.Round(baseTargetSize.Height * WindowScaleFactor(), MidpointRounding.AwayFromZero));
+            Size minimumSize = new(
+                (int)Math.Round(baseTargetSize.Width * 0.60f, MidpointRounding.AwayFromZero),
+                (int)Math.Round(baseTargetSize.Height * 0.60f, MidpointRounding.AwayFromZero));
+            Size maximumSize = new(baseTargetSize.Width * 2, baseTargetSize.Height * 2);
 
-            if (ClientSize != targetSize)
+            applyingMainWindowLayout = true;
+            try
             {
-                ClientSize = targetSize;
+                MinimumSize = Size.Empty;
+                MaximumSize = Size.Empty;
+
+                if (ClientSize != targetSize)
+                {
+                    ClientSize = targetSize;
+                }
+
+                Size = targetSize;
+                MinimumSize = minimumSize;
+                MaximumSize = maximumSize;
+
+                if (dcduFrame != null)
+                {
+                    dcduFrame.Location = new Point(0, 0);
+                    dcduFrame.Size = targetSize;
+                    dcduFrame.Invalidate();
+                }
             }
-
-            Size = targetSize;
-            MinimumSize = targetSize;
-            MaximumSize = targetSize;
-
-            if (dcduFrame != null)
+            finally
             {
-                dcduFrame.Location = new Point(0, 0);
-                dcduFrame.Size = targetSize;
-                dcduFrame.Invalidate();
+                applyingMainWindowLayout = false;
             }
 
             DcduWindowHelper.ApplyDeviceWindow(this, dcduFrame, S(22));
+        }
+
+        internal static Size MainWindowBaseSize(bool isBoeing, bool showArtwork)
+        {
+            if (showArtwork)
+            {
+                return isBoeing ? new Size(660, 450) : new Size(700, 350);
+            }
+
+            return isBoeing ? new Size(496, 282) : new Size(493, 282);
+        }
+
+        internal static int CalculateWindowScalePercent(Size currentSize, bool isBoeing, bool showArtwork)
+        {
+            Size baseSize = MainWindowBaseSize(isBoeing, showArtwork);
+            if (currentSize.Width <= 0 || currentSize.Height <= 0)
+            {
+                return 100;
+            }
+
+            double widthScale = currentSize.Width * 100.0 / baseSize.Width;
+            double heightScale = currentSize.Height * 100.0 / baseSize.Height;
+            return NormalizeWindowScalePercent(
+                Math.Min(widthScale, heightScale).ToString("0", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        private void MainForm_ResizeEnd(object sender, EventArgs e)
+        {
+            if (applyingMainWindowLayout || WindowState != FormWindowState.Normal)
+            {
+                return;
+            }
+
+            int resizedPercent = CalculateWindowScalePercent(ClientSize, DcduStyleManager.IsBoeing, ShowPanelArtwork);
+            WindowScalePercent = resizedPercent;
+            Properties.Settings.Default.Save();
+            RefreshWindowScaleUi();
+
+            if (embeddedSetupPage == EmbeddedSetupPage.Display)
+            {
+                ShowEmbeddedSetupDisplayPage();
+            }
+            else if (embeddedSetupPage == EmbeddedSetupPage.Style)
+            {
+                ShowEmbeddedSetupStylePage();
+            }
+        }
+
+        private void MainForm_ResizePreview(object sender, EventArgs e)
+        {
+            if (applyingMainWindowLayout || dcduFrame == null || WindowState != FormWindowState.Normal)
+            {
+                return;
+            }
+
+            dcduFrame.Size = ClientSize;
+            if (!dcduFrame.ShowArtwork && screenPanel != null)
+            {
+                screenPanel.Location = Point.Empty;
+                screenPanel.Size = ClientSize;
+            }
+        }
+
+        private void ApplyArtworkVisibilityLayout()
+        {
+            if (dcduFrame == null || screenPanel == null)
+            {
+                return;
+            }
+
+            bool showArtwork = ShowPanelArtwork;
+            dcduFrame.ShowArtwork = showArtwork;
+            screenPanel.DrawScreenBackground = !showArtwork;
+
+            if (!showArtwork)
+            {
+                screenPanel.Location = Point.Empty;
+                screenPanel.Size = dcduFrame.ClientSize;
+                screenPanel.BringToFront();
+            }
+
+            screenPanel.Invalidate(true);
+            dcduFrame.Invalidate(true);
         }
 
         private void ApplyMainScreenLayout(bool isBoeing)
@@ -18604,6 +18822,11 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 return;
             }
 
+            if (!ArePanelHotspotsActive(EnableOnScreenButtons, IsEmbeddedSetupActive()))
+            {
+                return;
+            }
+
             if (HandleAirbusAocLineSelectClick(e.Location))
             {
                 return;
@@ -18686,6 +18909,11 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
         private Control GetDcduButtonAt(Point location)
         {
+            if (!ArePanelHotspotsActive(EnableOnScreenButtons, IsEmbeddedSetupActive()))
+            {
+                return null;
+            }
+
             if (IsStyledMessagePreviewLineSelectHit(location) || IsAirbusAocLineSelectHit(location) || IsBoeingTelexLineSelectHit(location) || IsEmbeddedSetupLineSelectHit(location))
             {
                 return dcduFrame;
@@ -18714,6 +18942,11 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             }
 
             return null;
+        }
+
+        internal static bool ArePanelHotspotsActive(bool enabled, bool setupActive)
+        {
+            return enabled || setupActive;
         }
 
         private static bool HitDcduButton(Control button, Point location)
@@ -18767,9 +19000,30 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
                 trayMenu = new ContextMenuStrip();
                 trayMenu.Items.Add("Show EasyCPDLC", null, (_, __) => BringEasyCpdlcWindowToFront());
+                trayMenu.Items.Add("Open GNS 430 panel", null, (_, __) => ShowGns430Panel());
                 trayMenu.Items.Add("Hide EasyCPDLC", null, (_, __) => Hide());
                 trayMenu.Items.Add(new ToolStripSeparator());
+                trayMenu.Items.Add("Connection credentials...", null, (_, __) => ShowSharedCredentialEditor());
+                trayDcduCompanionMenuItem = new ToolStripMenuItem("Use MSFS companion for DCDU controls")
+                {
+                    CheckOnClick = false
+                };
+                trayDcduCompanionMenuItem.Click += (_, __) => ToggleDcduCompanionMode();
+                trayMenu.Items.Add(trayDcduCompanionMenuItem);
+                trayMenu.Items.Add("Open Display Settings", null, (_, __) =>
+                {
+                    BringEasyCpdlcWindowToFront();
+                    ShowEmbeddedSetupDisplayPage();
+                });
+                trayArtworkMenuItem = new ToolStripMenuItem("Show panel artwork", null, (_, __) => SetPanelArtworkVisible(!ShowPanelArtwork));
+                trayOnScreenButtonsMenuItem = new ToolStripMenuItem("Enable on-screen buttons", null, (_, __) => SetOnScreenButtonsEnabled(!EnableOnScreenButtons));
+                trayMenu.Items.Add(trayArtworkMenuItem);
+                trayMenu.Items.Add(trayOnScreenButtonsMenuItem);
+                trayMenu.Items.Add("Reset window size", null, (_, __) => SetEmbeddedSetupWindowScale(100));
+                trayMenu.Items.Add(new ToolStripSeparator());
                 trayMenu.Items.Add("Exit EasyCPDLC", null, (_, __) => ExitButton_Click(exitButton, EventArgs.Empty));
+                SyncTrayDisplayMenuState();
+                SyncTrayCompanionMenuState();
 
                 trayIcon?.Dispose();
                 trayIcon = new NotifyIcon
@@ -18785,6 +19039,52 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             catch (Exception ex)
             {
                 Logger.Warn(ex, "Could not create EasyCPDLC tray icon");
+            }
+        }
+
+        private void ShowSharedCredentialEditor()
+        {
+            using CredentialSettingsForm form = new();
+            if (form.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
+
+            if (!Connected)
+            {
+                cid = SavedCID;
+                logonCode = SavedHoppieCode;
+            }
+
+            string note = Connected
+                ? "Credentials saved. The active Hoppie session is unchanged; reconnect to use the new CID or Hoppie code."
+                : "Credentials saved for the DCDU, GNS 430, SimBrief, and eLoadControl interfaces.";
+            trayIcon?.ShowBalloonTip(3500, "EasyCPDLC credentials", note, ToolTipIcon.Info);
+        }
+
+        private void ToggleDcduCompanionMode()
+        {
+            bool enable = !IsDcduCompanionModeEnabled();
+            if (!SetDcduCompanionMode(enable, out string error))
+            {
+                MessageBox.Show(this, error, "DCDU companion mode", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            SyncTrayCompanionMenuState();
+            string note = enable
+                ? string.IsNullOrWhiteSpace(error)
+                    ? "DCDU LSK and button L-vars are enabled. GNS command L-vars are ignored while this mode is active."
+                    : "DCDU mode is saved and will connect automatically when MSFS/SimConnect becomes available."
+                : "DCDU LSK and button L-vars are disabled.";
+            trayIcon?.ShowBalloonTip(4000, "EasyCPDLC MSFS companion", note, ToolTipIcon.Info);
+        }
+
+        private void SyncTrayCompanionMenuState()
+        {
+            if (trayDcduCompanionMenuItem != null)
+            {
+                trayDcduCompanionMenuItem.Checked = IsDcduCompanionModeEnabled();
             }
         }
 
@@ -19143,6 +19443,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
             ApplyMainWindowBounds(DcduStyleManager.IsBoeing);
             ApplyMainScreenLayout(DcduStyleManager.IsBoeing);
+            ApplyArtworkVisibilityLayout();
             ApplyMainButtonLayout(DcduStyleManager.IsBoeing);
             ConfigureSmartWidgets();
             ApplyMessageFilter();
@@ -21255,7 +21556,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             SafeUi(() => WriteMessage("HOPPIE SERVER RATE LIMIT: TOO HEAVY ON THE NETWORK. EASYCPDLC WILL BACK OFF BRIEFLY AND TRY AGAIN.", "SYSTEM", "SYSTEM"));
         }
 
-        private async Task PeriodicCheckMessage(TimeSpan interval, CancellationToken cancellationToken)
+        private async Task PeriodicCheckMessage(CancellationToken cancellationToken)
         {
             try
             {
@@ -21273,7 +21574,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                 if (DateTime.UtcNow < hoppiePollPausedUntilUtc)
                 {
                     TimeSpan pauseRemaining = hoppiePollPausedUntilUtc - DateTime.UtcNow;
-                    TimeSpan delay = pauseRemaining < interval ? pauseRemaining : interval;
+                    TimeSpan maximumBackoffCheck = TimeSpan.FromSeconds(HoppiePollingPolicy.MaximumSeconds);
+                    TimeSpan delay = pauseRemaining < maximumBackoffCheck ? pauseRemaining : maximumBackoffCheck;
 
                     Logger.Debug("Hoppie poll delayed by explicit server backoff for " + (int)Math.Max(0, delay.TotalMilliseconds) + "ms");
 
@@ -21295,7 +21597,9 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
                 try
                 {
-                    await Task.Delay(interval, cancellationToken);
+                    TimeSpan nextPollDelay = HoppiePollingPolicy.NextDelay();
+                    Logger.Debug("Next Hoppie poll scheduled in " + (int)nextPollDelay.TotalSeconds + "s");
+                    await Task.Delay(nextPollDelay, cancellationToken);
                 }
                 catch (TaskCanceledException)
                 {
@@ -26708,7 +27012,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
                     requestCancellationTokenSource = new CancellationTokenSource();
                     requestCancellationToken = requestCancellationTokenSource.Token;
-                    _ = PeriodicCheckMessage(updateTimer, requestCancellationToken);
+                    _ = PeriodicCheckMessage(requestCancellationToken);
 
                 }
                 catch (Exception ex) when (ex is IndexOutOfRangeException || ex is NullReferenceException)
@@ -27060,7 +27364,8 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             switch (embeddedSetupPage)
             {
                 case EmbeddedSetupPage.MainMenu:
-                    return !rightSide && ((index >= 1 && index <= (DcduStyleManager.IsBoeing ? 5 : 4)) || index == bottom);
+                    return (!rightSide && ((index >= 1 && index <= (DcduStyleManager.IsBoeing ? 5 : 4)) || index == bottom)) ||
+                           (rightSide && index == 1);
 
                 case EmbeddedSetupPage.Account:
                     return !rightSide && index == bottom;
@@ -27103,6 +27408,10 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     return (!rightSide && (index == 1 || index == 2 || index == bottom)) ||
                            (rightSide && index == 3);
 
+                case EmbeddedSetupPage.Display:
+                    return (rightSide && index >= 1 && index <= 3) ||
+                           (!rightSide && (index == 4 || index == bottom));
+
                 case EmbeddedSetupPage.UpdateRollback:
                     if (!rightSide && index == bottom)
                     {
@@ -27125,7 +27434,11 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             switch (embeddedSetupPage)
             {
                 case EmbeddedSetupPage.MainMenu:
-                    if (!rightSide && index == 1)
+                    if (rightSide && index == 1)
+                    {
+                        ShowEmbeddedSetupDisplayPage();
+                    }
+                    else if (!rightSide && index == 1)
                     {
                         ShowEmbeddedSetupAccountPage();
                     }
@@ -27318,6 +27631,29 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
                     else if (rightSide && index == 3)
                     {
                         CycleEmbeddedSetupWindowScale();
+                    }
+                    else if (!rightSide && index == bottom)
+                    {
+                        ShowEmbeddedSetupMainMenu();
+                    }
+                    break;
+
+                case EmbeddedSetupPage.Display:
+                    if (rightSide && index == 1)
+                    {
+                        SetPanelArtworkVisible(!ShowPanelArtwork);
+                    }
+                    else if (rightSide && index == 2)
+                    {
+                        SetOnScreenButtonsEnabled(!EnableOnScreenButtons);
+                    }
+                    else if (rightSide && index == 3)
+                    {
+                        CycleEmbeddedSetupWindowScale();
+                    }
+                    else if (!rightSide && index == 4)
+                    {
+                        SetEmbeddedSetupWindowScale(100);
                     }
                     else if (!rightSide && index == bottom)
                     {
@@ -27558,6 +27894,7 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
             AddEmbeddedSetupLabel(page, "SETUP MENU", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
             AddEmbeddedSetupLabel(page, "<ACCOUNT / LOGIN", 4, EmbeddedSetupLskTextY(page, 1), 260, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "DISPLAY>", page.Width - 170, EmbeddedSetupRightLskTextY(page, 1), 166, 30, ContentAlignment.MiddleRight, color, menuFont);
             AddEmbeddedSetupLabel(page, "<OPTIONS", 4, EmbeddedSetupLskTextY(page, 2), 220, 30, ContentAlignment.MiddleLeft, color, menuFont);
             if (DcduStyleManager.IsBoeing)
             {
@@ -28131,9 +28468,33 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
             AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
         }
 
+        private void ShowEmbeddedSetupDisplayPage()
+        {
+            PrepareEmbeddedSetupPage(EmbeddedSetupPage.Display);
+            Panel page = CreateEmbeddedSetupCanvas();
+            Font titleFont = EmbeddedSetupTitleFont();
+            Font menuFont = EmbeddedSetupMenuFont();
+            Font captionFont = EmbeddedSetupCaptionFont();
+            Color color = MainPrimaryTextColor();
+
+            AddEmbeddedSetupLabel(page, "DISPLAY / WINDOW", 0, 2, page.Width, 24, ContentAlignment.MiddleCenter, color, titleFont);
+            AddEmbeddedSetupLabel(page, "PANEL ARTWORK", 4, EmbeddedSetupLskTextY(page, 1), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(ShowPanelArtwork) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 1), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "ONSCREEN KEYS", 4, EmbeddedSetupLskTextY(page, 2), 250, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, EmbeddedSetupOnOff(EnableOnScreenButtons) + ">", page.Width - 130, EmbeddedSetupRightLskTextY(page, 2), 126, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "WINDOW SCALE", 4, EmbeddedSetupLskTextY(page, 3), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, WindowScalePercent.ToString(System.Globalization.CultureInfo.InvariantCulture) + "%>", page.Width - 150, EmbeddedSetupRightLskTextY(page, 3), 146, 30, ContentAlignment.MiddleRight, DcduTheme.Amber, menuFont);
+
+            AddEmbeddedSetupLabel(page, "<RESET SIZE", 4, EmbeddedSetupLskTextY(page, 4), 210, 30, ContentAlignment.MiddleLeft, color, menuFont);
+            AddEmbeddedSetupLabel(page, "DRAG TOP / RESIZE LOWER RIGHT", 132, EmbeddedSetupRightLskTextY(page, 4), Math.Max(1, page.Width - 136), 26, ContentAlignment.MiddleRight, DcduTheme.Amber, captionFont);
+            AddEmbeddedSetupLabel(page, "<SETUP MENU", 4, EmbeddedSetupLskTextY(page, EmbeddedSetupBottomIndex()), 230, 30, ContentAlignment.MiddleLeft, color, menuFont);
+        }
+
         private void CycleEmbeddedSetupWindowScale()
         {
-            int[] values = { 100, 110, 120 };
+            int[] values = { 75, 100, 110, 120, 150, 175, 200 };
             int current = WindowScalePercent;
             int next = values.FirstOrDefault(value => value > current);
 
@@ -28147,10 +28508,62 @@ private static void DrawLogonVersionOnControl(Control control, Rectangle version
 
         private void SetEmbeddedSetupWindowScale(int percent)
         {
+            EmbeddedSetupPage returnPage = embeddedSetupPage;
             WindowScalePercent = percent;
             Properties.Settings.Default.Save();
             RefreshWindowScaleUi();
-            ShowEmbeddedSetupStylePage();
+            if (returnPage == EmbeddedSetupPage.Display)
+            {
+                ShowEmbeddedSetupDisplayPage();
+            }
+            else if (returnPage == EmbeddedSetupPage.Style)
+            {
+                ShowEmbeddedSetupStylePage();
+            }
+        }
+
+        private void SyncTrayDisplayMenuState()
+        {
+            if (trayArtworkMenuItem != null)
+            {
+                trayArtworkMenuItem.Checked = ShowPanelArtwork;
+            }
+
+            if (trayOnScreenButtonsMenuItem != null)
+            {
+                trayOnScreenButtonsMenuItem.Checked = EnableOnScreenButtons;
+            }
+        }
+
+        private void SetPanelArtworkVisible(bool visible)
+        {
+            ShowPanelArtwork = visible;
+            Properties.Settings.Default.Save();
+            ResetScaleSensitivePopups();
+            ApplyDisplayStyle();
+            ApplyMessageFilter();
+            RefreshMainDisplaySurface();
+            SyncTrayDisplayMenuState();
+
+            if (embeddedSetupPage == EmbeddedSetupPage.Display)
+            {
+                ShowEmbeddedSetupDisplayPage();
+            }
+        }
+
+        private void SetOnScreenButtonsEnabled(bool enabled)
+        {
+            EnableOnScreenButtons = enabled;
+            Properties.Settings.Default.Save();
+            dcduFrame.HighlightRectangle = Rectangle.Empty;
+            dcduFrame.HighlightPressed = false;
+            dcduFrame.Cursor = Cursors.Default;
+            SyncTrayDisplayMenuState();
+
+            if (embeddedSetupPage == EmbeddedSetupPage.Display)
+            {
+                ShowEmbeddedSetupDisplayPage();
+            }
         }
 
         private void ResetScaleSensitivePopups()
