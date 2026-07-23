@@ -212,7 +212,9 @@ namespace EasyCPDLC.Tests
                 CursorActive = true
             };
 
-            using Bitmap image = Vns430LcdRenderer.Render(state);
+            // The palette is asserted on the raw raster. The older-LCD appearance pass
+            // blends every pixel, so exact sampled colours only survive before it runs.
+            using Bitmap image = Vns430LcdRenderer.Render(state, applyAppearance: false);
             Assert.Equal(240, image.Width);
             Assert.Equal(128, image.Height);
             HashSet<int> colors = new();
@@ -227,6 +229,55 @@ namespace EasyCPDLC.Tests
             Assert.Contains(Vns430LcdRenderer.Black.ToArgb(), colors);
             Assert.Contains(Vns430LcdRenderer.Cyan.ToArgb(), colors);
             Assert.Contains(Vns430LcdRenderer.Green.ToArgb(), colors);
+        }
+
+        [Fact]
+        public void LcdRenderer_AppliesTheOlderDisplayAppearanceByDefault()
+        {
+            Vns430LcdState state = new()
+            {
+                Snapshot = new Vns430BackendSnapshot
+                {
+                    Connected = true,
+                    Callsign = "N731CD",
+                    CurrentAtcUnit = "KZAK",
+                    Messages = new List<Vns430MessageSnapshot>()
+                },
+                Page = Vns430Page.Status,
+                PageGroup = Vns430PageGroup.Nav,
+                CursorActive = true
+            };
+
+            using Bitmap raw = Vns430LcdRenderer.Render(state, applyAppearance: false);
+            using Bitmap shaded = Vns430LcdRenderer.Render(state);
+
+            Assert.Equal(raw.Width, shaded.Width);
+            Assert.Equal(raw.Height, shaded.Height);
+
+            // Bloom and softening must visibly change the raster, and must widen the
+            // palette rather than collapse it, so strokes read heavier without the
+            // display losing legible contrast.
+            int changed = 0;
+            HashSet<int> rawColors = new();
+            HashSet<int> shadedColors = new();
+            for (int y = 0; y < raw.Height; y++)
+            {
+                for (int x = 0; x < raw.Width; x++)
+                {
+                    int before = raw.GetPixel(x, y).ToArgb();
+                    int after = shaded.GetPixel(x, y).ToArgb();
+                    rawColors.Add(before);
+                    shadedColors.Add(after);
+                    if (before != after)
+                    {
+                        changed++;
+                    }
+                }
+            }
+
+            Assert.True(changed > 0, "The appearance pass left the raster untouched.");
+            Assert.True(shadedColors.Count > rawColors.Count,
+                "The appearance pass did not introduce intermediate shades.");
         }
 
         [Fact]

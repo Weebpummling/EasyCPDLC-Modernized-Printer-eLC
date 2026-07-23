@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace EasyCPDLC.VNS430
 {
@@ -44,7 +46,9 @@ namespace EasyCPDLC.VNS430
         private const int MainLeft = 57;
         private const int FooterTop = 119;
 
-        internal static Bitmap Render(Vns430LcdState state)
+        // applyAppearance draws the raw pixel-exact raster when false, which lets the
+        // palette be asserted without the older-LCD post-process blending it away.
+        internal static Bitmap Render(Vns430LcdState state, bool applyAppearance = true)
         {
             Bitmap display = new(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using (Graphics graphics = Graphics.FromImage(display))
@@ -104,6 +108,12 @@ namespace EasyCPDLC.VNS430
             {
                 DrawTransient(display, state.TransientStatus);
             }
+
+            if (applyAppearance)
+            {
+                ApplyLcdAppearance(display);
+            }
+
             return display;
         }
 
@@ -568,6 +578,114 @@ namespace EasyCPDLC.VNS430
                     display.SetPixel(x, y, ((x + y) & 1) == 0 ? first : second);
                 }
             }
+        }
+
+        // ----- Older-LCD appearance post-process (HANDOFF task 3) -------------
+        // The VNS430 glyphs and rules are drawn pixel-exact above. This single
+        // pass reproduces the look of an aged passive-matrix LCD in two steps:
+        //   1. a brightness dilation that bleeds lit pixels into their darker
+        //      neighbours, so text and line strokes read heavier; and
+        //   2. a light box blur that adds restrained softness/fuzziness.
+        // Both are kept gentle so the display stays legible at normal viewing
+        // distance. Tune the two weights, or pass applyAppearance: false to Render,
+        // to calibrate against reference photos. Because the desktop bitmap is
+        // streamed to the in-cockpit gauge as-is, this affects both the desktop and
+        // 3D LCD.
+        private const double LcdBloom = 0.45;    // strength of stroke-thickening bleed (0..1)
+        private const double LcdSoftness = 0.25; // strength of final softening blur (0..1)
+
+        private static void ApplyLcdAppearance(Bitmap display)
+        {
+            int w = display.Width;
+            int h = display.Height;
+            int count = w * h;
+            Rectangle bounds = new(0, 0, w, h);
+            BitmapData data = display.LockBits(bounds, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            try
+            {
+                int[] src = new int[count];
+                Marshal.Copy(data.Scan0, src, 0, count);
+                int[] bloomed = new int[count];
+
+                // Pass 1: 4-neighbour brightness dilation. Each pixel blends toward
+                // the brightest of itself and its neighbours, so bright glyph and
+                // rule pixels grow slightly into the darker background.
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = (y * w) + x;
+                        int best = src[i];
+                        int bestLuma = Luma(best);
+                        if (x > 0) { ConsiderBrighter(src[i - 1], ref best, ref bestLuma); }
+                        if (x < w - 1) { ConsiderBrighter(src[i + 1], ref best, ref bestLuma); }
+                        if (y > 0) { ConsiderBrighter(src[i - w], ref best, ref bestLuma); }
+                        if (y < h - 1) { ConsiderBrighter(src[i + w], ref best, ref bestLuma); }
+                        bloomed[i] = Blend(src[i], best, LcdBloom);
+                    }
+                }
+
+                // Pass 2: 3x3 box blur for older-display softness.
+                int[] soft = new int[count];
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = (y * w) + x;
+                        int r = 0, g = 0, b = 0, n = 0;
+                        for (int dy = -1; dy <= 1; dy++)
+                        {
+                            int ny = y + dy;
+                            if (ny < 0 || ny >= h) { continue; }
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                int nx = x + dx;
+                                if (nx < 0 || nx >= w) { continue; }
+                                int c = bloomed[(ny * w) + nx];
+                                r += (c >> 16) & 0xFF;
+                                g += (c >> 8) & 0xFF;
+                                b += c & 0xFF;
+                                n++;
+                            }
+                        }
+                        int blurred = unchecked((int)0xFF000000) | ((r / n) << 16) | ((g / n) << 8) | (b / n);
+                        soft[i] = Blend(bloomed[i], blurred, LcdSoftness);
+                    }
+                }
+
+                Marshal.Copy(soft, 0, data.Scan0, count);
+            }
+            finally
+            {
+                display.UnlockBits(data);
+            }
+        }
+
+        private static void ConsiderBrighter(int candidate, ref int best, ref int bestLuma)
+        {
+            int luma = Luma(candidate);
+            if (luma > bestLuma)
+            {
+                bestLuma = luma;
+                best = candidate;
+            }
+        }
+
+        private static int Luma(int argb)
+        {
+            int r = (argb >> 16) & 0xFF;
+            int g = (argb >> 8) & 0xFF;
+            int b = argb & 0xFF;
+            return ((r * 299) + (g * 587) + (b * 114)) / 1000;
+        }
+
+        private static int Blend(int first, int second, double weight)
+        {
+            double keep = 1.0 - weight;
+            int r = (int)((((first >> 16) & 0xFF) * keep) + (((second >> 16) & 0xFF) * weight));
+            int g = (int)((((first >> 8) & 0xFF) * keep) + (((second >> 8) & 0xFF) * weight));
+            int b = (int)(((first & 0xFF) * keep) + ((second & 0xFF) * weight));
+            return unchecked((int)0xFF000000) | (r << 16) | (g << 8) | b;
         }
     }
 }
