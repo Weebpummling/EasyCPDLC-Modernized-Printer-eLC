@@ -181,6 +181,8 @@ namespace EasyCPDLC.GNS430
             if (refreshTick % 3 == 0)
             {
                 RefreshSnapshot();
+                using Bitmap lcd = Gns430LcdRenderer.Render(CreateLcdState());
+                companionInput.UpdateDisplay(lcd);
             }
 
             Invalidate();
@@ -977,7 +979,19 @@ namespace EasyCPDLC.GNS430
 
         private void DrawScreen(Graphics graphics)
         {
-            Gns430LcdState state = new()
+            using Bitmap lcd = Gns430LcdRenderer.Render(CreateLcdState());
+            InterpolationMode previousInterpolation = graphics.InterpolationMode;
+            PixelOffsetMode previousOffset = graphics.PixelOffsetMode;
+            graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            graphics.PixelOffsetMode = PixelOffsetMode.Half;
+            graphics.DrawImage(lcd, ScreenBounds);
+            graphics.InterpolationMode = previousInterpolation;
+            graphics.PixelOffsetMode = previousOffset;
+        }
+
+        private Gns430LcdState CreateLcdState()
+        {
+            return new Gns430LcdState
             {
                 Snapshot = snapshot,
                 Page = page,
@@ -997,14 +1011,6 @@ namespace EasyCPDLC.GNS430
                 OperationBusy = operationBusy,
                 OperationStatus = operationStatus
             };
-            using Bitmap lcd = Gns430LcdRenderer.Render(state);
-            InterpolationMode previousInterpolation = graphics.InterpolationMode;
-            PixelOffsetMode previousOffset = graphics.PixelOffsetMode;
-            graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-            graphics.PixelOffsetMode = PixelOffsetMode.Half;
-            graphics.DrawImage(lcd, ScreenBounds);
-            graphics.InterpolationMode = previousInterpolation;
-            graphics.PixelOffsetMode = previousOffset;
         }
 
         private void DrawRadioStrip(Graphics graphics)
@@ -1502,7 +1508,7 @@ namespace EasyCPDLC.GNS430
 
         private void HandleCompanionCommand(Gns430Command command)
         {
-            if (command >= Gns430Command.DcduLeftLsk1)
+            if (command >= Gns430Command.DcduLeftLsk1 && command <= Gns430Command.DcduHide)
             {
                 if (preferences.DcduCompanionMode)
                 {
