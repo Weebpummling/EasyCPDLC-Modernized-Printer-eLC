@@ -33,7 +33,7 @@ namespace EasyCPDLC.VNS430
         private DateTime lastModulePacketUtc = DateTime.MinValue;
         private DateTime lastStatusSentUtc = DateTime.MinValue;
         private DateTime lastDisplaySentUtc = DateTime.MinValue;
-        private string lastDisplayPayload = string.Empty;
+        private ulong lastDisplayHash;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct SimConnectRecv
@@ -150,7 +150,15 @@ namespace EasyCPDLC.VNS430
                 if (result < 0 || connection == IntPtr.Zero)
                 {
                     error = "MSFS 2024 is not available through SimConnect.";
-                    connection = IntPtr.Zero;
+                    if (connection != IntPtr.Zero)
+                    {
+                        // A failure code can still hand back a live handle. Dropping the
+                        // reference without closing it leaks the handle, and the panel
+                        // retries every five seconds for the whole session.
+                        try { SimConnect_Close(connection); } catch { /* Shutdown only. */ }
+                        connection = IntPtr.Zero;
+                    }
+
                     Status = "OFFLINE";
                     return false;
                 }
@@ -165,6 +173,7 @@ namespace EasyCPDLC.VNS430
                 {
                     error = "The EasyCPDLC companion data channel could not be registered.";
                     Disable();
+                    Status = "OFFLINE";
                     return false;
                 }
 
@@ -186,6 +195,7 @@ namespace EasyCPDLC.VNS430
                 {
                     error = "The EasyCPDLC companion command channel could not be opened.";
                     Disable();
+                    Status = "OFFLINE";
                     return false;
                 }
 
@@ -291,14 +301,21 @@ namespace EasyCPDLC.VNS430
 
             try
             {
-                using MemoryStream stream = new();
-                display.Save(stream, ImageFormat.Png);
-                string image = Convert.ToBase64String(stream.ToArray());
-                if (string.Equals(image, lastDisplayPayload, StringComparison.Ordinal) &&
+                // Encoding a 240x128 PNG and base64-ing it costs ~0.56 ms and ~47 KB.
+                // The panel is static most of the time, so hash the raster first and
+                // only pay for the encode when the frame actually changed. The
+                // one-second keepalive still resends an unchanged frame so a gauge
+                // that connects late is not left blank.
+                ulong frame = HashRaster(display);
+                if (frame == lastDisplayHash &&
                     DateTime.UtcNow - lastDisplaySentUtc < TimeSpan.FromSeconds(1))
                 {
                     return;
                 }
+
+                using MemoryStream stream = new();
+                display.Save(stream, ImageFormat.Png);
+                string image = Convert.ToBase64String(stream.ToArray());
 
                 string json =
                     "{\"version\":1,\"width\":240,\"height\":128,\"png\":\"data:image/png;base64," +
@@ -316,7 +333,7 @@ namespace EasyCPDLC.VNS430
                 }
                 else
                 {
-                    lastDisplayPayload = image;
+                    lastDisplayHash = frame;
                     lastDisplaySentUtc = DateTime.UtcNow;
                 }
             }
@@ -324,6 +341,30 @@ namespace EasyCPDLC.VNS430
             {
                 Disable();
                 Status = "LOST";
+            }
+        }
+
+        private static ulong HashRaster(Bitmap display)
+        {
+            Rectangle bounds = new(0, 0, display.Width, display.Height);
+            BitmapData data = display.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                ulong hash = 14695981039346656037UL;
+                int words = display.Width * display.Height;
+                unchecked
+                {
+                    for (int i = 0; i < words; i++)
+                    {
+                        hash = (hash ^ (uint)Marshal.ReadInt32(data.Scan0, i * 4)) * 1099511628211UL;
+                    }
+                }
+
+                return hash;
+            }
+            finally
+            {
+                display.UnlockBits(data);
             }
         }
 
@@ -379,7 +420,7 @@ namespace EasyCPDLC.VNS430
             connection = IntPtr.Zero;
             lastModulePacketUtc = DateTime.MinValue;
             lastDisplaySentUtc = DateTime.MinValue;
-            lastDisplayPayload = string.Empty;
+            lastDisplayHash = 0;
             Status = "OFF";
         }
 

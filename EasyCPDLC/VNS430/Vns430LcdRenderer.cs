@@ -594,6 +594,26 @@ namespace EasyCPDLC.VNS430
         private const double LcdBloom = 0.45;    // strength of stroke-thickening bleed (0..1)
         private const double LcdSoftness = 0.25; // strength of final softening blur (0..1)
 
+        // The panel repaints on a 100 ms timer, so this pass runs continuously. Its
+        // scratch buffers are reused per thread rather than reallocated each render;
+        // at 240x128 a fresh set costs ~364 KB, which dwarfed everything else the
+        // renderer allocated. [ThreadStatic] keeps that safe without locking: the
+        // UI thread and any test thread each get their own set.
+        [ThreadStatic] private static int[] appearanceSource;
+        [ThreadStatic] private static int[] appearanceBloomed;
+        [ThreadStatic] private static int[] appearanceSoft;
+        [ThreadStatic] private static byte[] appearanceLuma;
+
+        private static int[] EnsureBuffer(ref int[] buffer, int count)
+        {
+            if (buffer == null || buffer.Length < count)
+            {
+                buffer = new int[count];
+            }
+
+            return buffer;
+        }
+
         private static void ApplyLcdAppearance(Bitmap display)
         {
             int w = display.Width;
@@ -603,9 +623,22 @@ namespace EasyCPDLC.VNS430
             BitmapData data = display.LockBits(bounds, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
             try
             {
-                int[] src = new int[count];
+                int[] src = EnsureBuffer(ref appearanceSource, count);
                 Marshal.Copy(data.Scan0, src, 0, count);
-                int[] bloomed = new int[count];
+                int[] bloomed = EnsureBuffer(ref appearanceBloomed, count);
+                if (appearanceLuma == null || appearanceLuma.Length < count)
+                {
+                    appearanceLuma = new byte[count];
+                }
+
+                byte[] luma = appearanceLuma;
+
+                // Luma is read up to five times per pixel by the dilation below, so
+                // compute it once per pixel instead of per comparison.
+                for (int i = 0; i < count; i++)
+                {
+                    luma[i] = (byte)Luma(src[i]);
+                }
 
                 // Pass 1: 4-neighbour brightness dilation. Each pixel blends toward
                 // the brightest of itself and its neighbours, so bright glyph and
@@ -616,17 +649,17 @@ namespace EasyCPDLC.VNS430
                     {
                         int i = (y * w) + x;
                         int best = src[i];
-                        int bestLuma = Luma(best);
-                        if (x > 0) { ConsiderBrighter(src[i - 1], ref best, ref bestLuma); }
-                        if (x < w - 1) { ConsiderBrighter(src[i + 1], ref best, ref bestLuma); }
-                        if (y > 0) { ConsiderBrighter(src[i - w], ref best, ref bestLuma); }
-                        if (y < h - 1) { ConsiderBrighter(src[i + w], ref best, ref bestLuma); }
+                        int bestLuma = luma[i];
+                        if (x > 0 && luma[i - 1] > bestLuma) { bestLuma = luma[i - 1]; best = src[i - 1]; }
+                        if (x < w - 1 && luma[i + 1] > bestLuma) { bestLuma = luma[i + 1]; best = src[i + 1]; }
+                        if (y > 0 && luma[i - w] > bestLuma) { bestLuma = luma[i - w]; best = src[i - w]; }
+                        if (y < h - 1 && luma[i + w] > bestLuma) { bestLuma = luma[i + w]; best = src[i + w]; }
                         bloomed[i] = Blend(src[i], best, LcdBloom);
                     }
                 }
 
                 // Pass 2: 3x3 box blur for older-display softness.
-                int[] soft = new int[count];
+                int[] soft = EnsureBuffer(ref appearanceSoft, count);
                 for (int y = 0; y < h; y++)
                 {
                     for (int x = 0; x < w; x++)
@@ -658,16 +691,6 @@ namespace EasyCPDLC.VNS430
             finally
             {
                 display.UnlockBits(data);
-            }
-        }
-
-        private static void ConsiderBrighter(int candidate, ref int best, ref int bestLuma)
-        {
-            int luma = Luma(candidate);
-            if (luma > bestLuma)
-            {
-                bestLuma = luma;
-                best = candidate;
             }
         }
 

@@ -281,6 +281,55 @@ namespace EasyCPDLC.Tests
         }
 
         [Fact]
+        public void LcdRenderer_AppearancePassReusesItsScratchBuffers()
+        {
+            Vns430LcdState state = new()
+            {
+                Snapshot = new Vns430BackendSnapshot
+                {
+                    Connected = true,
+                    Callsign = "N731CD",
+                    CurrentAtcUnit = "KZAK",
+                    Messages = new List<Vns430MessageSnapshot>()
+                },
+                Page = Vns430Page.Status,
+                PageGroup = Vns430PageGroup.Nav,
+                CursorActive = true
+            };
+
+            // The panel repaints on a 100 ms timer, so per-render scratch buffers turn
+            // into megabytes of garbage per second. Measure the shaded render against
+            // the raw one: the appearance pass must not widen the gap.
+            for (int i = 0; i < 8; i++)
+            {
+                using Bitmap warmRaw = Vns430LcdRenderer.Render(state, applyAppearance: false);
+                using Bitmap warmShaded = Vns430LcdRenderer.Render(state);
+            }
+
+            const int runs = 16;
+            long before = GC.GetTotalAllocatedBytes(true);
+            for (int i = 0; i < runs; i++)
+            {
+                using Bitmap raw = Vns430LcdRenderer.Render(state, applyAppearance: false);
+            }
+
+            long rawBytes = GC.GetTotalAllocatedBytes(true) - before;
+
+            before = GC.GetTotalAllocatedBytes(true);
+            for (int i = 0; i < runs; i++)
+            {
+                using Bitmap shaded = Vns430LcdRenderer.Render(state);
+            }
+
+            long shadedBytes = GC.GetTotalAllocatedBytes(true) - before;
+
+            long overheadPerRender = (shadedBytes - rawBytes) / runs;
+            Assert.True(overheadPerRender < 4096,
+                $"The appearance pass allocated {overheadPerRender} bytes per render; " +
+                "its scratch buffers should be reused across renders.");
+        }
+
+        [Fact]
         public void PhotoDerivedPanelArtwork_EmbedsBackgroundAndMovementStates()
         {
             using Vns430PanelArtwork artwork = new();
