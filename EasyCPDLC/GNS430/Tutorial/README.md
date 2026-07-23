@@ -70,4 +70,4 @@ No EasyCPDLC companion action sends Garmin, aircraft GPS, flight-plan, radio, ke
 
 ## Current build limitation
 
-The companion source and MobiFlight GNS profile are included, but the `.wasm` must be built and runtime-tested on a machine with the MSFS 2024 SDK. Until then, the complete GNS panel remains usable with the mouse.
+The companion source and MobiFlight GNS profile are included. The complete GNS panel remains usable with the mouse when the companion is not installed.

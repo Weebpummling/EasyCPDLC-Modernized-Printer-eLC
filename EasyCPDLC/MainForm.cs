@@ -3677,7 +3677,7 @@ private System.Windows.Forms.Label airbusAocSendLabel;
             ApplyDisplayStyle();
             this.ShowInTaskbar = false;
             ConfigureTrayIcon();
-            RestoreDcduCompanionMode();
+            RestoreGns430CompanionHost();
             ConfigureMainFrameButtonHotspots();
             StartVpilotBridge();
             dcduFrame.Paint += DcduFrame_PaintPrinterButton;

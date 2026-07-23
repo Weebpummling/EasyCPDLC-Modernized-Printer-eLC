@@ -50,11 +50,19 @@ namespace EasyCPDLC
             return Gns430Preferences.Load().DcduCompanionMode;
         }
 
-        private void RestoreDcduCompanionMode()
+        private void RestoreGns430CompanionHost()
         {
-            if (Gns430Preferences.Load().DcduCompanionMode)
+            Gns430Preferences preferences = Gns430Preferences.Load();
+            if (!preferences.CompanionModuleEnabled && !preferences.DcduCompanionMode)
             {
-                SetDcduCompanionMode(true, out _);
+                return;
+            }
+
+            EnsureGns430Panel();
+            _ = gns430Panel.Handle;
+            if (preferences.DcduCompanionMode)
+            {
+                gns430Panel.SetDcduCompanionMode(true, out _);
             }
         }
 

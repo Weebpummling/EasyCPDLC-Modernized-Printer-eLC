@@ -73,6 +73,11 @@ The panel accepts no keyboard navigation or keyboard shortcuts. Hardware input i
 
 The simulator-facing path is a private standalone WASM companion, documented under [`MSFS2024Companion`](MSFS2024Companion/README.md). It does not impersonate a Garmin unit and never registers, receives, emits, or masks Garmin/GPS aircraft events.
 
+The PMDG 737-800 cockpit attachment is built separately under
+[`MSFS2024AircraftPackage`](MSFS2024AircraftPackage/README.md). It mounts the
+simulator's stock GNS430 model and buttons over the empty printer-panel DZU
+opening, then replaces only the LCD with EasyCPDLC's 240×128 display.
+
 MobiFlight writes command numbers to `L:EASYCPDLC_GNS_COMMAND`. The companion validates the value, clears it, and passes a checksummed command packet through named SimConnect Client Data. EasyCPDLC returns module status, VATSIM connection state, unread count, current page, and cursor state for MobiFlight output devices.
 
 Use **MSFS MODULE** in the panel menu. `WAITING` means SimConnect is open but the standalone module heartbeat has not arrived; `ACTIVE` means the complete module path is working. Ready-made MobiFlight 11 projects are provided for the [GNS 430 controls](MSFS2024Companion/MobiFlight/EasyCPDLC-GNS430-Companion.mfproj) and [DCDU LSK/buttons](MSFS2024Companion/MobiFlight/EasyCPDLC-DCDU-Companion.mfproj).
