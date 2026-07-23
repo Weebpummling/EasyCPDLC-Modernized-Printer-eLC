@@ -4,6 +4,9 @@ This folder is the single simulator-side component beneath VNS430. It contains
 the optional PMDG 737-800 3D installation, the private WASM bridge, and both
 importable MobiFlight profiles.
 
+The prioritized SDK-machine work is recorded in
+[`HANDOFF.md`](HANDOFF.md).
+
 The module does not modify PMDG or Microsoft source files. The aircraft package
 mounts MSFS's stock `Asobo_MPA_GNS430` attachment over the PMDG 737-800
 printer-panel DZU opening and replaces only the LCD with VNS430's 240×128
