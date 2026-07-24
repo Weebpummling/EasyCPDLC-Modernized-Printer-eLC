@@ -131,12 +131,15 @@ namespace EasyCPDLC.Tests
             Assert.False(Directory.Exists(Path.Combine(vnsRoot, "Screenshots")));
             Assert.Equal(2, Directory.GetFiles(vnsRoot, "README.md", SearchOption.AllDirectories).Length);
 
-            string packageBuilder = File.ReadAllText(Path.Combine(
-                vnsRoot, "MSFS2024Module", "Build-Package.ps1"));
-            Assert.Contains("Asobo_MPA_GNS430", packageBuilder);
-            Assert.Contains("model/GNS430.xml", packageBuilder);
-            Assert.Contains("EasyCPDLC/VNS430/VNS430.html", packageBuilder);
-            Assert.DoesNotContain("Asobo_MPA_VNS430", packageBuilder);
+            // The in-simulator 3D instrument was removed in favour of a desktop
+            // screen driven by physical buttons. Only the WASM bridge (used for
+            // keybinds) and the MobiFlight profiles remain in the module.
+            string moduleRoot = Path.Combine(vnsRoot, "MSFS2024Module");
+            Assert.False(File.Exists(Path.Combine(moduleRoot, "Build-Package.ps1")));
+            Assert.False(File.Exists(Path.Combine(moduleRoot, "Validate-Package.ps1")));
+            Assert.False(Directory.Exists(Path.Combine(moduleRoot, "PackageSources")));
+            Assert.True(File.Exists(Path.Combine(moduleRoot, "Bridge", "Build-Wasm.ps1")));
+            Assert.True(File.Exists(Path.Combine(moduleRoot, "MobiFlight", "EasyCPDLC-VNS430-Module.mfproj")));
         }
 
         [Fact]

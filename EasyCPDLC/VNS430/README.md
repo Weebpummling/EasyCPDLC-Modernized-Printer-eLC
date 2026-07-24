@@ -2,8 +2,8 @@
 
 VNS430 is the optional virtual instrument shipped beneath EasyCPDLC
 Print + eLoadControl. VNS430 is the name used for every EasyCPDLC-owned type,
-protocol, and L-var; `GNS430` appears only where it refers to the stock
-Microsoft Flight Simulator model that supplies the 3D artwork.
+protocol, and L-var; `GNS430` appears only where it refers to the Garmin unit
+whose photographed face and control layout the desktop panel reuses as artwork.
 
 VNS430 is a front end only. It shares the Print/eLC application's Hoppie
 connection, CPDLC session, message store, ATC/AOC workflows, SimBrief data,
@@ -117,19 +117,19 @@ an unread message first and marks it read when displayed; otherwise it opens
 the complete list. Select a response with the small knob and press `ENT` to
 send it through the shared backend.
 
-## Optional MSFS 2024 module
+## Optional MSFS 2024 keybind bridge
 
 [`MSFS2024Module`](MSFS2024Module/README.md) contains:
 
-- the optional PMDG 737-800 in-simulator 3D installation;
 - the standalone WASM bridge;
-- the VNS430 and DCDU MobiFlight profiles;
-- package build and validation tools.
+- the VNS430 and DCDU MobiFlight profiles.
 
-The 3D installation uses the simulator's stock GNS430 mesh as physical artwork
-and replaces only its LCD with VNS430. It does not turn VNS430 into a Garmin
-navigation unit. The package is optional and is known not to load reliably in
-every aircraft/session; the desktop instrument remains the supported fallback.
+The bridge and profiles let cockpit hardware drive the desktop panel: physical
+buttons map to the private `L:EASYCPDLC_VNS_*` commands over SimConnect Client
+Data, and status flows back the same way. There is no in-simulator 3D
+instrument; the desktop panel is the display, and it can be shown as a bare
+screen behind physical hardware (tray menu → turn off artwork and interactive
+zones).
 
 ## Artwork and source references
 

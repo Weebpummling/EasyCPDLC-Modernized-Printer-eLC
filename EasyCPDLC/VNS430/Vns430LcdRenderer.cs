@@ -796,8 +796,7 @@ namespace EasyCPDLC.VNS430
         // Raise LcdBloom above zero only if reference photos genuinely call for
         // heavier strokes, and check the selected-row text when you do. Render has
         // an overload taking both weights, so they can be previewed without a
-        // rebuild. Because the desktop bitmap is streamed to the in-cockpit gauge
-        // as-is, this affects both the desktop and 3D LCD.
+        // rebuild.
         private const double LcdBloom = 0.00;    // strength of stroke-thickening bleed (0..1)
         private const double LcdSoftness = 0.15; // strength of final softening blur (0..1)
 

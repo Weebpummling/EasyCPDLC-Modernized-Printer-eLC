@@ -48,7 +48,7 @@ On the machine with MSFS 2024 and the PMDG SDK installed:
 
 ## Current package boundary
 
-The packaged MSFS module is intentionally limited to private EasyCPDLC VNS430 controls, display, and status. It does not claim PMDG 737 ACARS compatibility. No aircraft adapter ships yet; EasyCPDLC remains the sole Hoppie client and its own inbox stays authoritative. The release contains both importable MobiFlight profiles and the bridge source. When SDK-built packages exist under `EasyCPDLC/VNS430/MSFS2024Module/Bridge/BuiltPackage` and `EasyCPDLC/VNS430/MSFS2024Module/BuiltPackage`, the release builder includes their Community-package contents.
+The MSFS module is intentionally limited to a private keybind bridge: it carries button presses and status between cockpit hardware and the desktop VNS430 panel over SimConnect Client Data. It does not claim PMDG 737 ACARS compatibility, and there is no in-simulator 3D instrument. No aircraft adapter ships yet; EasyCPDLC remains the sole Hoppie client and its own inbox stays authoritative. The release contains both importable MobiFlight profiles and the bridge source. When an SDK-built bridge exists under `EasyCPDLC/VNS430/MSFS2024Module/Bridge/BuiltPackage`, the release builder includes its Community-package contents.
 
 ## Research references
 

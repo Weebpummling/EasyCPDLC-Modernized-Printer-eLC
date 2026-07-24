@@ -18,8 +18,10 @@ required by those workflows.
 [VNS430](EasyCPDLC/VNS430/README.md) is a child component of the Print/eLC
 application, not a separate branch or product. It provides the virtual
 desktop instrument, reuses the existing EasyCPDLC backend, and contains an
-optional [MSFS 2024 module](EasyCPDLC/VNS430/MSFS2024Module/README.md) for the
-in-simulator 3D installation and private MobiFlight/L-var bridge.
+optional [MSFS 2024 bridge](EasyCPDLC/VNS430/MSFS2024Module/README.md) so
+cockpit hardware can drive the desktop panel through private MobiFlight/L-var
+keybinds. The desktop panel is the display; there is no in-simulator 3D
+instrument.
 
 > **Hoppie warning:** before connecting EasyCPDLC, set the aircraft's internal Hoppie/ATC network to **NONE** and remove or disable its Hoppie code. EasyCPDLC must be the only Hoppie client using the flight's callsign. Running the aircraft and EasyCPDLC as simultaneous Hoppie clients can divide pending messages unpredictably between them.
 

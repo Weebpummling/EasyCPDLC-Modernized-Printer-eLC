@@ -126,14 +126,6 @@ if ($companionWasmIncluded) {
     Copy-Item -Path (Join-Path $builtCompanionRoot '*') -Destination $companionCommunityDirectory -Recurse -Force
 }
 
-$builtThreeDRoot = Join-Path $moduleRoot 'BuiltPackage'
-$threeDPackageIncluded = Test-Path -LiteralPath $builtThreeDRoot -PathType Container
-if ($threeDPackageIncluded) {
-    $threeDCommunityDirectory = Join-Path $modulePackageDirectory 'ThreeD-Community'
-    New-Item -ItemType Directory -Path $threeDCommunityDirectory -Force | Out-Null
-    Copy-Item -Path (Join-Path $builtThreeDRoot '*') -Destination $threeDCommunityDirectory -Recurse -Force
-}
-
 $bridgeHash = (Get-FileHash -LiteralPath (Join-Path $packageDirectory 'Bridge\EasyCPDLC.VPilotBridge.dll') -Algorithm SHA256).Hash
 $manifest = [ordered]@{
     product = 'EasyCPDLC Print + eLoadControl'
@@ -146,8 +138,6 @@ $manifest = [ordered]@{
     dcduMobiFlightProfile = 'VNS430/MSFS2024Module/MobiFlight/EasyCPDLC-DCDU-Module.mfproj'
     companionWasmIncluded = $companionWasmIncluded
     companionCommunityPackage = if ($companionWasmIncluded) { 'VNS430/MSFS2024Module/Bridge-Community' } else { $null }
-    threeDPackageIncluded = $threeDPackageIncluded
-    threeDCommunityPackage = if ($threeDPackageIncluded) { 'VNS430/MSFS2024Module/ThreeD-Community' } else { $null }
     companionSdkSources = 'VNS430/MSFS2024Module/Bridge-Sources'
     aircraftAcarsRoutingPlan = 'VNS430/HOPPIE-AIRCRAFT-ACARS-ROUTING.md'
 }
