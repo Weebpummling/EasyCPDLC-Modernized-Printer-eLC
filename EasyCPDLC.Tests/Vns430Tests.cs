@@ -359,18 +359,22 @@ namespace EasyCPDLC.Tests
         [Fact]
         public void PanelButtons_CoverEveryNonEncoderCommand()
         {
-            // 1-4 are the two encoder rings and 5 is the cursor push, so the face buttons
-            // own 6 through 18. Anything left over is a command no one can reach from the
-            // desktop panel.
+            // 1-4 are the two encoder rings and 5 is the cursor push, so the face keys own
+            // 6 through 17. Power (18) is deliberately excluded: it shows and hides the
+            // window, which is worth a hardware key through the module L-var but not a
+            // mouse target on a window that already has a close button. Anything else
+            // missing is a command nobody can reach from the panel.
             List<Vns430Command> commands = PanelButtonCommands();
             List<Vns430Command> expected = Enum.GetValues(typeof(Vns430Command))
                 .Cast<Vns430Command>()
-                .Where(command => (int)command >= 6 && (int)command <= 18)
+                .Where(command => (int)command >= 6 && (int)command <= 17)
                 .ToList();
 
             Vns430Command[] unreachable = expected.Except(commands).ToArray();
             Assert.True(unreachable.Length == 0,
                 "No panel button sends: " + string.Join(", ", unreachable.Select(c => $"{c} ({(int)c})")));
+
+            Assert.DoesNotContain(Vns430Command.Power, commands);
         }
 
         [Fact]

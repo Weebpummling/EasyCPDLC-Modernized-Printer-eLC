@@ -1740,25 +1740,26 @@ namespace EasyCPDLC.VNS430
         // to the two encoder rings and the cursor push. The legends are stock GNS 430
         // nomenclature and do not describe the datalink action, so this is the mapping:
         //
-        //   COM  -> show/hide the panel            18   MENU -> menu overlay          8
-        //   VLOC -> message log, all messages      17   ENT  -> activate selection    6
-        //   CDI  -> connect/disconnect VATSIM      14   CLR  -> back/clear            7
-        //   OBS  -> toggle cursor                  13   D->  -> Hoppie logon page    12
-        //   MSG  -> messages, unread first          9   RNG- -> smaller LCD text     16
-        //   FPL  -> ATC request menu               10   RNG+ -> larger LCD text      15
-        //   PROC -> AOC/telex menu                 11
+        //   VLOC -> message log, all messages      17   MENU -> menu overlay          8
+        //   CDI  -> connect/disconnect VATSIM      14   ENT  -> activate selection    6
+        //   OBS  -> toggle cursor                  13   CLR  -> back/clear            7
+        //   MSG  -> messages, unread first          9   D->  -> Hoppie logon page    12
+        //   FPL  -> ATC request menu               10   RNG- -> smaller LCD text     16
+        //   PROC -> AOC/telex menu                 11   RNG+ -> larger LCD text      15
         //
+        // COM has no hotspot, so 18 (Power) reaches the panel only through the module
+        // L-var, where a hardware key showing and hiding the window is still useful.
         // Vns430Tests.PanelButtons_EachBindToADistinctCommand keeps this one-to-one.
         private List<PanelButton> CreatePanelButtons()
         {
             return new List<PanelButton>
             {
                 // COM and VLOC used to repeat CDI and MSG, so four faces drove two
-                // actions and two commands had no face at all. They now take the two
-                // that were unbound, which gives every face its own command and leaves
-                // 6-18 covered exactly once. Label is the legend printed on the artwork,
-                // not the function; the mapping is documented above this method.
-                new() { Bounds = new RectangleF(153, 51, 54, 70), Label = "COM", ArtworkControl = "com_flip", Command = Vns430Command.Power },
+                // actions. VLOC now takes the message log, which had no face at all.
+                // COM has no hotspot: a flip-flop key has no datalink meaning, and the
+                // only command left for it was Power, which is not worth a key when the
+                // window closes itself. Label is the legend printed on the artwork, not
+                // the function; the mapping is documented above this method.
                 new() { Bounds = new RectangleF(153, 132, 54, 72), Label = "VLOC", ArtworkControl = "vloc_flip", Command = Vns430Command.Nearest },
                 new() { Bounds = new RectangleF(779, 151, 76, 55), Label = "CLR", ArtworkControl = "clear", Command = Vns430Command.Clear },
                 new() { Bounds = new RectangleF(779, 94, 76, 53), Label = "D->", ArtworkControl = "direct_to", Command = Vns430Command.DirectTo },

@@ -48,12 +48,11 @@ design language for EasyCPDLC data; it does not display copied Garmin screens.
 
 The key legends are stock GNS 430 nomenclature and do not describe the datalink
 action behind them. Every key drives one action and one
-`L:EASYCPDLC_VNS_COMMAND` value, and values 6 to 18 are each claimed exactly
+`L:EASYCPDLC_VNS_COMMAND` value, and values 6 to 17 are each claimed exactly
 once; 1 to 5 belong to the encoder rings and the cursor push.
 
 | Key | Action | L-var |
 |---|---|---|
-| `COM` | Show or hide the panel | 18 |
 | `VLOC` | Message log, every message | 17 |
 | `CDI` | Connect or disconnect VATSIM | 14 |
 | `OBS` | Toggle the cursor | 13 |
@@ -69,8 +68,15 @@ once; 1 to 5 belong to the encoder rings and the cursor push.
 | Small ring | Change page within the group | 3 / 4 |
 | Ring push | Toggle the cursor | 5 |
 
+`COM` has no action. A flip-flop key has no datalink meaning, and the panel is
+closed from its own window rather than from a key on its face.
+
 `COM` and `VLOC` previously repeated `CDI` and `MSG`, which left four keys
-driving two actions while two commands had no key at all.
+driving two actions while the message log had no key at all.
+
+The module still accepts `18` on `L:EASYCPDLC_VNS_COMMAND` to show or hide the
+window, which is useful bound to a hardware key. The MobiFlight profile keeps
+that binding as `EASYCPDLC_VNS_POWER`.
 
 Mouse operation:
 
