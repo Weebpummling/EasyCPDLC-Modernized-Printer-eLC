@@ -44,6 +44,12 @@ namespace EasyCPDLC.VNS430.Cdu
 
         public event EventHandler<CduLskEventArgs> LskPressed;
 
+        // Scratchpad entry (real-CDU style): typed characters, backspace and clear. The
+        // page tree owns the scratchpad string and decides when a character is relevant.
+        public event EventHandler<char> CharTyped;
+        public event EventHandler ScratchpadBackspace;
+        public event EventHandler ScratchpadClear;
+
         // Refresh the screen after the page tree has rewritten Grid.
         public void RefreshDisplay() => Invalidate();
 
@@ -215,7 +221,29 @@ namespace EasyCPDLC.VNS430.Cdu
                 RaiseLsk((keyData - Keys.F7) + 1, true);
                 return true;
             }
+            if (keyData == Keys.Back)
+            {
+                ScratchpadBackspace?.Invoke(this, EventArgs.Empty);
+                return true;
+            }
+            if (keyData == Keys.Delete)
+            {
+                ScratchpadClear?.Invoke(this, EventArgs.Empty);
+                return true;
+            }
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        // Scratchpad character entry: A-Z, 0-9, space and the CDU punctuation set.
+        protected override void OnKeyPress(KeyPressEventArgs e)
+        {
+            base.OnKeyPress(e);
+            char c = char.ToUpperInvariant(e.KeyChar);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '.' || c == '/' || c == '-')
+            {
+                CharTyped?.Invoke(this, c);
+                e.Handled = true;
+            }
         }
 
         private void RaiseLsk(int index, bool rightSide)

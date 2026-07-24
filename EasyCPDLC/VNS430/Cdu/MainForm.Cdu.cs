@@ -20,7 +20,10 @@ namespace EasyCPDLC
             Menu,
             Dlk,
             Messages,
-            MessageDetail
+            MessageDetail,
+            Atc,
+            Aoc,
+            Request
         }
 
         private CduDisplayPanel cduDisplayPanel;
@@ -28,6 +31,12 @@ namespace EasyCPDLC
         private CduPageId cduPage = CduPageId.Menu;
         private CPDLCMessage cduSelectedMessage;
         private readonly List<CPDLCMessage> cduVisibleInbox = new();
+
+        // Request-page (ATC/AOC) state and the shared scratchpad.
+        private Vns430Workflow cduWorkflow;
+        private string cduScratchpad = string.Empty;
+        private string cduStatusLine = string.Empty;
+        private bool cduRequestSending;
 
         internal bool IsCduModeActive() => DcduStyleManager.IsCdu;
 
@@ -43,6 +52,9 @@ namespace EasyCPDLC
             {
                 cduDisplayPanel = new CduDisplayPanel { Dock = DockStyle.Fill };
                 cduDisplayPanel.LskPressed += CduDisplayPanel_LskPressed;
+                cduDisplayPanel.CharTyped += (_, c) => CduScratchpadType(c);
+                cduDisplayPanel.ScratchpadBackspace += (_, __) => CduScratchpadBackspace();
+                cduDisplayPanel.ScratchpadClear += (_, __) => CduScratchpadClearAll();
                 dcduFrame.Controls.Add(cduDisplayPanel);
             }
 
@@ -113,6 +125,15 @@ namespace EasyCPDLC
                 case CduPageId.MessageDetail:
                     HandleCduMessageDetailLsk(rightSide, index);
                     break;
+                case CduPageId.Atc:
+                    HandleCduAtcLsk(rightSide, index);
+                    break;
+                case CduPageId.Aoc:
+                    HandleCduAocLsk(rightSide, index);
+                    break;
+                case CduPageId.Request:
+                    HandleCduRequestLsk(rightSide, index);
+                    break;
             }
 
             RefreshCduDisplay();
@@ -144,6 +165,15 @@ namespace EasyCPDLC
                     break;
                 case CduPageId.MessageDetail:
                     RenderCduMessageDetail(grid, snapshot);
+                    break;
+                case CduPageId.Atc:
+                    RenderCduRequestMenu(grid, snapshot, "ATC REQUESTS", CduAtcMenuItems);
+                    break;
+                case CduPageId.Aoc:
+                    RenderCduRequestMenu(grid, snapshot, "AOC / TELEX", CduAocMenuItems);
+                    break;
+                case CduPageId.Request:
+                    RenderCduRequest(grid, snapshot);
                     break;
             }
 
@@ -280,8 +310,10 @@ namespace EasyCPDLC
             switch (index)
             {
                 case 1: cduPage = CduPageId.Dlk; break;
+                case 2: cduPage = CduPageId.Atc; break;
+                case 3: cduPage = CduPageId.Aoc; break;
                 case 4: cduPage = CduPageId.Messages; break;
-                // ATC (2), AOC (3) and SETUP (5) grid pages are the next porting step.
+                // SETUP (5) grid page is the next porting step.
             }
         }
 
@@ -348,6 +380,220 @@ namespace EasyCPDLC
                 case 4: PrintDatalinkMessage(message.Source); break;
                 case 5: ReprintButton_Click(boeingReprintButton, EventArgs.Empty); break;
                 case 6: cduPage = CduPageId.Messages; break;
+            }
+        }
+
+        // ---- ATC / AOC request pages --------------------------------------
+
+        private static readonly (string Label, Vns430WorkflowKind Kind)[] CduAtcMenuItems =
+        {
+            ("DIRECT TO", Vns430WorkflowKind.AtcDirect),
+            ("LEVEL", Vns430WorkflowKind.AtcLevel),
+            ("SPEED", Vns430WorkflowKind.AtcSpeed),
+            ("WHEN CAN WE", Vns430WorkflowKind.AtcWhenCanWe),
+            ("FREE TEXT", Vns430WorkflowKind.AtcFreeText)
+        };
+
+        private static readonly (string Label, Vns430WorkflowKind Kind)[] CduAocMenuItems =
+        {
+            ("TELEX", Vns430WorkflowKind.AocTelex),
+            ("METAR", Vns430WorkflowKind.AocMetar),
+            ("ATIS", Vns430WorkflowKind.AocAtis),
+            ("PDC / PREDEP", Vns430WorkflowKind.AocPreDeparture),
+            ("OCEANIC", Vns430WorkflowKind.AocOceanic)
+        };
+
+        private void RenderCduRequestMenu(CduGrid grid, Vns430BackendSnapshot snapshot, string title,
+            (string Label, Vns430WorkflowKind Kind)[] items)
+        {
+            RenderCduHeader(grid, title, snapshot);
+            for (int i = 0; i < items.Length && i < 5; i++)
+            {
+                grid.WriteLeft(CduLayout.DataRow(i + 1), "<" + items[i].Label, CduColor.White);
+            }
+            grid.WriteRight(CduLayout.DataRow(6), "MENU>", CduColor.White);
+        }
+
+        private void HandleCduAtcLsk(bool rightSide, int index) => HandleCduRequestMenuSelection(rightSide, index, CduAtcMenuItems);
+
+        private void HandleCduAocLsk(bool rightSide, int index) => HandleCduRequestMenuSelection(rightSide, index, CduAocMenuItems);
+
+        private void HandleCduRequestMenuSelection(bool rightSide, int index,
+            (string Label, Vns430WorkflowKind Kind)[] items)
+        {
+            if (rightSide)
+            {
+                if (index == 6)
+                {
+                    cduPage = CduPageId.Menu;
+                }
+                return;
+            }
+
+            int position = index - 1;
+            if (position >= 0 && position < items.Length && position < 5)
+            {
+                cduWorkflow = Vns430Workflow.Create(items[position].Kind, GetVns430Snapshot());
+                cduScratchpad = string.Empty;
+                cduStatusLine = string.Empty;
+                cduPage = CduPageId.Request;
+            }
+        }
+
+        // Request fields fill left LSK 2..5 then right LSK 2..5 (eight slots). LSK1's label
+        // row is the title; LSK6 is RETURN / SEND with the scratchpad just above it.
+        private static (bool RightSide, int Lsk) CduFieldSlot(int fieldIndex)
+        {
+            return fieldIndex < 4 ? (false, fieldIndex + 2) : (true, (fieldIndex - 4) + 2);
+        }
+
+        private void RenderCduRequest(CduGrid grid, Vns430BackendSnapshot snapshot)
+        {
+            if (cduWorkflow == null)
+            {
+                cduPage = CduPageId.Menu;
+                RenderCduMenu(grid, snapshot);
+                return;
+            }
+
+            grid.WriteCentered(CduLayout.TitleRow, Truncate(cduWorkflow.Title, 24), CduColor.White);
+
+            for (int i = 0; i < cduWorkflow.Fields.Count && i < 8; i++)
+            {
+                Vns430EditField field = cduWorkflow.Fields[i];
+                (bool right, int lsk) = CduFieldSlot(i);
+                bool empty = string.IsNullOrWhiteSpace(field.CleanValue);
+                string value = empty ? (field.IsOption ? "----" : "[   ]") : field.CleanValue;
+                CduColor colour = empty ? CduColor.Grey : CduColor.Green;
+
+                if (right)
+                {
+                    grid.WriteRight(CduLayout.LabelRow(lsk), field.Label, CduColor.Cyan, small: true);
+                    grid.WriteRight(CduLayout.DataRow(lsk), Truncate(value, CduGrid.HalfCols - 1) + ">", colour);
+                }
+                else
+                {
+                    grid.WriteLeft(CduLayout.LabelRow(lsk), field.Label, CduColor.Cyan, small: true);
+                    grid.WriteLeft(CduLayout.DataRow(lsk), "<" + Truncate(value, CduGrid.HalfCols - 1), colour);
+                }
+            }
+
+            // Scratchpad (or the last status message) sits just above the RETURN/SEND row.
+            if (!string.IsNullOrWhiteSpace(cduStatusLine))
+            {
+                grid.WriteCentered(CduLayout.LabelRow(6), Truncate(cduStatusLine, CduGrid.Cols), CduColor.Amber, small: true);
+            }
+            else
+            {
+                grid.WriteCentered(CduLayout.LabelRow(6), "[" + Truncate(cduScratchpad, CduGrid.Cols - 2) + "]", CduColor.White);
+            }
+
+            grid.WriteLeft(CduLayout.DataRow(6), "<RETURN", CduColor.White);
+            grid.WriteRight(CduLayout.DataRow(6), cduRequestSending ? "SENDING" : "SEND>",
+                cduRequestSending ? CduColor.Grey : CduColor.Green);
+        }
+
+        private void HandleCduRequestLsk(bool rightSide, int index)
+        {
+            if (cduWorkflow == null)
+            {
+                cduPage = CduPageId.Menu;
+                return;
+            }
+
+            if (index == 6)
+            {
+                if (rightSide)
+                {
+                    CduSendCurrentWorkflow();
+                }
+                else
+                {
+                    cduPage = cduWorkflow.Kind.ToString().StartsWith("Atc", StringComparison.Ordinal)
+                        ? CduPageId.Atc
+                        : CduPageId.Aoc;
+                    cduWorkflow = null;
+                }
+                return;
+            }
+
+            if (index == 1)
+            {
+                return; // LSK1 carries no field on request pages
+            }
+
+            int fieldIndex = rightSide ? 4 + (index - 2) : index - 2;
+            if (fieldIndex < 0 || fieldIndex >= cduWorkflow.Fields.Count)
+            {
+                return;
+            }
+
+            Vns430EditField field = cduWorkflow.Fields[fieldIndex];
+            cduStatusLine = string.Empty;
+            if (field.IsOption)
+            {
+                field.Step(0, 1); // cycle to the next option
+            }
+            else if (!string.IsNullOrEmpty(cduScratchpad))
+            {
+                field.Value = Truncate(cduScratchpad, field.MaxLength);
+                cduScratchpad = string.Empty;
+            }
+            else
+            {
+                field.Value = string.Empty; // an empty scratchpad clears the field
+            }
+        }
+
+        private async void CduSendCurrentWorkflow()
+        {
+            if (cduWorkflow == null || cduRequestSending)
+            {
+                return;
+            }
+
+            cduRequestSending = true;
+            cduStatusLine = "SENDING...";
+            RefreshCduDisplay();
+
+            Vns430OperationResult result = await Vns430SendWorkflowAsync(cduWorkflow, GetVns430Snapshot());
+
+            cduRequestSending = false;
+            cduStatusLine = result.Status;
+            if (result.Success)
+            {
+                cduWorkflow = null;
+                cduPage = CduPageId.Messages;
+            }
+            RefreshCduDisplay();
+        }
+
+        private void CduScratchpadType(char c)
+        {
+            if (cduPage == CduPageId.Request && cduScratchpad.Length < CduGrid.Cols - 2)
+            {
+                cduScratchpad += c;
+                cduStatusLine = string.Empty;
+                RefreshCduDisplay();
+            }
+        }
+
+        private void CduScratchpadBackspace()
+        {
+            if (cduPage == CduPageId.Request && cduScratchpad.Length > 0)
+            {
+                cduScratchpad = cduScratchpad.Substring(0, cduScratchpad.Length - 1);
+                RefreshCduDisplay();
+            }
+        }
+
+        private void CduScratchpadClearAll()
+        {
+            if (cduPage == CduPageId.Request)
+            {
+                cduScratchpad = string.Empty;
+                cduStatusLine = string.Empty;
+                RefreshCduDisplay();
             }
         }
 
