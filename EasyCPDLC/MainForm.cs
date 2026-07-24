@@ -18103,9 +18103,9 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             DcduWindowHelper.ApplyDeviceWindow(this, dcduFrame, S(22));
         }
 
-        // The LSK-only CDU is a bare device: a 24x14 character screen with a left/right LSK
-        // gutter on top, and the Boeing CDU keypad below it. Portrait, like a real CDU.
-        internal static readonly Size CduBaseSize = new(440, 720);
+        // The LSK-only CDU renders the 737NG CDU panel artwork; the base size matches the
+        // artwork's aspect ratio (1210 x 1888) so the panel is not distorted.
+        internal static readonly Size CduBaseSize = new(460, 718);
 
         internal static Size MainWindowBaseSize(bool isBoeing, bool showArtwork)
         {
