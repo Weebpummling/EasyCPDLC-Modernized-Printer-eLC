@@ -17,6 +17,26 @@ namespace EasyCPDLC.VNS430
         private const int LogicalHeight = 407;
         private const int WmAppSimConnect = 0x8430;
 
+        // WM_SIZING and its wParam edge codes, used to keep the panel's aspect ratio.
+        private const int WmSizing = 0x0214;
+        private const int WmszLeft = 1;
+        private const int WmszRight = 2;
+        private const int WmszTop = 3;
+        private const int WmszTopLeft = 4;
+        private const int WmszTopRight = 5;
+        private const int WmszBottom = 6;
+        private const int WmszBottomLeft = 7;
+        private const int WmszBottomRight = 8;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Rect
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
         private static readonly Color BezelDark = Color.FromArgb(105, 108, 103);
         private static readonly Color BezelLight = Color.FromArgb(202, 202, 190);
         private static readonly Color ScreenBlue = Color.FromArgb(0, 61, 128);
@@ -98,6 +118,10 @@ namespace EasyCPDLC.VNS430
             ClientSize = new Size(LogicalWidth, LogicalHeight);
             BackColor = BezelDark;
             DoubleBuffered = true;
+            // The whole panel is drawn through a size-dependent ScaleTransform, so a
+            // resize that repaints only the newly exposed region leaves the rest at the
+            // old scale and visibly corrupts the panel. Force a full repaint on resize.
+            ResizeRedraw = true;
             TopMost = true;
             Icon = backend.Icon;
             FormBorderStyle = FormBorderStyle.SizableToolWindow;
@@ -171,7 +195,75 @@ namespace EasyCPDLC.VNS430
                 return;
             }
 
+            if (m.Msg == WmSizing)
+            {
+                ConstrainToPanelAspect(ref m);
+                return;
+            }
+
             base.WndProc(ref m);
+        }
+
+        // The panel is a fixed-aspect photograph drawn through a ScaleTransform, so a
+        // free resize stretches it. Constrain the drag rectangle to the LCD's client
+        // aspect while the edge is being dragged, keeping the grabbed edge anchored.
+        private void ConstrainToPanelAspect(ref Message m)
+        {
+            Rect rect = Marshal.PtrToStructure<Rect>(m.LParam);
+            int edge = m.WParam.ToInt32();
+
+            // Border and caption thickness, so the aspect applies to the client area.
+            Size nonClient = Size - ClientSize;
+            double aspect = LogicalWidth / (double)LogicalHeight;
+
+            int clientWidth = Math.Max(1, (rect.Right - rect.Left) - nonClient.Width);
+            int clientHeight = Math.Max(1, (rect.Bottom - rect.Top) - nonClient.Height);
+
+            // Dragging a vertical edge lets height drive; anything else lets width drive.
+            if (edge == WmszTop || edge == WmszBottom)
+            {
+                clientWidth = (int)Math.Round(clientHeight * aspect);
+            }
+            else
+            {
+                clientHeight = (int)Math.Round(clientWidth / aspect);
+            }
+
+            int windowWidth = clientWidth + nonClient.Width;
+            int windowHeight = clientHeight + nonClient.Height;
+
+            // Honour MinimumSize without warping: scale both axes up together.
+            if (windowWidth < MinimumSize.Width || windowHeight < MinimumSize.Height)
+            {
+                double scale = Math.Max(
+                    MinimumSize.Width / (double)windowWidth,
+                    MinimumSize.Height / (double)windowHeight);
+                clientWidth = (int)Math.Round(clientWidth * scale);
+                clientHeight = (int)Math.Round(clientHeight * scale);
+                windowWidth = clientWidth + nonClient.Width;
+                windowHeight = clientHeight + nonClient.Height;
+            }
+
+            if (edge == WmszLeft || edge == WmszTopLeft || edge == WmszBottomLeft)
+            {
+                rect.Left = rect.Right - windowWidth;
+            }
+            else
+            {
+                rect.Right = rect.Left + windowWidth;
+            }
+
+            if (edge == WmszTop || edge == WmszTopLeft || edge == WmszTopRight)
+            {
+                rect.Top = rect.Bottom - windowHeight;
+            }
+            else
+            {
+                rect.Bottom = rect.Top + windowHeight;
+            }
+
+            Marshal.StructureToPtr(rect, m.LParam, false);
+            m.Result = (IntPtr)1;
         }
 
         private void RefreshTimerTick(object sender, EventArgs e)
