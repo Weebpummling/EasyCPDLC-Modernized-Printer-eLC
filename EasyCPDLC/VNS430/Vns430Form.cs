@@ -54,6 +54,9 @@ namespace EasyCPDLC.VNS430
         private int logonCharacter;
         private string transientStatus = string.Empty;
         private DateTime transientStatusUntilUtc = DateTime.MinValue;
+        private Bitmap cachedLcd;
+        private ulong cachedLcdFingerprint;
+        private bool artworkFeedbackPainted;
         private string activeArtworkControl = string.Empty;
         private string activeArtworkState = string.Empty;
         private DateTime activeArtworkUntilUtc = DateTime.MinValue;
@@ -153,6 +156,8 @@ namespace EasyCPDLC.VNS430
                 companionInput.Dispose();
                 toolTip.Dispose();
                 artwork.Dispose();
+                cachedLcd?.Dispose();
+                cachedLcd = null;
             }
 
             base.Dispose(disposing);
@@ -181,11 +186,54 @@ namespace EasyCPDLC.VNS430
             if (refreshTick % 3 == 0)
             {
                 RefreshSnapshot();
-                using Bitmap lcd = Vns430LcdRenderer.Render(CreateLcdState());
-                companionInput.UpdateDisplay(lcd);
             }
 
-            Invalidate();
+            // Comparing the fingerprint every tick, rather than only when the snapshot
+            // is refreshed, means any state change repaints within one tick even if an
+            // input path forgets to invalidate. At ~2 us against ~1.7 ms for a render,
+            // the hash is roughly 700 times cheaper than what it avoids.
+            Vns430LcdState state = CreateLcdState();
+            ulong fingerprint = state.Fingerprint();
+            bool displayChanged = cachedLcd == null || fingerprint != cachedLcdFingerprint;
+            if (refreshTick % 3 == 0)
+            {
+                companionInput.UpdateDisplay(CurrentLcd(state, fingerprint));
+            }
+
+            // Button press artwork is time-limited and sits outside the LCD, so it
+            // needs its own repaint, plus one more once it expires to clear it.
+            bool artworkFeedbackVisible = DateTime.UtcNow < activeArtworkUntilUtc;
+            if (displayChanged || artworkFeedbackVisible || artworkFeedbackPainted)
+            {
+                artworkFeedbackPainted = artworkFeedbackVisible;
+                Invalidate();
+            }
+        }
+
+        /// <summary>
+        /// The rendered LCD, re-rendered only when something it displays has changed.
+        /// The returned bitmap is owned by the form and must not be disposed by callers.
+        /// </summary>
+        private Bitmap CurrentLcd()
+        {
+            Vns430LcdState state = CreateLcdState();
+            return CurrentLcd(state, state.Fingerprint());
+        }
+
+        private Bitmap CurrentLcd(Vns430LcdState state, ulong fingerprint)
+        {
+            if (cachedLcd != null && fingerprint == cachedLcdFingerprint)
+            {
+                return cachedLcd;
+            }
+
+            // Render before disposing, so a failed render cannot leave a disposed
+            // bitmap behind for the next paint.
+            Bitmap rendered = Vns430LcdRenderer.Render(state);
+            cachedLcd?.Dispose();
+            cachedLcd = rendered;
+            cachedLcdFingerprint = fingerprint;
+            return cachedLcd;
         }
 
         private void RefreshSnapshot()
@@ -979,7 +1027,7 @@ namespace EasyCPDLC.VNS430
 
         private void DrawScreen(Graphics graphics)
         {
-            using Bitmap lcd = Vns430LcdRenderer.Render(CreateLcdState());
+            Bitmap lcd = CurrentLcd();
             InterpolationMode previousInterpolation = graphics.InterpolationMode;
             PixelOffsetMode previousOffset = graphics.PixelOffsetMode;
             graphics.InterpolationMode = InterpolationMode.NearestNeighbor;

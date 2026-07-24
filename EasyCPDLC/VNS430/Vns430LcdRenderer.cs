@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace EasyCPDLC.VNS430
@@ -27,6 +28,189 @@ namespace EasyCPDLC.VNS430
         internal Vns430LoadControlSession LoadSession { get; init; }
         internal bool OperationBusy { get; init; }
         internal string OperationStatus { get; init; } = string.Empty;
+
+        /// <summary>
+        /// A value digest of everything <see cref="Vns430LcdRenderer.Render"/> reads.
+        /// The panel uses it to skip re-rendering an unchanged display.
+        /// </summary>
+        /// <remarks>
+        /// This must cover every rendered value, including the ones reached through
+        /// Snapshot, Workflow and LoadSession. Reference identity is not enough:
+        /// Vns430EditField.Value and the LoadSession indices are mutated in place, so
+        /// the same object graph produces a different display as the pilot types.
+        /// Missing a value here shows a stale display, which is why
+        /// Vns430Tests.LcdState_FingerprintCoversEveryRenderedProperty fails when a
+        /// property is added without being accounted for.
+        /// </remarks>
+        internal ulong Fingerprint()
+        {
+            ulong hash = 14695981039346656037UL;
+            Mix(ref hash, (int)Page);
+            Mix(ref hash, (int)PageGroup);
+            Mix(ref hash, CursorActive);
+            Mix(ref hash, SelectedIndex);
+            Mix(ref hash, DetailScrollLine);
+            Mix(ref hash, ResponseIndex);
+            Mix(ref hash, ZoomLevel);
+            Mix(ref hash, LogonCode);
+            Mix(ref hash, LogonCharacter);
+            Mix(ref hash, TransientStatus);
+            Mix(ref hash, WorkflowCharacter);
+            Mix(ref hash, OperationBusy);
+            Mix(ref hash, OperationStatus);
+
+            Mix(ref hash, MenuItems?.Count ?? -1);
+            if (MenuItems != null)
+            {
+                foreach (string item in MenuItems)
+                {
+                    Mix(ref hash, item);
+                }
+            }
+
+            if (Snapshot == null)
+            {
+                Mix(ref hash, "<no snapshot>");
+            }
+            else
+            {
+                Mix(ref hash, Snapshot.Connected);
+                Mix(ref hash, Snapshot.Callsign);
+                Mix(ref hash, Snapshot.CurrentAtcUnit);
+                Mix(ref hash, Snapshot.PendingLogon);
+                Mix(ref hash, Snapshot.Departure);
+                Mix(ref hash, Snapshot.Arrival);
+                Mix(ref hash, Snapshot.Aircraft);
+                Mix(ref hash, Snapshot.Messages?.Count ?? -1);
+                if (Snapshot.Messages != null)
+                {
+                    foreach (Vns430MessageSnapshot message in Snapshot.Messages)
+                    {
+                        Mix(ref hash, message.Type);
+                        Mix(ref hash, message.Station);
+                        Mix(ref hash, message.Text);
+                        Mix(ref hash, message.Outbound);
+                        Mix(ref hash, message.Acknowledged);
+                        Mix(ref hash, message.Unread);
+                        Mix(ref hash, message.Responses?.Count ?? -1);
+                        if (message.Responses != null)
+                        {
+                            foreach (string response in message.Responses)
+                            {
+                                Mix(ref hash, response);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (Workflow == null)
+            {
+                Mix(ref hash, "<no workflow>");
+            }
+            else
+            {
+                Mix(ref hash, (int)Workflow.Kind);
+                Mix(ref hash, Workflow.Title);
+                Mix(ref hash, Workflow.Fields?.Count ?? -1);
+                if (Workflow.Fields != null)
+                {
+                    foreach (Vns430EditField field in Workflow.Fields)
+                    {
+                        Mix(ref hash, field.Label);
+                        Mix(ref hash, field.Value);
+                        Mix(ref hash, field.MaxLength);
+                        Mix(ref hash, field.Options?.Count ?? -1);
+                    }
+                }
+            }
+
+            MixLoadSession(ref hash, LoadSession);
+            return hash;
+        }
+
+        private static void MixLoadSession(ref ulong hash, Vns430LoadControlSession load)
+        {
+            if (load == null)
+            {
+                Mix(ref hash, "<no load session>");
+                return;
+            }
+
+            // Aircraft, Cabin and Format are rendered, but they are derived by indexing
+            // into Reference, which throws while that data is still empty. This runs on
+            // every tick, so hash the mutable indices and Reference's identity instead:
+            // Reference is init-only, so a new set of reference data is a new object.
+            Mix(ref hash, load.AircraftIndex);
+            Mix(ref hash, load.CabinIndex);
+            Mix(ref hash, load.FormatIndex);
+            Mix(ref hash, load.Reference == null
+                ? 0
+                : RuntimeHelpers.GetHashCode(load.Reference));
+            Mix(ref hash, load.PassengerSplit?.Count ?? -1);
+            if (load.PassengerSplit != null)
+            {
+                foreach (PassengerClassAllocation allocation in load.PassengerSplit)
+                {
+                    Mix(ref hash, allocation.Code);
+                    Mix(ref hash, allocation.Capacity);
+                    Mix(ref hash, allocation.Passengers);
+                }
+            }
+
+            if (load.Flight == null)
+            {
+                Mix(ref hash, "<no flight>");
+                return;
+            }
+
+            Mix(ref hash, load.Flight.Airline);
+            Mix(ref hash, load.Flight.FlightNumber);
+            Mix(ref hash, load.Flight.AircraftRegistration);
+            Mix(ref hash, load.Flight.Departure);
+            Mix(ref hash, load.Flight.Destination);
+            Mix(ref hash, load.Flight.PassengerCount);
+        }
+
+        private static void Mix(ref ulong hash, string value)
+        {
+            unchecked
+            {
+                if (value == null)
+                {
+                    hash = (hash ^ 0xFF) * 1099511628211UL;
+                    return;
+                }
+
+                foreach (char character in value)
+                {
+                    hash = (hash ^ (byte)character) * 1099511628211UL;
+                    hash = (hash ^ (byte)(character >> 8)) * 1099511628211UL;
+                }
+
+                // Length terminator, so "AB"+"C" cannot collide with "A"+"BC".
+                hash = (hash ^ 0xFE) * 1099511628211UL;
+            }
+        }
+
+        private static void Mix(ref ulong hash, int value)
+        {
+            unchecked
+            {
+                for (int shift = 0; shift < 32; shift += 8)
+                {
+                    hash = (hash ^ (byte)(value >> shift)) * 1099511628211UL;
+                }
+            }
+        }
+
+        private static void Mix(ref ulong hash, bool value)
+        {
+            unchecked
+            {
+                hash = (hash ^ (byte)(value ? 1 : 2)) * 1099511628211UL;
+            }
+        }
     }
 
     internal static class Vns430LcdRenderer

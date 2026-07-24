@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -280,6 +281,121 @@ namespace EasyCPDLC.Tests
                 "The appearance pass did not introduce intermediate shades.");
         }
 
+        private static Vns430LcdState FingerprintBaseline() => new()
+        {
+            Snapshot = new Vns430BackendSnapshot
+            {
+                Connected = true,
+                Callsign = "N731CD",
+                CurrentAtcUnit = "KZAK",
+                PendingLogon = "KZAK",
+                Departure = "KSFO",
+                Arrival = "PHNL",
+                Aircraft = "B738",
+                Messages = new List<Vns430MessageSnapshot>
+                {
+                    new()
+                    {
+                        Type = "CPDLC",
+                        Station = "KZAK",
+                        Text = "CLIMB TO FL350",
+                        Responses = new[] { "WILCO", "UNABLE" }
+                    }
+                }
+            },
+            Page = Vns430Page.Status,
+            PageGroup = Vns430PageGroup.Nav,
+            CursorActive = true,
+            SelectedIndex = 0,
+            DetailScrollLine = 0,
+            ResponseIndex = 0,
+            ZoomLevel = 1,
+            LogonCode = "____",
+            LogonCharacter = 0,
+            TransientStatus = string.Empty,
+            MenuItems = new[] { "ONE", "TWO" },
+            Workflow = Vns430Workflow.Create(Vns430WorkflowKind.AtcLevel, new Vns430BackendSnapshot()),
+            WorkflowCharacter = 0,
+            LoadSession = new Vns430LoadControlSession { AircraftIndex = 0, CabinIndex = 0, FormatIndex = 0 },
+            OperationBusy = false,
+            OperationStatus = string.Empty
+        };
+
+        // One distinct value per rendered property. A property with no entry here is a
+        // property nobody proved the fingerprint covers, so the test below fails until
+        // someone decides which it is.
+        private static readonly Dictionary<string, object> FingerprintVariants = new()
+        {
+            [nameof(Vns430LcdState.Snapshot)] = new Vns430BackendSnapshot { Callsign = "G-ABCD" },
+            [nameof(Vns430LcdState.Page)] = Vns430Page.Help,
+            [nameof(Vns430LcdState.PageGroup)] = Vns430PageGroup.Aux,
+            [nameof(Vns430LcdState.CursorActive)] = false,
+            [nameof(Vns430LcdState.SelectedIndex)] = 3,
+            [nameof(Vns430LcdState.DetailScrollLine)] = 2,
+            [nameof(Vns430LcdState.ResponseIndex)] = 1,
+            [nameof(Vns430LcdState.ZoomLevel)] = 2,
+            [nameof(Vns430LcdState.LogonCode)] = "AB12",
+            [nameof(Vns430LcdState.LogonCharacter)] = 2,
+            [nameof(Vns430LcdState.TransientStatus)] = "SENT",
+            [nameof(Vns430LcdState.MenuItems)] = new[] { "ONE", "THREE" },
+            [nameof(Vns430LcdState.Workflow)] =
+                Vns430Workflow.Create(Vns430WorkflowKind.AocMetar, new Vns430BackendSnapshot()),
+            [nameof(Vns430LcdState.WorkflowCharacter)] = 4,
+            [nameof(Vns430LcdState.LoadSession)] =
+                new Vns430LoadControlSession { AircraftIndex = 1, CabinIndex = 0, FormatIndex = 0 },
+            [nameof(Vns430LcdState.OperationBusy)] = true,
+            [nameof(Vns430LcdState.OperationStatus)] = "WORKING"
+        };
+
+        [Fact]
+        public void LcdState_FingerprintCoversEveryRenderedProperty()
+        {
+            PropertyInfo[] properties = typeof(Vns430LcdState)
+                .GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(property => property.CanWrite)
+                .ToArray();
+
+            Assert.NotEmpty(properties);
+            ulong baseline = FingerprintBaseline().Fingerprint();
+
+            foreach (PropertyInfo property in properties)
+            {
+                Assert.True(
+                    FingerprintVariants.ContainsKey(property.Name),
+                    $"Vns430LcdState.{property.Name} is rendered but has no fingerprint coverage. " +
+                    "Add it to Fingerprint() and give it a variant here, or the panel will " +
+                    "show a stale display when only that property changes.");
+
+                Vns430LcdState mutated = FingerprintBaseline();
+                property.SetValue(mutated, FingerprintVariants[property.Name]);
+
+                Assert.True(
+                    mutated.Fingerprint() != baseline,
+                    $"Changing Vns430LcdState.{property.Name} did not change the fingerprint, " +
+                    "so the panel would keep showing the previous display.");
+            }
+        }
+
+        [Fact]
+        public void LcdState_FingerprintTracksValuesMutatedInPlace()
+        {
+            // The workflow object is reused while the pilot types into it, so identity
+            // comparison would never notice the edit.
+            Vns430LcdState state = FingerprintBaseline();
+            ulong before = state.Fingerprint();
+
+            state.Workflow.Fields[0].Value = "EGLL";
+
+            Assert.True(state.Fingerprint() != before,
+                "Editing a workflow field in place must change the fingerprint.");
+        }
+
+        [Fact]
+        public void LcdState_FingerprintIsStableForUnchangedState()
+        {
+            Assert.Equal(FingerprintBaseline().Fingerprint(), FingerprintBaseline().Fingerprint());
+        }
+
         [Fact]
         public void LcdRenderer_AppearancePassReusesItsScratchBuffers()
         {
@@ -300,6 +416,11 @@ namespace EasyCPDLC.Tests
             // The panel repaints on a 100 ms timer, so per-render scratch buffers turn
             // into megabytes of garbage per second. Measure the shaded render against
             // the raw one: the appearance pass must not widen the gap.
+            //
+            // GetAllocatedBytesForCurrentThread, not GetTotalAllocatedBytes: the latter
+            // is process-wide, so test classes running on other threads land in the
+            // measurement and make this flaky. The renderer's buffers are [ThreadStatic],
+            // so per-thread accounting is also the correct scope.
             for (int i = 0; i < 8; i++)
             {
                 using Bitmap warmRaw = Vns430LcdRenderer.Render(state, applyAppearance: false);
@@ -307,21 +428,21 @@ namespace EasyCPDLC.Tests
             }
 
             const int runs = 16;
-            long before = GC.GetTotalAllocatedBytes(true);
+            long before = GC.GetAllocatedBytesForCurrentThread();
             for (int i = 0; i < runs; i++)
             {
                 using Bitmap raw = Vns430LcdRenderer.Render(state, applyAppearance: false);
             }
 
-            long rawBytes = GC.GetTotalAllocatedBytes(true) - before;
+            long rawBytes = GC.GetAllocatedBytesForCurrentThread() - before;
 
-            before = GC.GetTotalAllocatedBytes(true);
+            before = GC.GetAllocatedBytesForCurrentThread();
             for (int i = 0; i < runs; i++)
             {
                 using Bitmap shaded = Vns430LcdRenderer.Render(state);
             }
 
-            long shadedBytes = GC.GetTotalAllocatedBytes(true) - before;
+            long shadedBytes = GC.GetAllocatedBytesForCurrentThread() - before;
 
             long overheadPerRender = (shadedBytes - rawBytes) / runs;
             Assert.True(overheadPerRender < 4096,
