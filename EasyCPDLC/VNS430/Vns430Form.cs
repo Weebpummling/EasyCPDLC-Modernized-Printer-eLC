@@ -28,24 +28,26 @@ namespace EasyCPDLC.VNS430
         private const int WmszBottomLeft = 7;
         private const int WmszBottomRight = 8;
 
-        // Screen mode strips the title bar in place (keeping the sizable frame)
-        // rather than changing FormBorderStyle, so the window handle is not
-        // recreated and the companion SimConnect registration survives.
+        // Screen mode collapses the whole non-client frame (title bar and sizing
+        // border) via WM_NCCALCSIZE so no chrome is drawn, then does its own edge
+        // hit-testing for resize. The window handle is never recreated, so the
+        // companion SimConnect registration survives the toggle.
         private const int WmNcHitTest = 0x0084;
-        private const int HtClient = 1;
+        private const int WmNcCalcSize = 0x0083;
         private const int HtCaption = 2;
-        private const int GwlStyle = -16;
-        private const int WsCaption = 0x00C00000;
+        private const int HtLeft = 10;
+        private const int HtRight = 11;
+        private const int HtTop = 12;
+        private const int HtTopLeft = 13;
+        private const int HtTopRight = 14;
+        private const int HtBottom = 15;
+        private const int HtBottomLeft = 16;
+        private const int HtBottomRight = 17;
+        private const int ScreenModeResizeBorder = 6;
         private const uint SwpFrameChanged = 0x0020;
         private const uint SwpNoMove = 0x0002;
         private const uint SwpNoSize = 0x0001;
         private const uint SwpNoZOrder = 0x0004;
-
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool SetWindowPos(
@@ -232,21 +234,47 @@ namespace EasyCPDLC.VNS430
                 return;
             }
 
-            // With the title bar stripped in screen mode, let the sizable frame
-            // resize from the edges and treat the body as a caption so the window
-            // can be dragged by its centre.
-            if (m.Msg == WmNcHitTest && preferences.ScreenOnlyMode)
+            // Screen mode: no chrome at all. Collapse the non-client frame so the
+            // client fills the window (removing the title bar and sizing border),
+            // and hit-test the edges ourselves so it still resizes, with the body
+            // acting as a caption so it drags from the centre.
+            if (preferences.ScreenOnlyMode)
             {
-                base.WndProc(ref m);
-                if (m.Result.ToInt32() == HtClient)
+                if (m.Msg == WmNcCalcSize && m.WParam != IntPtr.Zero)
                 {
-                    m.Result = (IntPtr)HtCaption;
+                    m.Result = IntPtr.Zero;
+                    return;
                 }
 
-                return;
+                if (m.Msg == WmNcHitTest)
+                {
+                    m.Result = (IntPtr)ScreenModeHitTest();
+                    return;
+                }
             }
 
             base.WndProc(ref m);
+        }
+
+        private int ScreenModeHitTest()
+        {
+            Point point = PointToClient(Cursor.Position);
+            int width = ClientSize.Width;
+            int height = ClientSize.Height;
+            bool left = point.X <= ScreenModeResizeBorder;
+            bool right = point.X >= width - ScreenModeResizeBorder;
+            bool top = point.Y <= ScreenModeResizeBorder;
+            bool bottom = point.Y >= height - ScreenModeResizeBorder;
+
+            if (top && left) return HtTopLeft;
+            if (top && right) return HtTopRight;
+            if (bottom && left) return HtBottomLeft;
+            if (bottom && right) return HtBottomRight;
+            if (left) return HtLeft;
+            if (right) return HtRight;
+            if (top) return HtTop;
+            if (bottom) return HtBottom;
+            return HtCaption;
         }
 
         // The panel is a fixed-aspect photograph drawn through a ScaleTransform, so a
@@ -1208,8 +1236,9 @@ namespace EasyCPDLC.VNS430
             Invalidate();
         }
 
-        // Add or remove the title bar in place without recreating the window
-        // handle. The sizable frame is left intact, so the panel stays resizable.
+        // Force the frame to be recalculated so the WM_NCCALCSIZE handler above
+        // adds or drops the chrome for the current mode. The window handle is not
+        // recreated, so the companion SimConnect registration is undisturbed.
         private void ApplyScreenModeChrome()
         {
             if (!IsHandleCreated)
@@ -1217,16 +1246,6 @@ namespace EasyCPDLC.VNS430
                 return;
             }
 
-            int style = GetWindowLong(Handle, GwlStyle);
-            int updated = preferences.ScreenOnlyMode
-                ? style & ~WsCaption
-                : style | WsCaption;
-            if (updated == style)
-            {
-                return;
-            }
-
-            SetWindowLong(Handle, GwlStyle, updated);
             SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0,
                 SwpNoMove | SwpNoSize | SwpNoZOrder | SwpFrameChanged);
         }
