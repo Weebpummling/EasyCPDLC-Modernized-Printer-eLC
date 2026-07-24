@@ -1101,11 +1101,65 @@ namespace EasyCPDLC.VNS430
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             e.Graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+
+            if (preferences.ScreenOnlyMode)
+            {
+                DrawScreenOnly(e.Graphics);
+                return;
+            }
+
             float scaleX = ClientSize.Width / (float)LogicalWidth;
             float scaleY = ClientSize.Height / (float)LogicalHeight;
             e.Graphics.ScaleTransform(scaleX, scaleY);
 
             DrawPanelSurface(e.Graphics);
+        }
+
+        // Screen mode: no bezel, no click zones. Draw just the LCD, scaled to fill
+        // the window at its native aspect and centred on black, so it can sit
+        // behind a physical unit while hardware buttons drive it.
+        private void DrawScreenOnly(Graphics graphics)
+        {
+            graphics.Clear(Color.Black);
+
+            Bitmap lcd = CurrentLcd();
+            if (lcd == null || ClientSize.Width <= 0 || ClientSize.Height <= 0)
+            {
+                return;
+            }
+
+            float scale = Math.Min(
+                ClientSize.Width / (float)lcd.Width,
+                ClientSize.Height / (float)lcd.Height);
+            float width = lcd.Width * scale;
+            float height = lcd.Height * scale;
+            RectangleF target = new(
+                (ClientSize.Width - width) / 2f,
+                (ClientSize.Height - height) / 2f,
+                width,
+                height);
+
+            InterpolationMode previousInterpolation = graphics.InterpolationMode;
+            PixelOffsetMode previousOffset = graphics.PixelOffsetMode;
+            graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            graphics.PixelOffsetMode = PixelOffsetMode.Half;
+            graphics.DrawImage(lcd, target);
+            graphics.InterpolationMode = previousInterpolation;
+            graphics.PixelOffsetMode = previousOffset;
+        }
+
+        internal bool ScreenOnlyMode => preferences.ScreenOnlyMode;
+
+        internal void SetScreenOnlyMode(bool enabled)
+        {
+            if (preferences.ScreenOnlyMode == enabled)
+            {
+                return;
+            }
+
+            preferences.ScreenOnlyMode = enabled;
+            preferences.Save(Bounds);
+            Invalidate();
         }
 
         private void DrawPanelSurface(Graphics graphics)
@@ -1590,7 +1644,7 @@ namespace EasyCPDLC.VNS430
 
         private void PanelMouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left)
+            if (e.Button != MouseButtons.Left || preferences.ScreenOnlyMode)
             {
                 return;
             }
@@ -1632,7 +1686,7 @@ namespace EasyCPDLC.VNS430
 
         private void PanelMouseUp(object sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left)
+            if (e.Button != MouseButtons.Left || preferences.ScreenOnlyMode)
             {
                 return;
             }
@@ -1706,6 +1760,11 @@ namespace EasyCPDLC.VNS430
 
         private void PanelMouseWheel(object sender, MouseEventArgs e)
         {
+            if (preferences.ScreenOnlyMode)
+            {
+                return;
+            }
+
             Vns430Command command = KnobWheelCommandAt(ToLogicalPoint(e.Location), new PointF(878, 326), e.Delta);
             if (command == Vns430Command.None)
             {

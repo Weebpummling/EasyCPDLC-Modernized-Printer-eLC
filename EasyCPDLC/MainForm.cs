@@ -3424,6 +3424,7 @@ private TelexForm tForm;
         private ToolStripMenuItem trayArtworkMenuItem;
         private ToolStripMenuItem trayOnScreenButtonsMenuItem;
         private ToolStripMenuItem trayDcduCompanionMenuItem;
+        private ToolStripMenuItem trayVns430ScreenMenuItem;
         private bool applyingMainWindowLayout;
         private readonly DcduHotspotButton mainMinimizeButton = new();
         private readonly DcduHotspotButton mainReloadFlightPlanButton = new();
@@ -19001,6 +19002,12 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 trayMenu = new ContextMenuStrip();
                 trayMenu.Items.Add("Show EasyCPDLC", null, (_, __) => BringEasyCpdlcWindowToFront());
                 trayMenu.Items.Add("Open VNS430 panel", null, (_, __) => ShowVns430Panel());
+                trayVns430ScreenMenuItem = new ToolStripMenuItem("VNS430 screen mode (no artwork/zones)")
+                {
+                    CheckOnClick = false
+                };
+                trayVns430ScreenMenuItem.Click += (_, __) => ToggleVns430ScreenMode();
+                trayMenu.Items.Add(trayVns430ScreenMenuItem);
                 trayMenu.Items.Add("Hide EasyCPDLC", null, (_, __) => Hide());
                 trayMenu.Items.Add(new ToolStripSeparator());
                 trayMenu.Items.Add("Connection credentials...", null, (_, __) => ShowSharedCredentialEditor());
@@ -19024,6 +19031,7 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
                 trayMenu.Items.Add("Exit EasyCPDLC", null, (_, __) => ExitButton_Click(exitButton, EventArgs.Empty));
                 SyncTrayDisplayMenuState();
                 SyncTrayCompanionMenuState();
+                SyncTrayVns430ScreenMenuState();
 
                 trayIcon?.Dispose();
                 trayIcon = new NotifyIcon
@@ -19085,6 +19093,26 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             if (trayDcduCompanionMenuItem != null)
             {
                 trayDcduCompanionMenuItem.Checked = IsDcduCompanionModeEnabled();
+            }
+        }
+
+        private void ToggleVns430ScreenMode()
+        {
+            bool enable = !IsVns430ScreenOnlyMode();
+            SetVns430ScreenOnlyMode(enable);
+            SyncTrayVns430ScreenMenuState();
+
+            string note = enable
+                ? "VNS430 panel is a bare screen now: artwork and click zones are off. Drive it with your hardware buttons."
+                : "VNS430 panel artwork and on-screen click zones are back on.";
+            trayIcon?.ShowBalloonTip(4000, "EasyCPDLC VNS430", note, ToolTipIcon.Info);
+        }
+
+        private void SyncTrayVns430ScreenMenuState()
+        {
+            if (trayVns430ScreenMenuItem != null)
+            {
+                trayVns430ScreenMenuItem.Checked = IsVns430ScreenOnlyMode();
             }
         }
 

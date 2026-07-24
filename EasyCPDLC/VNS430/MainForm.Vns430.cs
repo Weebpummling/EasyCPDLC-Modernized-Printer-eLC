@@ -50,6 +50,22 @@ namespace EasyCPDLC
             return Vns430Preferences.Load().DcduCompanionMode;
         }
 
+        internal void SetVns430ScreenOnlyMode(bool enabled)
+        {
+            EnsureVns430Panel();
+            vns430Panel.SetScreenOnlyMode(enabled);
+        }
+
+        internal bool IsVns430ScreenOnlyMode()
+        {
+            if (vns430Panel != null && !vns430Panel.IsDisposed)
+            {
+                return vns430Panel.ScreenOnlyMode;
+            }
+
+            return Vns430Preferences.Load().ScreenOnlyMode;
+        }
+
         private void RestoreVns430CompanionHost()
         {
             Vns430Preferences preferences = Vns430Preferences.Load();

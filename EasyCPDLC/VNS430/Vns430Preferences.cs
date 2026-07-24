@@ -9,6 +9,12 @@ namespace EasyCPDLC.VNS430
     {
         public bool CompanionModuleEnabled { get; set; } = true;
         public bool DcduCompanionMode { get; set; }
+
+        // Screen mode. With hardware buttons driving input, show the panel as a
+        // bare LCD behind the physical unit: this hides the photographed bezel and
+        // disables the on-screen click zones together.
+        public bool ScreenOnlyMode { get; set; }
+
         public int Left { get; set; } = -1;
         public int Top { get; set; } = -1;
         public int Width { get; set; } = 960;
