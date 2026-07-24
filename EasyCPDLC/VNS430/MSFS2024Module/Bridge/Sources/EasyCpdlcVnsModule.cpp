@@ -92,6 +92,43 @@ namespace
         { "EASYCPDLC_DCDU_HIDE", 38, InvalidLVarId }
     };
 
+    // Boeing CDU (PFP/FMC) keypad. One momentary L-var per key so a WinWing CDU can be
+    // bound in MobiFlight the same way as any other aircraft profile. Command values match
+    // the Vns430Command enum on the desktop side.
+    DcduInput g_cduInputs[] =
+    {
+        { "EASYCPDLC_CDU_A", 39, InvalidLVarId }, { "EASYCPDLC_CDU_B", 40, InvalidLVarId },
+        { "EASYCPDLC_CDU_C", 41, InvalidLVarId }, { "EASYCPDLC_CDU_D", 42, InvalidLVarId },
+        { "EASYCPDLC_CDU_E", 43, InvalidLVarId }, { "EASYCPDLC_CDU_F", 44, InvalidLVarId },
+        { "EASYCPDLC_CDU_G", 45, InvalidLVarId }, { "EASYCPDLC_CDU_H", 46, InvalidLVarId },
+        { "EASYCPDLC_CDU_I", 47, InvalidLVarId }, { "EASYCPDLC_CDU_J", 48, InvalidLVarId },
+        { "EASYCPDLC_CDU_K", 49, InvalidLVarId }, { "EASYCPDLC_CDU_L", 50, InvalidLVarId },
+        { "EASYCPDLC_CDU_M", 51, InvalidLVarId }, { "EASYCPDLC_CDU_N", 52, InvalidLVarId },
+        { "EASYCPDLC_CDU_O", 53, InvalidLVarId }, { "EASYCPDLC_CDU_P", 54, InvalidLVarId },
+        { "EASYCPDLC_CDU_Q", 55, InvalidLVarId }, { "EASYCPDLC_CDU_R", 56, InvalidLVarId },
+        { "EASYCPDLC_CDU_S", 57, InvalidLVarId }, { "EASYCPDLC_CDU_T", 58, InvalidLVarId },
+        { "EASYCPDLC_CDU_U", 59, InvalidLVarId }, { "EASYCPDLC_CDU_V", 60, InvalidLVarId },
+        { "EASYCPDLC_CDU_W", 61, InvalidLVarId }, { "EASYCPDLC_CDU_X", 62, InvalidLVarId },
+        { "EASYCPDLC_CDU_Y", 63, InvalidLVarId }, { "EASYCPDLC_CDU_Z", 64, InvalidLVarId },
+        { "EASYCPDLC_CDU_0", 65, InvalidLVarId }, { "EASYCPDLC_CDU_1", 66, InvalidLVarId },
+        { "EASYCPDLC_CDU_2", 67, InvalidLVarId }, { "EASYCPDLC_CDU_3", 68, InvalidLVarId },
+        { "EASYCPDLC_CDU_4", 69, InvalidLVarId }, { "EASYCPDLC_CDU_5", 70, InvalidLVarId },
+        { "EASYCPDLC_CDU_6", 71, InvalidLVarId }, { "EASYCPDLC_CDU_7", 72, InvalidLVarId },
+        { "EASYCPDLC_CDU_8", 73, InvalidLVarId }, { "EASYCPDLC_CDU_9", 74, InvalidLVarId },
+        { "EASYCPDLC_CDU_SP", 75, InvalidLVarId }, { "EASYCPDLC_CDU_DOT", 76, InvalidLVarId },
+        { "EASYCPDLC_CDU_SLASH", 77, InvalidLVarId }, { "EASYCPDLC_CDU_PLUSMINUS", 78, InvalidLVarId },
+        { "EASYCPDLC_CDU_CLR", 79, InvalidLVarId }, { "EASYCPDLC_CDU_DEL", 80, InvalidLVarId },
+        { "EASYCPDLC_CDU_INIT_REF", 81, InvalidLVarId }, { "EASYCPDLC_CDU_RTE", 82, InvalidLVarId },
+        { "EASYCPDLC_CDU_DEP_ARR", 83, InvalidLVarId }, { "EASYCPDLC_CDU_ATC", 84, InvalidLVarId },
+        { "EASYCPDLC_CDU_VNAV", 85, InvalidLVarId }, { "EASYCPDLC_CDU_FIX", 86, InvalidLVarId },
+        { "EASYCPDLC_CDU_LEGS", 87, InvalidLVarId }, { "EASYCPDLC_CDU_HOLD", 88, InvalidLVarId },
+        { "EASYCPDLC_CDU_FMC_COMM", 89, InvalidLVarId }, { "EASYCPDLC_CDU_PROG", 90, InvalidLVarId },
+        { "EASYCPDLC_CDU_EXEC", 91, InvalidLVarId }, { "EASYCPDLC_CDU_MENU", 92, InvalidLVarId },
+        { "EASYCPDLC_CDU_NAV_RAD", 93, InvalidLVarId }, { "EASYCPDLC_CDU_PREV_PAGE", 94, InvalidLVarId },
+        { "EASYCPDLC_CDU_NEXT_PAGE", 95, InvalidLVarId }, { "EASYCPDLC_CDU_BRT_UP", 96, InvalidLVarId },
+        { "EASYCPDLC_CDU_BRT_DN", 97, InvalidLVarId }
+    };
+
     void SetLVar(LVarId id, double value)
     {
         if (id != InvalidLVarId)
@@ -127,6 +164,10 @@ namespace
     void ClearDcduInputs()
     {
         for (auto& input : g_dcduInputs)
+        {
+            SetLVar(input.id, 0.0);
+        }
+        for (auto& input : g_cduInputs)
         {
             SetLVar(input.id, 0.0);
         }
@@ -254,6 +295,10 @@ namespace
         {
             input.id = register_named_variable(input.name);
         }
+        for (auto& input : g_cduInputs)
+        {
+            input.id = register_named_variable(input.name);
+        }
 
         SetLVar(g_command, 0.0);
         SetLVar(g_moduleAlive, 0.0);
@@ -290,6 +335,15 @@ namespace
         if (g_dcduMode)
         {
             for (auto& input : g_dcduInputs)
+            {
+                const double value = get_named_variable_value(input.id);
+                if (value != 0.0)
+                {
+                    SetLVar(input.id, 0.0);
+                    PublishCommand(input.command);
+                }
+            }
+            for (auto& input : g_cduInputs)
             {
                 const double value = get_named_variable_value(input.id);
                 if (value != 0.0)
