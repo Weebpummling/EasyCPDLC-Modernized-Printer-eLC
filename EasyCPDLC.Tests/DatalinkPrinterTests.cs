@@ -277,6 +277,47 @@ namespace EasyCPDLC.Tests
             }
         }
 
+        [Fact]
+        public void Print_FailsClosed_WhenNoPrinterIsSelected_EscPos()
+        {
+            // A blank printer name means the user never chose a queue (the selector
+            // starts on <SELECT PRINTER>). The job must not silently fall back to the
+            // Windows default or first installed printer, which previously sent raw
+            // ESC/POS to unrelated office printers.
+            DatalinkPrintResult result = DatalinkPrinter.Print(
+                DatalinkPrinter.CreateTestJob(),
+                new DatalinkPrinterSettings { Mode = DatalinkPrinterMode.RawEscPos, PrinterName = string.Empty });
+
+            Assert.False(result.Success);
+            Assert.Contains("NO WINDOWS PRINTER", result.Message);
+        }
+
+        [Fact]
+        public void Print_FailsClosed_WhenNoPrinterIsSelected_Windows()
+        {
+            DatalinkPrintResult result = DatalinkPrinter.Print(
+                DatalinkPrinter.CreateTestJob(),
+                new DatalinkPrinterSettings { Mode = DatalinkPrinterMode.Windows, PrinterName = string.Empty });
+
+            Assert.False(result.Success);
+            Assert.Contains("NO WINDOWS PRINTER", result.Message);
+        }
+
+        [Fact]
+        public void Print_FailsClosed_WhenSelectedPrinterIsNotInstalled()
+        {
+            DatalinkPrintResult result = DatalinkPrinter.Print(
+                DatalinkPrinter.CreateTestJob(),
+                new DatalinkPrinterSettings
+                {
+                    Mode = DatalinkPrinterMode.RawEscPos,
+                    PrinterName = "NO SUCH PRINTER " + Guid.NewGuid().ToString("N")
+                });
+
+            Assert.False(result.Success);
+            Assert.Contains("NOT INSTALLED", result.Message);
+        }
+
         private static bool Contains(byte[] source, params byte[] sequence)
         {
             return source.Select((_, index) => index).Any(index =>

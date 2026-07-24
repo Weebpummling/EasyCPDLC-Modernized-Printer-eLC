@@ -769,19 +769,22 @@ namespace EasyCPDLC
         private static string ResolvePrinterName(string configuredPrinterName)
         {
             string configured = (configuredPrinterName ?? string.Empty).Trim();
-            IReadOnlyList<string> installed = GetInstalledPrinterNames();
 
-            if (!string.IsNullOrWhiteSpace(configured))
+            // Fail closed when no queue has been chosen. The printer selector starts on
+            // <SELECT PRINTER> and never persists a queue on its own, so an empty name
+            // means the user has not picked one. Auto-selecting the Windows default (or
+            // the first installed) printer here silently sent raw ESC/POS control bytes
+            // to an unrelated office/laser printer, which rendered them as a garbled
+            // multi-page job. Require an explicit selection instead.
+            if (string.IsNullOrWhiteSpace(configured))
             {
-                // Fail closed when an explicitly selected queue disappears or is renamed.
-                // Silently falling back could send an ACARS message to an unrelated printer.
-                return installed.FirstOrDefault(name => string.Equals(name, configured, StringComparison.OrdinalIgnoreCase))
-                    ?? string.Empty;
+                return string.Empty;
             }
 
-            string defaultPrinter = GetDefaultPrinterName();
-            return installed.FirstOrDefault(name => string.Equals(name, defaultPrinter, StringComparison.OrdinalIgnoreCase))
-                ?? installed.FirstOrDefault()
+            // Fail closed when an explicitly selected queue disappears or is renamed.
+            // Silently falling back could send an ACARS message to an unrelated printer.
+            return GetInstalledPrinterNames()
+                .FirstOrDefault(name => string.Equals(name, configured, StringComparison.OrdinalIgnoreCase))
                 ?? string.Empty;
         }
 
