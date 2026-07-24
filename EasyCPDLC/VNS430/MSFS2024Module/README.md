@@ -48,12 +48,34 @@ The required stock attachment remains:
 ```text
 attachment_root = "SimAttachments/Instruments/Asobo_MPA_GNS430"
 attachment_file = "model/GNS430.xml"
+attach_to_node = "bl_Ped"
 vcockpit_parameter.0 = "VCockpit01_htmlgauge00_file,EasyCPDLC/VNS430/VNS430.html"
 ```
 
-The measured default position uses the PMDG interior model's
-`Selcal_Dzu_Remove` transform. All six pose values remain build parameters for
-in-simulator calibration.
+## How the attachment is positioned
+
+MSFS positions a `SIM_ATTACHMENT` **relative to a named interior node**.
+`attach_offset` on its own does not place anything; without `attach_to_node`
+the attachment does not appear in the cockpit at all.
+
+The PMDG 737-800 interior exposes no `ATTACH_POINT_*` nodes, so the package
+anchors to existing pedestal geometry. `attach_to_node` accepts any node name,
+which is what PMDG's own configuration does for `AIRSTAIR_PANEL`.
+
+The default anchor is `bl_Ped`, 0.113 m from the printer-panel DZU opening.
+`Selcal_Dzu_Remove` sits closer to the opening but exists only in LOD0, so the
+anchor vanishes as soon as the interior drops a LOD.
+
+The anchor, all six pose values, and the scale are build parameters:
+
+```powershell
+.\Build-Package.ps1 -AttachToNode 'Rectangle462' -OffsetX 0.05 -OffsetZ 0.08
+```
+
+Offsets are node-relative metres and are expected to need in-simulator
+calibration. Because they are small, a wrong sign moves the unit a few
+centimetres rather than out of the aircraft, so it stays visible while tuning.
+Note that the simulator's axis order and sign may not match the glTF's.
 
 Validate the built package with:
 
@@ -61,8 +83,10 @@ Validate the built package with:
 .\Validate-Package.ps1
 ```
 
-Validation checks all 12 presets, the measured pose, required stock attachment,
-absence of replacement 3D artwork, VNS430 LCD subscription, and bridge ABI.
+Validation checks all 12 presets, the required stock attachment, the presence
+of a named anchor node, that offsets are node-relative rather than absolute
+model positions, absence of replacement 3D artwork, VNS430 LCD subscription,
+and bridge ABI.
 
 ## Build the private WASM bridge
 

@@ -19,6 +19,18 @@ Print/eLC fork and deliberately contains none of it, so make VNS430 changes on
    and rotation against the intended printer-panel opening, and confirm that it
    remains correctly aligned from normal pilot viewpoints.
 
+   The first attempt at this shipped a panel that appeared nowhere. The cause
+   was that the attachment carried only `attach_offset`, set to the absolute
+   glTF world position of `Selcal_Dzu_Remove`. MSFS positions a
+   `SIM_ATTACHMENT` relative to a named node, and no interior attachment in any
+   surveyed package positions itself by raw offset. The package now anchors to
+   `bl_Ped` with a small node-relative offset; see the module README. The
+   remaining work is calibrating that offset in the simulator, not finding the
+   mechanism.
+
+   The offsets are derived from glTF coordinates, so the simulator's axis order
+   and signs still need confirming against what is actually rendered.
+
 2. **Replace the borrowed stock model with a dedicated VNS430 panel.**
    Build VNS430-specific 3D geometry and materials, connect its display,
    buttons, dual rotary encoders, annunciators, and animations to the existing

@@ -5,13 +5,26 @@ param(
 
     [string]$OutputRoot,
 
-    # Measured from the PMDG interior model's Selcal_Dzu_Remove node.
-    [double]$OffsetX = -0.1571,
-    [double]$OffsetY = 0.8220,
-    [double]$OffsetZ = 13.5577,
+    # The interior node the attachment is anchored to. MSFS positions a
+    # SIM_ATTACHMENT relative to a named node; attach_offset alone does not
+    # place it. The PMDG 737-800 interior exposes no ATTACH_POINT_* nodes, so
+    # this anchors to existing pedestal geometry instead.
+    #
+    # bl_Ped sits 0.113 m from the printer-panel DZU opening and survives to
+    # LOD2. Selcal_Dzu_Remove is closer to the opening but exists only in LOD0,
+    # so the anchor disappears as soon as the interior drops a LOD.
+    [string]$AttachToNode = 'bl_Ped',
+
+    # Offset from $AttachToNode to the printer-panel DZU opening, in metres.
+    # Measured as Selcal_Dzu_Remove minus bl_Ped in 73X_VC_LOD0.gltf.
+    # These are calibration values; expect to tune them in the simulator.
+    [double]$OffsetX = 0.0420,
+    [double]$OffsetY = -0.0040,
+    [double]$OffsetZ = 0.1050,
     [double]$Pitch = -90.0,
     [double]$Bank = 0.0,
-    [double]$Heading = 0.0
+    [double]$Heading = 0.0,
+    [double]$Scale = 1.0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,14 +77,16 @@ function Add-Vns430Attachment {
     $offset = "$(Format-Number $OffsetX),$(Format-Number $OffsetY),$(Format-Number $OffsetZ)"
     $pbh = "$(Format-Number $Pitch),$(Format-Number $Bank),$(Format-Number $Heading)"
     $block = @"
-
 [SIM_ATTACHMENT.$nextIndex]
 attachment_root = "SimAttachments/Instruments/Asobo_MPA_GNS430"
 attachment_file = "model/GNS430.xml"
 attach_to_model = "interior"
 attach_to_model_minsize = 0
+attach_to_node = "$AttachToNode"
+attach_to_reference_point = ""
 attach_offset = $offset
 attach_pbh = $pbh
+attach_scale = $(Format-Number $Scale)
 always_execute_associate_js = 1
 always_execute_model_behavior = 1
 alias = "easycpdlc_vns430"
@@ -80,7 +95,7 @@ vcockpit_parameter.0 = "VCockpit01_htmlgauge00_file,EasyCPDLC/VNS430/VNS430.html
 
     New-Item -ItemType Directory -Path (Split-Path -Parent $TargetConfig) -Force | Out-Null
     Set-Utf8NoBom -Path $TargetConfig `
-        -Value ($text.TrimEnd() + "`r`n" + $block.TrimStart() + "`r`n")
+        -Value ($text.TrimEnd() + "`r`n`r`n" + $block.TrimStart() + "`r`n")
 }
 
 $presets = Get-ChildItem -LiteralPath $presetRoot -Directory |
@@ -123,11 +138,13 @@ Set-Utf8NoBom -Path (Join-Path $resolvedOutputRoot 'layout.json') `
     -Value ([ordered]@{ content = @($layoutItems) } | ConvertTo-Json -Depth 8)
 
 Write-Host "Built VNS430 package with the stock GNS430 model: $resolvedOutputRoot"
-Write-Host ("Mounted in {0} presets at {1},{2},{3} PBH {4},{5},{6}" -f
+Write-Host ("Mounted in {0} presets on node '{1}' at offset {2},{3},{4} PBH {5},{6},{7} scale {8}" -f
     $presets.Count,
+    $AttachToNode,
     (Format-Number $OffsetX),
     (Format-Number $OffsetY),
     (Format-Number $OffsetZ),
     (Format-Number $Pitch),
     (Format-Number $Bank),
-    (Format-Number $Heading))
+    (Format-Number $Heading),
+    (Format-Number $Scale))

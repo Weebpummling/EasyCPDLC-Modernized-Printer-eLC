@@ -50,10 +50,31 @@ foreach ($config in $configs) {
         "Stock GNS430 attachment root missing in $($config.FullName)"
     Assert-True ($text -match 'attachment_file\s*=\s*"model/GNS430\.xml"') `
         "Stock GNS430 model missing in $($config.FullName)"
-    Assert-True ($text -match 'attach_offset\s*=\s*-0\.1571,0\.8220,13\.5577') `
-        "Measured printer-panel position missing in $($config.FullName)"
-    Assert-True ($text -match 'attach_pbh\s*=\s*-90\.0000,0\.0000,0\.0000') `
+    # MSFS positions a SIM_ATTACHMENT relative to a named node. An attachment
+    # with only attach_offset does not appear in the cockpit at all, so the
+    # anchor is required rather than optional.
+    Assert-True ($text -match 'attach_to_node\s*=\s*"(?<node>[^"]+)"') `
+        "attach_to_node missing in $($config.FullName); the attachment will not be placed."
+
+    # A node-relative offset is a small adjustment. A large value here means
+    # an absolute model-space position was pasted in by mistake, which puts the
+    # attachment metres away from the cockpit and effectively hides it.
+    if ($text -match 'attach_offset\s*=\s*(?<x>-?[\d.]+),(?<y>-?[\d.]+),(?<z>-?[\d.]+)') {
+        foreach ($axis in 'x', 'y', 'z') {
+            $value = [double]$Matches[$axis]
+            Assert-True ([math]::Abs($value) -le 1.0) (
+                "attach_offset $axis = $value in $($config.FullName) is not a " +
+                'node-relative offset; it looks like an absolute model position.')
+        }
+    }
+    else {
+        $failures.Add("attach_offset missing or malformed in $($config.FullName)")
+    }
+
+    Assert-True ($text -match 'attach_pbh\s*=\s*-?[\d.]+,-?[\d.]+,-?[\d.]+') `
         "Printer-panel orientation missing in $($config.FullName)"
+    Assert-True ($text -match 'attach_scale\s*=\s*[\d.]+') `
+        "attach_scale missing in $($config.FullName)"
     Assert-True ($text -match 'vcockpit_parameter\.0\s*=\s*"VCockpit01_htmlgauge00_file,EasyCPDLC/VNS430/VNS430\.html"') `
         "LCD override missing in $($config.FullName)"
 }
@@ -81,6 +102,6 @@ Assert-True (-not $wasmText.Contains('module_update')) `
 if ($failures.Count -gt 0) {
     throw ("VNS430 package audit failed:`r`n- " + ($failures -join "`r`n- "))
 }
-Write-Host 'PASS: 12 presets mount the stock GNS430 model with the VNS430 LCD at the measured printer-panel pose.'
+Write-Host 'PASS: 12 presets mount the stock GNS430 model with the VNS430 LCD, anchored to a named interior node with a node-relative offset.'
 Write-Host 'PASS: EasyCPDLC replaces only the 240x128 LCD; no replacement bezel/buttons exist.'
 Write-Host 'PASS: the VNS430 bridge uses the MSFS standalone-compatible ABI.'
