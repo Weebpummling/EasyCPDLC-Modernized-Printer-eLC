@@ -1,4 +1,4 @@
-using EasyCPDLC.VNS430;
+﻿using EasyCPDLC.VNS430;
 using EasyCPDLC.VNS430.Cdu;
 using System;
 using System.Collections.Generic;
@@ -9,7 +9,7 @@ using System.Windows.Forms;
 namespace EasyCPDLC
 {
     // LSK-only "CDU" display mode. A third DcduStyle alongside Airbus/Boeing that renders a
-    // 28x12 character grid driven entirely by the twelve line-select keys (clickable on
+    // 24x14 MCDU character grid driven entirely by the twelve line-select keys (clickable on
     // screen and driveable by the MobiFlight EASYCPDLC_DCDU_LSK_* L-vars). It reuses the
     // same backend as the DCDU skins through the existing Vns430* wrappers and leaves the
     // Airbus/Boeing code paths untouched.
@@ -23,7 +23,9 @@ namespace EasyCPDLC
             MessageDetail,
             Atc,
             Aoc,
-            Request
+            Request,
+            Setup,
+            Load
         }
 
         private CduDisplayPanel cduDisplayPanel;
@@ -37,6 +39,10 @@ namespace EasyCPDLC
         private string cduScratchpad = string.Empty;
         private string cduStatusLine = string.Empty;
         private bool cduRequestSending;
+
+        // eLoadControl loadsheet state.
+        private Vns430LoadControlSession cduLoadSession;
+        private bool cduLoadBusy;
 
         internal bool IsCduModeActive() => DcduStyleManager.IsCdu;
 
@@ -134,6 +140,12 @@ namespace EasyCPDLC
                 case CduPageId.Request:
                     HandleCduRequestLsk(rightSide, index);
                     break;
+                case CduPageId.Setup:
+                    HandleCduSetupLsk(rightSide, index);
+                    break;
+                case CduPageId.Load:
+                    HandleCduLoadLsk(rightSide, index);
+                    break;
             }
 
             RefreshCduDisplay();
@@ -171,9 +183,16 @@ namespace EasyCPDLC
                     break;
                 case CduPageId.Aoc:
                     RenderCduRequestMenu(grid, snapshot, "AOC / TELEX", CduAocMenuItems);
+                    grid.WriteRight(CduLayout.DataRow(1), "LOADSHEET>", CduColor.White);
                     break;
                 case CduPageId.Request:
                     RenderCduRequest(grid, snapshot);
+                    break;
+                case CduPageId.Setup:
+                    RenderCduSetup(grid, snapshot);
+                    break;
+                case CduPageId.Load:
+                    RenderCduLoad(grid, snapshot);
                     break;
             }
 
@@ -194,7 +213,7 @@ namespace EasyCPDLC
 
         private static void RenderCduMenu(CduGrid grid, Vns430BackendSnapshot snapshot)
         {
-            RenderCduHeader(grid, "EASYCPDLC CDU", snapshot);
+            RenderCduHeader(grid, "MCDU MENU", snapshot);
             grid.WriteLeft(CduLayout.DataRow(1), "<DLK", CduColor.White);
             grid.WriteLeft(CduLayout.DataRow(2), "<ATC", CduColor.White);
             grid.WriteLeft(CduLayout.DataRow(3), "<AOC", CduColor.White);
@@ -313,7 +332,7 @@ namespace EasyCPDLC
                 case 2: cduPage = CduPageId.Atc; break;
                 case 3: cduPage = CduPageId.Aoc; break;
                 case 4: cduPage = CduPageId.Messages; break;
-                // SETUP (5) grid page is the next porting step.
+                case 5: cduPage = CduPageId.Setup; break;
             }
         }
 
@@ -416,7 +435,15 @@ namespace EasyCPDLC
 
         private void HandleCduAtcLsk(bool rightSide, int index) => HandleCduRequestMenuSelection(rightSide, index, CduAtcMenuItems);
 
-        private void HandleCduAocLsk(bool rightSide, int index) => HandleCduRequestMenuSelection(rightSide, index, CduAocMenuItems);
+        private void HandleCduAocLsk(bool rightSide, int index)
+        {
+            if (rightSide && index == 1)
+            {
+                CduOpenLoadControl();
+                return;
+            }
+            HandleCduRequestMenuSelection(rightSide, index, CduAocMenuItems);
+        }
 
         private void HandleCduRequestMenuSelection(bool rightSide, int index,
             (string Label, Vns430WorkflowKind Kind)[] items)
@@ -440,11 +467,11 @@ namespace EasyCPDLC
             }
         }
 
-        // Request fields fill left LSK 2..5 then right LSK 2..5 (eight slots). LSK1's label
-        // row is the title; LSK6 is RETURN / SEND with the scratchpad just above it.
+        // Request fields fill left LSK 1..5 then right LSK 1..5 (ten slots). LSK6 is
+        // RETURN / SEND; the scratchpad is the dedicated bottom row.
         private static (bool RightSide, int Lsk) CduFieldSlot(int fieldIndex)
         {
-            return fieldIndex < 4 ? (false, fieldIndex + 2) : (true, (fieldIndex - 4) + 2);
+            return fieldIndex < 5 ? (false, fieldIndex + 1) : (true, (fieldIndex - 5) + 1);
         }
 
         private void RenderCduRequest(CduGrid grid, Vns430BackendSnapshot snapshot)
@@ -481,11 +508,11 @@ namespace EasyCPDLC
             // Scratchpad (or the last status message) sits just above the RETURN/SEND row.
             if (!string.IsNullOrWhiteSpace(cduStatusLine))
             {
-                grid.WriteCentered(CduLayout.LabelRow(6), Truncate(cduStatusLine, CduGrid.Cols), CduColor.Amber, small: true);
+                grid.WriteCentered(CduLayout.ScratchpadRow, Truncate(cduStatusLine, CduGrid.Cols), CduColor.Amber, small: true);
             }
             else
             {
-                grid.WriteCentered(CduLayout.LabelRow(6), "[" + Truncate(cduScratchpad, CduGrid.Cols - 2) + "]", CduColor.White);
+                grid.WriteCentered(CduLayout.ScratchpadRow, "[" + Truncate(cduScratchpad, CduGrid.Cols - 2) + "]", CduColor.White);
             }
 
             grid.WriteLeft(CduLayout.DataRow(6), "<RETURN", CduColor.White);
@@ -517,12 +544,7 @@ namespace EasyCPDLC
                 return;
             }
 
-            if (index == 1)
-            {
-                return; // LSK1 carries no field on request pages
-            }
-
-            int fieldIndex = rightSide ? 4 + (index - 2) : index - 2;
+            int fieldIndex = rightSide ? 5 + (index - 1) : index - 1;
             if (fieldIndex < 0 || fieldIndex >= cduWorkflow.Fields.Count)
             {
                 return;
@@ -568,9 +590,11 @@ namespace EasyCPDLC
             RefreshCduDisplay();
         }
 
+        private bool CduScratchpadActive() => cduPage is CduPageId.Request or CduPageId.Setup;
+
         private void CduScratchpadType(char c)
         {
-            if (cduPage == CduPageId.Request && cduScratchpad.Length < CduGrid.Cols - 2)
+            if (CduScratchpadActive() && cduScratchpad.Length < CduGrid.Cols - 2)
             {
                 cduScratchpad += c;
                 cduStatusLine = string.Empty;
@@ -580,7 +604,7 @@ namespace EasyCPDLC
 
         private void CduScratchpadBackspace()
         {
-            if (cduPage == CduPageId.Request && cduScratchpad.Length > 0)
+            if (CduScratchpadActive() && cduScratchpad.Length > 0)
             {
                 cduScratchpad = cduScratchpad.Substring(0, cduScratchpad.Length - 1);
                 RefreshCduDisplay();
@@ -589,12 +613,260 @@ namespace EasyCPDLC
 
         private void CduScratchpadClearAll()
         {
-            if (cduPage == CduPageId.Request)
+            if (CduScratchpadActive())
             {
                 cduScratchpad = string.Empty;
                 cduStatusLine = string.Empty;
                 RefreshCduDisplay();
             }
+        }
+
+        // ---- SETUP page ----------------------------------------------------
+
+        private void RenderCduSetup(CduGrid grid, Vns430BackendSnapshot snapshot)
+        {
+            grid.WriteCentered(CduLayout.TitleRow, "SETUP", CduColor.White);
+
+            RenderCduSetupField(grid, 2, false, "VATSIM CID", SavedCID > 0 ? SavedCID.ToString() : null);
+            RenderCduSetupField(grid, 3, false, "HOPPIE CODE", string.IsNullOrWhiteSpace(SavedHoppieCode) ? null : "SET");
+            RenderCduSetupField(grid, 4, false, "SIMBRIEF", string.IsNullOrWhiteSpace(SimbriefID) ? null : SimbriefID);
+            RenderCduSetupField(grid, 5, false, "ELOAD KEY", string.IsNullOrWhiteSpace(SavedELoadControlApiKey) ? null : "SET");
+
+            RenderCduSetupField(grid, 2, true, "DCDU STYLE", DcduStyleManager.CurrentStyle);
+            RenderCduSetupField(grid, 3, true, "PRINTER",
+                string.IsNullOrWhiteSpace(SelectedPrinterName) ? "SELECT" : Truncate(SelectedPrinterName, CduGrid.HalfCols - 1));
+
+            if (!string.IsNullOrWhiteSpace(cduStatusLine))
+            {
+                grid.WriteCentered(CduLayout.ScratchpadRow, Truncate(cduStatusLine, CduGrid.Cols), CduColor.Amber, small: true);
+            }
+            else
+            {
+                grid.WriteCentered(CduLayout.ScratchpadRow, "[" + Truncate(cduScratchpad, CduGrid.Cols - 2) + "]", CduColor.White);
+            }
+            grid.WriteLeft(CduLayout.DataRow(6), "<MENU", CduColor.White);
+        }
+
+        private static void RenderCduSetupField(CduGrid grid, int lsk, bool right, string label, string value)
+        {
+            bool empty = string.IsNullOrWhiteSpace(value);
+            CduColor colour = empty ? CduColor.Grey : CduColor.Green;
+            string shown = empty ? "----" : value;
+            if (right)
+            {
+                grid.WriteRight(CduLayout.LabelRow(lsk), label, CduColor.Cyan, small: true);
+                grid.WriteRight(CduLayout.DataRow(lsk), shown + ">", colour);
+            }
+            else
+            {
+                grid.WriteLeft(CduLayout.LabelRow(lsk), label, CduColor.Cyan, small: true);
+                grid.WriteLeft(CduLayout.DataRow(lsk), "<" + shown, colour);
+            }
+        }
+
+        private void HandleCduSetupLsk(bool rightSide, int index)
+        {
+            cduStatusLine = string.Empty;
+            if (!rightSide)
+            {
+                switch (index)
+                {
+                    case 2: CduApplyCidFromScratchpad(); break;
+                    case 3: CduApplyTextSetting(v => SavedHoppieCode = v.ToUpperInvariant(), "HOPPIE"); break;
+                    case 4: CduApplyTextSetting(v => SimbriefID = v, "SIMBRIEF"); break;
+                    case 5: CduApplyTextSetting(v => SavedELoadControlApiKey = v, "ELOAD KEY"); break;
+                    case 6: cduPage = CduPageId.Menu; break;
+                }
+                return;
+            }
+
+            switch (index)
+            {
+                case 2: CduCycleStyle(); break;
+                case 3: CduCyclePrinter(); break;
+            }
+        }
+
+        private void CduApplyCidFromScratchpad()
+        {
+            if (string.IsNullOrWhiteSpace(cduScratchpad))
+            {
+                SavedCID = 0;
+            }
+            else if (int.TryParse(cduScratchpad.Trim(), out int cid) && cid > 0)
+            {
+                SavedCID = cid;
+            }
+            else
+            {
+                cduStatusLine = "CID MUST BE NUMERIC";
+                return;
+            }
+            cduScratchpad = string.Empty;
+            Properties.Settings.Default.Save();
+            cduStatusLine = "CID SAVED";
+        }
+
+        private void CduApplyTextSetting(Action<string> setter, string name)
+        {
+            setter(cduScratchpad.Trim());
+            cduScratchpad = string.Empty;
+            Properties.Settings.Default.Save();
+            cduStatusLine = name + " SAVED";
+        }
+
+        private void CduCycleStyle()
+        {
+            string next = DcduStyleManager.CurrentStyle switch
+            {
+                DcduStyleManager.Cdu => DcduStyleManager.Airbus,
+                DcduStyleManager.Airbus => DcduStyleManager.Boeing,
+                _ => DcduStyleManager.Cdu
+            };
+            DcduStyleManager.CurrentStyle = next;
+            ApplyDisplayStyle(); // leaving CDU tears the panel down and shows the DCDU
+        }
+
+        private void CduCyclePrinter()
+        {
+            List<string> options = new() { string.Empty };
+            options.AddRange(DatalinkPrinter.GetInstalledPrinterNames());
+            int current = Math.Max(0, options.FindIndex(p =>
+                string.Equals(p, SelectedPrinterName, StringComparison.OrdinalIgnoreCase)));
+            SelectedPrinterName = options[(current + 1) % options.Count];
+            Properties.Settings.Default.Save();
+        }
+
+        // ---- eLoadControl loadsheet ---------------------------------------
+
+        private async void CduOpenLoadControl()
+        {
+            cduPage = CduPageId.Load;
+            cduLoadSession = null;
+            cduLoadBusy = true;
+            cduStatusLine = "PREPARING...";
+            RefreshCduDisplay();
+
+            try
+            {
+                cduLoadSession = await Vns430PrepareLoadControlAsync();
+                cduStatusLine = string.Empty;
+            }
+            catch (Exception ex)
+            {
+                cduStatusLine = SafeCduError(ex);
+            }
+            cduLoadBusy = false;
+            RefreshCduDisplay();
+        }
+
+        private void RenderCduLoad(CduGrid grid, Vns430BackendSnapshot snapshot)
+        {
+            grid.WriteCentered(CduLayout.TitleRow, "LOADSHEET", CduColor.White);
+
+            if (cduLoadSession == null)
+            {
+                string message = cduLoadBusy
+                    ? "PREPARING..."
+                    : (string.IsNullOrWhiteSpace(cduStatusLine) ? "NO LOAD DATA" : cduStatusLine);
+                grid.WriteCentered(CduLayout.DataRow(3), Truncate(message, CduGrid.Cols),
+                    cduLoadBusy ? CduColor.Cyan : CduColor.Amber);
+                grid.WriteLeft(CduLayout.DataRow(6), "<RETURN", CduColor.White);
+                return;
+            }
+
+            Vns430LoadControlSession session = cduLoadSession;
+            RenderCduSetupField(grid, 2, false, "AIRCRAFT", Truncate(session.Aircraft.Icao, CduGrid.HalfCols - 1));
+            RenderCduSetupField(grid, 3, false, "CABIN", Truncate(session.Cabin, CduGrid.HalfCols - 1));
+            RenderCduSetupField(grid, 4, false, "FORMAT",
+                Truncate(string.IsNullOrWhiteSpace(session.Format.Name) ? session.Format.TemplateId : session.Format.Name, CduGrid.HalfCols - 1));
+
+            grid.WriteRight(CduLayout.LabelRow(2), "FLIGHT", CduColor.Cyan, small: true);
+            grid.WriteRight(CduLayout.DataRow(2), Truncate(snapshot.Callsign, CduGrid.HalfCols), CduColor.White);
+            grid.WriteRight(CduLayout.LabelRow(3), "PAX", CduColor.Cyan, small: true);
+            grid.WriteRight(CduLayout.DataRow(3), session.Flight.PassengerCount.ToString(), CduColor.White);
+
+            if (!string.IsNullOrWhiteSpace(cduStatusLine))
+            {
+                grid.WriteCentered(CduLayout.ScratchpadRow, Truncate(cduStatusLine, CduGrid.Cols), CduColor.Amber, small: true);
+            }
+            grid.WriteLeft(CduLayout.DataRow(6), "<RETURN", CduColor.White);
+            grid.WriteRight(CduLayout.DataRow(6), cduLoadBusy ? "WORKING" : "GENERATE>",
+                cduLoadBusy ? CduColor.Grey : CduColor.Green);
+        }
+
+        private void HandleCduLoadLsk(bool rightSide, int index)
+        {
+            if (cduLoadBusy)
+            {
+                return;
+            }
+
+            if (!rightSide)
+            {
+                switch (index)
+                {
+                    case 2: if (cduLoadSession != null) CycleAircraft(cduLoadSession); break;
+                    case 3: if (cduLoadSession != null) CycleCabin(cduLoadSession); break;
+                    case 4: if (cduLoadSession != null) CycleFormat(cduLoadSession); break;
+                    case 6: cduPage = CduPageId.Aoc; break;
+                }
+                return;
+            }
+
+            if (index == 6 && cduLoadSession != null)
+            {
+                CduGenerateLoadsheet();
+            }
+        }
+
+        private static void CycleAircraft(Vns430LoadControlSession s)
+        {
+            int count = s.Reference.Aircraft.Count;
+            s.AircraftIndex = ((s.AircraftIndex + 1) % count + count) % count;
+            s.CabinIndex = 0;
+            s.RebuildPassengerSplit();
+        }
+
+        private static void CycleCabin(Vns430LoadControlSession s)
+        {
+            int count = s.Aircraft.CabinConfigurations.Count;
+            s.CabinIndex = ((s.CabinIndex + 1) % count + count) % count;
+            s.RebuildPassengerSplit();
+        }
+
+        private static void CycleFormat(Vns430LoadControlSession s)
+        {
+            int count = s.Reference.Formats.Count;
+            s.FormatIndex = ((s.FormatIndex + 1) % count + count) % count;
+        }
+
+        private async void CduGenerateLoadsheet()
+        {
+            if (cduLoadSession == null || cduLoadBusy)
+            {
+                return;
+            }
+
+            cduLoadBusy = true;
+            cduStatusLine = "GENERATING...";
+            RefreshCduDisplay();
+
+            Vns430OperationResult result = await Vns430GenerateLoadsheetAsync(cduLoadSession);
+
+            cduLoadBusy = false;
+            cduStatusLine = result.Status;
+            if (result.Success)
+            {
+                cduPage = CduPageId.Messages;
+            }
+            RefreshCduDisplay();
+        }
+
+        private static string SafeCduError(Exception ex)
+        {
+            string text = (ex?.Message ?? "FAILED").Trim().ToUpperInvariant();
+            return text.Length <= CduGrid.Cols ? text : text.Substring(0, CduGrid.Cols);
         }
 
         // ---- Helpers -------------------------------------------------------
@@ -662,3 +934,4 @@ namespace EasyCPDLC
         }
     }
 }
+

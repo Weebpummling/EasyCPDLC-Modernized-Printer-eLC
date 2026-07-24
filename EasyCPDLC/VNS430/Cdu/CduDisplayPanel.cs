@@ -42,6 +42,10 @@ namespace EasyCPDLC.VNS430.Cdu
 
         public CduGrid Grid { get; }
 
+        // Where the rendered grid is mirrored (e.g. a WinWing CDU over websocket). Defaults
+        // to a no-op; the "standby" export mod swaps in a real sink.
+        public ICduDisplaySink Sink { get; set; } = NullCduDisplaySink.Instance;
+
         public event EventHandler<CduLskEventArgs> LskPressed;
 
         // Scratchpad entry (real-CDU style): typed characters, backspace and clear. The
@@ -103,6 +107,9 @@ namespace EasyCPDLC.VNS430.Cdu
 
             DrawCells(g, screen, cellWidth, cellHeight);
             DrawLskKeys(g);
+
+            // Mirror the same grid to any external display (WinWing CDU, etc.).
+            Sink?.Push(Grid.ToWinwingData());
         }
 
         private void DrawCells(Graphics g, Rectangle screen, float cellWidth, float cellHeight)

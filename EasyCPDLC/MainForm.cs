@@ -18103,9 +18103,9 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
             DcduWindowHelper.ApplyDeviceWindow(this, dcduFrame, S(22));
         }
 
-        // The LSK-only CDU is a bare screen (no bezel artwork): a 28x12 character grid plus
+        // The LSK-only CDU is a bare screen (no bezel artwork): a 24x14 character grid plus
         // a left/right LSK gutter, sized so the cells stay legible at 100%.
-        internal static readonly Size CduBaseSize = new(500, 320);
+        internal static readonly Size CduBaseSize = new(440, 380);
 
         internal static Size MainWindowBaseSize(bool isBoeing, bool showArtwork)
         {

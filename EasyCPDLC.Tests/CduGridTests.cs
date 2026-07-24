@@ -7,10 +7,10 @@ namespace EasyCPDLC.Tests
     public sealed class CduGridTests
     {
         [Fact]
-        public void Grid_Is28x12_And336Cells()
+        public void Grid_Is24x14_And336Cells()
         {
-            Assert.Equal(28, CduGrid.Cols);
-            Assert.Equal(12, CduGrid.Rows);
+            Assert.Equal(24, CduGrid.Cols);
+            Assert.Equal(14, CduGrid.Rows);
             Assert.Equal(336, CduGrid.CellCount);
             Assert.Equal(336, new CduGrid().ToWinwingData().Count);
         }
@@ -43,23 +43,23 @@ namespace EasyCPDLC.Tests
         public void Write_ClipsAtRightEdgeAndIgnoresOutOfRange()
         {
             CduGrid grid = new();
-            grid.Write(0, 26, "ABCD", CduColor.White); // only A,B fit (cols 26,27)
-            grid.Write(-1, 0, "X", CduColor.White);    // ignored, no throw
-            grid.Write(99, 0, "X", CduColor.White);    // ignored, no throw
+            grid.Write(0, 22, "ABCD", CduColor.White); // only A,B fit (cols 22,23)
+            grid.Write(-1, 0, "X", CduColor.White);     // ignored, no throw
+            grid.Write(99, 0, "X", CduColor.White);     // ignored, no throw
 
-            Assert.Equal('A', grid[0, 26].Glyph);
-            Assert.Equal('B', grid[0, 27].Glyph);
+            Assert.Equal('A', grid[0, 22].Glyph);
+            Assert.Equal('B', grid[0, 23].Glyph);
         }
 
         [Fact]
         public void WriteCentered_CentresWithinTheGrid()
         {
             CduGrid grid = new();
-            grid.WriteCentered(0, "CDU"); // (28-3)/2 = 12
+            grid.WriteCentered(0, "CDU"); // (24-3)/2 = 10
 
-            Assert.Equal('C', grid[0, 12].Glyph);
-            Assert.Equal('D', grid[0, 13].Glyph);
-            Assert.Equal('U', grid[0, 14].Glyph);
+            Assert.Equal('C', grid[0, 10].Glyph);
+            Assert.Equal('D', grid[0, 11].Glyph);
+            Assert.Equal('U', grid[0, 12].Glyph);
         }
 
         [Fact]
@@ -68,9 +68,9 @@ namespace EasyCPDLC.Tests
             CduGrid grid = new();
             grid.WriteRight(3, "ATC");
 
-            Assert.Equal('A', grid[3, 25].Glyph);
-            Assert.Equal('T', grid[3, 26].Glyph);
-            Assert.Equal('C', grid[3, 27].Glyph);
+            Assert.Equal('A', grid[3, 21].Glyph);
+            Assert.Equal('T', grid[3, 22].Glyph);
+            Assert.Equal('C', grid[3, 23].Glyph);
             // Left half untouched.
             Assert.True(grid[3, 0].IsBlank);
         }
@@ -110,6 +110,43 @@ namespace EasyCPDLC.Tests
             Assert.Equal("o", CduColor.Blue.WinwingCode());
             Assert.Equal("e", CduColor.Grey.WinwingCode());
             Assert.Equal("k", CduColor.Khaki.WinwingCode());
+        }
+
+        [Fact]
+        public void Layout_MapsEachLskToALabelAndDataRow()
+        {
+            // MCDU layout: title row 0, then six label/data pairs, scratchpad row 13.
+            for (int lsk = 1; lsk <= CduLayout.LskCount; lsk++)
+            {
+                Assert.Equal((2 * lsk) - 1, CduLayout.LabelRow(lsk));
+                Assert.Equal(2 * lsk, CduLayout.DataRow(lsk));
+                Assert.InRange(CduLayout.DataRow(lsk), 0, CduGrid.Rows - 1);
+            }
+            Assert.Equal(0, CduLayout.TitleRow);
+            Assert.Equal(12, CduLayout.DataRow(6));
+            Assert.Equal(13, CduLayout.ScratchpadRow);
+        }
+
+        [Fact]
+        public void RealisticPage_StillSerialisesToExactly336Cells()
+        {
+            // Use space-free tokens: a space serialises to a blank (empty) cell.
+            CduGrid grid = new();
+            grid.WriteCentered(CduLayout.TitleRow, "DLKSTATUS", CduColor.White);
+            grid.WriteLeft(CduLayout.DataRow(1), "<DISCONNECT", CduColor.Amber);
+            grid.WriteRight(CduLayout.DataRow(1), "CONNECTED", CduColor.Green);
+
+            System.Collections.Generic.IReadOnlyList<object[]> data = grid.ToWinwingData();
+            Assert.Equal(336, data.Count);
+            int nonBlank = 0;
+            foreach (object[] cell in data)
+            {
+                if (cell.Length > 0)
+                {
+                    nonBlank++;
+                }
+            }
+            Assert.Equal("DLKSTATUS".Length + "<DISCONNECT".Length + "CONNECTED".Length, nonBlank);
         }
 
         [Fact]

@@ -6,11 +6,12 @@ namespace EasyCPDLC.VNS430.Cdu
 {
     // The device-independent "display language" for the LSK-only CDU mode.
     //
-    // A CduGrid is a fixed 28-column x 12-row character grid where every cell carries a
-    // glyph, a colour, a size flag (large/small) and an inverse-video flag. This matches
-    // the WinWing CDU display grid exactly, so the same grid that paints the on-screen CDU
-    // can be serialised straight to the WinWing websocket (see ToWinwingData). The grid is
-    // pure data: it has no dependency on WinForms and is fully unit-testable.
+    // A CduGrid is a fixed 24-column x 14-row character grid (a real MCDU layout: title +
+    // six label/data pairs + scratchpad) where every cell carries a glyph, a colour, a size
+    // flag (large/small) and an inverse-video flag. Its 336 cells match the WinWing CDU
+    // display, so the same grid that paints the on-screen CDU can be serialised straight to
+    // the WinWing websocket (see ToWinwingData). The grid is pure data: it has no dependency
+    // on WinForms and is fully unit-testable.
 
     internal enum CduColor
     {
@@ -69,19 +70,21 @@ namespace EasyCPDLC.VNS430.Cdu
         }
     }
 
-    // Fixed row layout shared by the renderer, the LSK hotspots and the page tree.
-    // 12 rows: row 0 is the title/status line; each of the 6 LSKs owns a label row and a
-    // data row beneath it (left half = left LSK, right half = right LSK).
+    // Fixed row layout shared by the renderer, the LSK hotspots and the page tree, matching
+    // a real MCDU: row 0 is the title line; each of the 6 LSKs owns a small label row and
+    // the large data row beneath it (rows 1..12); row 13 is the scratchpad at the bottom.
+    // (left half = left LSK, right half = right LSK.)
     internal static class CduLayout
     {
         public const int TitleRow = 0;
         public const int LskCount = 6;
+        public const int ScratchpadRow = 13;
 
-        // Data row for LSK i (1..6): rows 1,3,5,7,9,11.
-        public static int DataRow(int lsk) => (2 * lsk) - 1;
+        // Small label row for LSK i (1..6): rows 1,3,5,7,9,11.
+        public static int LabelRow(int lsk) => (2 * lsk) - 1;
 
-        // Small label row above LSK i's data row: rows 0,2,4,6,8,10.
-        public static int LabelRow(int lsk) => (2 * lsk) - 2;
+        // Large data row (the LSK line) for LSK i (1..6): rows 2,4,6,8,10,12.
+        public static int DataRow(int lsk) => 2 * lsk;
     }
 
     internal struct CduCell
@@ -98,10 +101,10 @@ namespace EasyCPDLC.VNS430.Cdu
 
     internal sealed class CduGrid
     {
-        public const int Rows = 12;
-        public const int Cols = 28;
-        public const int HalfCols = Cols / 2; // 14: left half = L-LSKs, right half = R-LSKs
-        public const int CellCount = Rows * Cols; // 336
+        public const int Rows = 14;
+        public const int Cols = 24;
+        public const int HalfCols = Cols / 2; // 12: left half = L-LSKs, right half = R-LSKs
+        public const int CellCount = Rows * Cols; // 336 (same total as the WinWing CDU grid)
 
         private readonly CduCell[,] cells = new CduCell[Rows, Cols];
 
