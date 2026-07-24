@@ -43,6 +43,13 @@ if (-not (Test-Path -LiteralPath $presetRoot -PathType Container)) {
     throw "PMDG preset root was not found: $presetRoot"
 }
 
+# This package overrides PMDG's preset configs, so it must be derived from
+# PMDG's own package. Building from our own output would compound overrides and
+# bake a stale copy of somebody else's work into the result.
+if ((Split-Path -Leaf ([IO.Path]::GetFullPath($PmdgPackageRoot))) -eq $packageName) {
+    throw "PmdgPackageRoot points at this package's own output. Point it at pmdg-aircraft-738."
+}
+
 $resolvedOutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $builtRoot = [IO.Path]::GetFullPath((Join-Path $scriptRoot 'BuiltPackage'))
 if (-not $resolvedOutputRoot.StartsWith($builtRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -65,10 +72,32 @@ function Format-Number {
     $Value.ToString('0.0000', [Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Remove-Vns430Block {
+    # Drops a previously appended EasyCPDLC block so rebuilding, or building
+    # from a config that already carries one, cannot produce duplicates.
+    param([string]$Text)
+
+    $pattern = '(?ms)^\s*\[sim_attachment\.\d+\]' +
+               '(?:(?!^\s*\[)[\s\S])*?alias\s*=\s*"?easycpdlc_vns430"?' +
+               '(?:(?!^\s*\[)[\s\S])*'
+    return [regex]::Replace($Text, $pattern, '', 'IgnoreCase')
+}
+
+function Get-ForeignAttachment {
+    # attachment_root values that belong to neither PMDG nor EasyCPDLC. These
+    # are other add-ons writing into PMDG's package; GSX injects
+    # FSDT_Passengers_Seats this way.
+    param([string]$Text)
+
+    return [regex]::Matches($Text, '(?im)^\s*attachment_root\s*=\s*"?([^"\r\n]+)') |
+        ForEach-Object { $_.Groups[1].Value.Trim() } |
+        Where-Object { $_ -notmatch 'PMDG 737-800' -and $_ -notmatch 'Asobo_MPA_GNS430' }
+}
+
 function Add-Vns430Attachment {
     param([string]$SourceConfig, [string]$TargetConfig)
 
-    $text = Get-Content -LiteralPath $SourceConfig -Raw
+    $text = Remove-Vns430Block (Get-Content -LiteralPath $SourceConfig -Raw)
     $indices = [regex]::Matches($text, '(?im)^\s*\[SIM_ATTACHMENT\.(\d+)\]\s*$') |
         ForEach-Object { [int]$_.Groups[1].Value }
     $nextIndex = if ($indices.Count -eq 0) { 0 } else {
@@ -104,12 +133,40 @@ if ($presets.Count -ne 12) {
     throw "Expected 12 PMDG 737-800 presets, found $($presets.Count). Refusing a partial package."
 }
 
+# This package replaces PMDG's preset configs wholesale, so every block already
+# in them is carried through verbatim, including ones other add-ons injected.
+# Filtering those out would delete them from the simulator: GSX writes
+# FSDT_Passengers_Seats directly into PMDG's package, and dropping it here
+# would remove GSX's cabin seats from the affected presets.
+#
+# The cost of carrying them is that the result is a snapshot. Record what was
+# copied so Validate-Package.ps1 can tell when the source has moved on and the
+# package needs rebuilding.
+$provenance = [ordered]@{}
+$foreignSummary = @{}
 foreach ($preset in $presets) {
+    $sourceConfig = Join-Path $preset.FullName 'config\attached_objects.cfg'
     Add-Vns430Attachment `
-        -SourceConfig (Join-Path $preset.FullName 'config\attached_objects.cfg') `
+        -SourceConfig $sourceConfig `
         -TargetConfig (Join-Path $resolvedOutputRoot (
             "SimObjects\Airplanes\PMDG 737-800\presets\pmdg\$($preset.Name)\config\attached_objects.cfg"))
+
+    $sourceText = Get-Content -LiteralPath $sourceConfig -Raw
+    $foreign = @(Get-ForeignAttachment $sourceText)
+    $provenance[$preset.Name] = [ordered]@{
+        source_sha256 = (Get-FileHash -LiteralPath $sourceConfig -Algorithm SHA256).Hash
+        carried_foreign_attachments = $foreign
+    }
+    foreach ($item in $foreign) {
+        $foreignSummary[$item] = 1 + $(if ($foreignSummary.ContainsKey($item)) { $foreignSummary[$item] } else { 0 })
+    }
 }
+
+Set-Utf8NoBom -Path (Join-Path $resolvedOutputRoot 'easycpdlc-vns430-provenance.json') `
+    -Value (([ordered]@{
+        pmdg_package_root = [IO.Path]::GetFullPath($PmdgPackageRoot)
+        presets = $provenance
+    }) | ConvertTo-Json -Depth 6)
 
 $manifest = Get-Content -LiteralPath $manifestTemplate -Raw | ConvertFrom-Json
 $pmdgManifestPath = Join-Path $PmdgPackageRoot 'manifest.json'
@@ -138,6 +195,16 @@ Set-Utf8NoBom -Path (Join-Path $resolvedOutputRoot 'layout.json') `
     -Value ([ordered]@{ content = @($layoutItems) } | ConvertTo-Json -Depth 8)
 
 Write-Host "Built VNS430 package with the stock GNS430 model: $resolvedOutputRoot"
+if ($foreignSummary.Count -eq 0) {
+    Write-Host 'Carried no third-party attachments through from PMDG.'
+}
+else {
+    Write-Host 'Carried these third-party attachments through from PMDG unchanged:'
+    foreach ($item in ($foreignSummary.Keys | Sort-Object)) {
+        Write-Host ("  {0} ({1} preset(s))" -f $item, $foreignSummary[$item])
+    }
+    Write-Host 'Rebuild this package if those add-ons are updated, moved, or removed.'
+}
 Write-Host ("Mounted in {0} presets on node '{1}' at offset {2},{3},{4} PBH {5},{6},{7} scale {8}" -f
     $presets.Count,
     $AttachToNode,

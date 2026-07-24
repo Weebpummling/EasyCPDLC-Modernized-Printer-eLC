@@ -13,6 +13,32 @@ printer-panel DZU opening and replaces only the LCD with VNS430's 240×128
 display. `GNS430` in those two attachment identifiers refers to the actual
 stock simulator model; all EasyCPDLC-owned names and protocols use `VNS430`.
 
+## Co-existing with other add-ons
+
+This package replaces PMDG's 12 preset `attached_objects.cfg` files rather than
+adding to them; MSFS offers no additive mechanism, and the `zzzz-` prefix makes
+this package load last and win.
+
+Other add-ons write into those same files. GSX injects
+`FSDT_Passengers_Seats` directly into PMDG's package, currently in 8 of the 12
+presets. Every block already present is therefore carried through **verbatim**.
+Filtering third-party blocks out would delete them from the simulator, which
+for GSX means losing its cabin seats in those presets.
+
+The consequence is that the built package is a point-in-time snapshot. The
+build reports what it carried through, and records a SHA-256 of each source
+config in `easycpdlc-vns430-provenance.json`. `Validate-Package.ps1` compares
+those against the installed PMDG configs and fails when they no longer match,
+so an add-on update is reported rather than silently overridden by a stale copy.
+
+Rebuild this package after installing, updating, or removing any add-on that
+writes to the PMDG 737-800, GSX included. To validate a package built on
+another machine, pass `-SkipSourceDriftCheck`.
+
+Rebuilding is safe to repeat: a previously appended EasyCPDLC block is removed
+before a new one is added, so configs cannot accumulate duplicates, and the
+builder refuses to run against its own output.
+
 ## Known load limitation
 
 The 3D attachment is optional and does not load reliably in every aircraft

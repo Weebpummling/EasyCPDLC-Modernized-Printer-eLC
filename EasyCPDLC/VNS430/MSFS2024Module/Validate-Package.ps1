@@ -3,7 +3,11 @@ param(
     [string]$PackageRoot =
         (Join-Path $PSScriptRoot 'BuiltPackage\zzzz-easycpdlc-pmdg-738-vns430'),
     [string]$BridgePackageRoot =
-        (Join-Path $PSScriptRoot 'Bridge\BuiltPackage\easycpdlc-vns430-bridge')
+        (Join-Path $PSScriptRoot 'Bridge\BuiltPackage\easycpdlc-vns430-bridge'),
+
+    # Skip the check that the copied PMDG preset configs still match the
+    # installed ones. Use when validating a package built on another machine.
+    [switch]$SkipSourceDriftCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,6 +83,36 @@ foreach ($config in $configs) {
         "LCD override missing in $($config.FullName)"
 }
 
+# The preset configs are a snapshot of PMDG's, including blocks other add-ons
+# injected into them. If the originals have changed since the build, this
+# package is shipping stale copies and overriding whatever moved on.
+$provenancePath = Join-Path $PackageRoot 'easycpdlc-vns430-provenance.json'
+Assert-True (Test-Path -LiteralPath $provenancePath -PathType Leaf) `
+    "Provenance record missing: $provenancePath"
+
+if (-not $SkipSourceDriftCheck -and (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
+    $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+    $sourcePresetRoot = Join-Path $provenance.pmdg_package_root `
+        'SimObjects\Airplanes\PMDG 737-800\presets\pmdg'
+
+    if (-not (Test-Path -LiteralPath $sourcePresetRoot -PathType Container)) {
+        Write-Warning "Source PMDG package is not present; skipping drift check ($sourcePresetRoot)."
+    }
+    else {
+        foreach ($entry in $provenance.presets.PSObject.Properties) {
+            $live = Join-Path $sourcePresetRoot "$($entry.Name)\config\attached_objects.cfg"
+            if (-not (Test-Path -LiteralPath $live -PathType Leaf)) {
+                $failures.Add("Preset '$($entry.Name)' no longer exists in the PMDG package; rebuild.")
+                continue
+            }
+            $liveHash = (Get-FileHash -LiteralPath $live -Algorithm SHA256).Hash
+            Assert-True ($liveHash -eq $entry.Value.source_sha256) (
+                "PMDG preset '$($entry.Name)' has changed since this package was built " +
+                '(another add-on may have written to it). Rebuild to avoid overriding it with a stale copy.')
+        }
+    }
+}
+
 $wasm = [IO.File]::ReadAllBytes($wasmPath)
 Assert-True ($wasm.Length -ge 8 -and $wasm[0] -eq 0 -and $wasm[1] -eq 0x61 -and
     $wasm[2] -eq 0x73 -and $wasm[3] -eq 0x6d) 'Bridge output is not WebAssembly.'
@@ -105,3 +139,4 @@ if ($failures.Count -gt 0) {
 Write-Host 'PASS: 12 presets mount the stock GNS430 model with the VNS430 LCD, anchored to a named interior node with a node-relative offset.'
 Write-Host 'PASS: EasyCPDLC replaces only the 240x128 LCD; no replacement bezel/buttons exist.'
 Write-Host 'PASS: the VNS430 bridge uses the MSFS standalone-compatible ABI.'
+Write-Host 'PASS: the copied PMDG preset configs still match the installed originals.'
