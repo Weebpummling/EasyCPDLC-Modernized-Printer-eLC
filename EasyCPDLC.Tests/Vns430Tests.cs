@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -279,6 +280,105 @@ namespace EasyCPDLC.Tests
             Assert.True(changed > 0, "The appearance pass left the raster untouched.");
             Assert.True(shadedColors.Count > rawColors.Count,
                 "The appearance pass did not introduce intermediate shades.");
+        }
+
+        // Vns430Form's knob handling cannot be reached through a constructed form: that
+        // needs a live MainForm backend and a window handle. RotateLarge and RotateSmall
+        // only read and write fields, so an uninitialised instance with those fields set
+        // exercises the real navigation logic without a UI.
+        private static object BareForm(Vns430Page page, Vns430PageGroup group, bool cursorActive, int selectedIndex = 0)
+        {
+            object form = RuntimeHelpers.GetUninitializedObject(typeof(Vns430Form));
+            SetField(form, "page", page);
+            SetField(form, "pageGroup", group);
+            SetField(form, "cursorActive", cursorActive);
+            SetField(form, "selectedIndex", selectedIndex);
+            SetField(form, "detailScrollLine", 0);
+            return form;
+        }
+
+        private static void SetField(object target, string name, object value)
+        {
+            FieldInfo field = typeof(Vns430Form).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.True(field != null, $"Vns430Form.{name} was renamed; update this test.");
+            field.SetValue(target, value);
+        }
+
+        private static T GetField<T>(object target, string name)
+        {
+            return (T)typeof(Vns430Form)
+                .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+                .GetValue(target);
+        }
+
+        private static void Turn(object form, string method, int direction)
+        {
+            MethodInfo rotate = typeof(Vns430Form)
+                .GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.True(rotate != null, $"Vns430Form.{method} was renamed; update this test.");
+            rotate.Invoke(form, new object[] { direction });
+        }
+
+        [Fact]
+        public void UtilityPage_LargeKnobMovesTheSelection()
+        {
+            // The UTILITY page draws a selection bar from SelectedIndex, but the large
+            // knob used to step detailScrollLine, which that page never reads, so the
+            // bar could not be moved off the first line.
+            object form = BareForm(Vns430Page.Help, Vns430PageGroup.Aux, cursorActive: true);
+
+            Turn(form, "RotateLarge", 1);
+            Assert.Equal(1, GetField<int>(form, "selectedIndex"));
+
+            Turn(form, "RotateLarge", 1);
+            Assert.Equal(2, GetField<int>(form, "selectedIndex"));
+
+            Turn(form, "RotateLarge", -1);
+            Assert.Equal(1, GetField<int>(form, "selectedIndex"));
+        }
+
+        [Fact]
+        public void UtilityPage_SelectionWrapsWithinTheRenderedItems()
+        {
+            int last = Vns430LcdRenderer.HelpItems.Length - 1;
+            object form = BareForm(Vns430Page.Help, Vns430PageGroup.Aux, cursorActive: true, selectedIndex: last);
+
+            Turn(form, "RotateLarge", 1);
+            Assert.Equal(0, GetField<int>(form, "selectedIndex"));
+
+            Turn(form, "RotateLarge", -1);
+            Assert.Equal(last, GetField<int>(form, "selectedIndex"));
+        }
+
+        // Ints rather than the enums themselves: the test method has to be public for
+        // xunit to discover it, and Vns430Page/Vns430PageGroup are internal.
+        [Theory]
+        [InlineData((int)Vns430Page.AtcMenu, (int)Vns430PageGroup.Wpt)]
+        [InlineData((int)Vns430Page.AocMenu, (int)Vns430PageGroup.Aux)]
+        [InlineData((int)Vns430Page.Help, (int)Vns430PageGroup.Aux)]
+        public void ListPages_SmallKnobStillChangesPage(int pageValue, int groupValue)
+        {
+            // These pages switch the cursor on as soon as they open, and the cursor used
+            // to capture both knobs, so there was no way to page off them at all.
+            Vns430Page page = (Vns430Page)pageValue;
+            object form = BareForm(page, (Vns430PageGroup)groupValue, cursorActive: true);
+
+            Turn(form, "RotateSmall", 1);
+
+            Assert.True(GetField<Vns430Page>(form, "page") != page,
+                $"The small knob did not page away from {page}.");
+        }
+
+        [Fact]
+        public void MenuOverlay_SmallKnobDoesNotPageAway()
+        {
+            // Menu belongs to no page group, so paging from it would land the user on an
+            // unrelated page. It stays captured by the cursor on purpose.
+            object form = BareForm(Vns430Page.Menu, Vns430PageGroup.Nav, cursorActive: true);
+
+            Turn(form, "RotateSmall", 1);
+
+            Assert.Equal(Vns430Page.Menu, GetField<Vns430Page>(form, "page"));
         }
 
         private static Vns430LcdState FingerprintBaseline() => new()

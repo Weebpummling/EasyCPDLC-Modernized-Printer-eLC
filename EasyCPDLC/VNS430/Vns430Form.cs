@@ -388,7 +388,10 @@ namespace EasyCPDLC.VNS430
             {
                 if (cursorActive)
                 {
-                    detailScrollLine = Math.Max(0, detailScrollLine + direction);
+                    // UTILITY draws a selection bar over a fixed list, so the large knob
+                    // moves that selection. It used to step detailScrollLine, which the
+                    // page never reads, leaving the bar stuck on the first line.
+                    selectedIndex = Wrap(selectedIndex + direction, Vns430LcdRenderer.HelpItems.Length);
                 }
                 else
                 {
@@ -440,6 +443,18 @@ namespace EasyCPDLC.VNS430
                 {
                     responseIndex = Wrap(responseIndex + direction, message.Responses.Count);
                 }
+                return;
+            }
+
+            // On the list pages the cursor is switched on as soon as the page opens and
+            // the large knob owns the selection, so the small knob has no editing job to
+            // do. Without this, the usual "cursor captures the knobs" rule below left it
+            // dead and there was no way to page off the ATC or AOC menu at all.
+            // Vns430Page.Menu is deliberately excluded: it is an overlay that belongs to
+            // no group, so paging from it would throw the user onto an unrelated page.
+            if (page == Vns430Page.AtcMenu || page == Vns430Page.AocMenu || page == Vns430Page.Help)
+            {
+                CyclePageWithinGroup(direction);
                 return;
             }
 

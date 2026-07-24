@@ -234,6 +234,15 @@ namespace EasyCPDLC.VNS430
         // palette be asserted without the older-LCD post-process blending it away.
         internal static Bitmap Render(Vns430LcdState state, bool applyAppearance = true)
         {
+            return Render(state, applyAppearance, LcdBloom, LcdSoftness);
+        }
+
+        /// <summary>
+        /// Renders with explicit appearance weights. For calibrating <see cref="LcdBloom"/>
+        /// and <see cref="LcdSoftness"/> against reference photos without rebuilding.
+        /// </summary>
+        internal static Bitmap Render(Vns430LcdState state, bool applyAppearance, double bloom, double softness)
+        {
             Bitmap display = new(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using (Graphics graphics = Graphics.FromImage(display))
             {
@@ -295,7 +304,7 @@ namespace EasyCPDLC.VNS430
 
             if (applyAppearance)
             {
-                ApplyLcdAppearance(display);
+                ApplyLcdAppearance(display, bloom, softness);
             }
 
             return display;
@@ -612,19 +621,25 @@ namespace EasyCPDLC.VNS430
             Text(display, 63, 101, state.OperationBusy ? "GENERATING..." : "ENT GENERATE  CLR EDIT", state.OperationBusy ? Yellow : White);
         }
 
+        /// <summary>
+        /// The UTILITY page lines. Shared with Vns430Form so the cursor cannot run past
+        /// the end of the list when the two get out of step.
+        /// </summary>
+        internal static readonly string[] HelpItems =
+        {
+            "INPUT CONFIGURATION",
+            "PRIVATE MSFS MODULE",
+            "MOBIFLIGHT PROFILE",
+            "MOUSE INPUT ONLY",
+            "NO GPS EVENTS",
+            "RETURN TO DATALINK"
+        };
+
         private static void DrawHelp(Bitmap display, Vns430LcdState state)
         {
             Header(display, "UTILITY");
             Box(display, new Rectangle(59, 10, 178, 105), Cyan, Black);
-            string[] items =
-            {
-                "INPUT CONFIGURATION",
-                "PRIVATE MSFS MODULE",
-                "MOBIFLIGHT PROFILE",
-                "MOUSE INPUT ONLY",
-                "NO GPS EVENTS",
-                "RETURN TO DATALINK"
-            };
+            string[] items = HelpItems;
             for (int index = 0; index < items.Length; index++)
             {
                 bool selected = state.CursorActive && state.SelectedIndex == index;
@@ -765,18 +780,26 @@ namespace EasyCPDLC.VNS430
         }
 
         // ----- Older-LCD appearance post-process (HANDOFF task 3) -------------
-        // The VNS430 glyphs and rules are drawn pixel-exact above. This single
-        // pass reproduces the look of an aged passive-matrix LCD in two steps:
+        // The VNS430 glyphs and rules are drawn pixel-exact above. Two optional
+        // passes soften that raster:
         //   1. a brightness dilation that bleeds lit pixels into their darker
-        //      neighbours, so text and line strokes read heavier; and
-        //   2. a light box blur that adds restrained softness/fuzziness.
-        // Both are kept gentle so the display stays legible at normal viewing
-        // distance. Tune the two weights, or pass applyAppearance: false to Render,
-        // to calibrate against reference photos. Because the desktop bitmap is
-        // streamed to the in-cockpit gauge as-is, this affects both the desktop and
-        // 3D LCD.
-        private const double LcdBloom = 0.45;    // strength of stroke-thickening bleed (0..1)
-        private const double LcdSoftness = 0.25; // strength of final softening blur (0..1)
+        //      neighbours, thickening text and line strokes; and
+        //   2. a light box blur that adds softness/fuzziness.
+        //
+        // The dilation is off by default. It thickens strokes as the handoff asked,
+        // but because it grows bright pixels into dark ones it also flattens the
+        // contrast between them, and at any strength high enough to see it the
+        // display reads washed out - the reversed text in a selected row suffers
+        // worst. A small blur on its own gives the softness of an aged panel while
+        // leaving contrast intact, which is the look we actually wanted.
+        //
+        // Raise LcdBloom above zero only if reference photos genuinely call for
+        // heavier strokes, and check the selected-row text when you do. Render has
+        // an overload taking both weights, so they can be previewed without a
+        // rebuild. Because the desktop bitmap is streamed to the in-cockpit gauge
+        // as-is, this affects both the desktop and 3D LCD.
+        private const double LcdBloom = 0.00;    // strength of stroke-thickening bleed (0..1)
+        private const double LcdSoftness = 0.15; // strength of final softening blur (0..1)
 
         // The panel repaints on a 100 ms timer, so this pass runs continuously. Its
         // scratch buffers are reused per thread rather than reallocated each render;
@@ -798,8 +821,13 @@ namespace EasyCPDLC.VNS430
             return buffer;
         }
 
-        private static void ApplyLcdAppearance(Bitmap display)
+        private static void ApplyLcdAppearance(Bitmap display, double bloom, double softness)
         {
+            if (bloom <= 0 && softness <= 0)
+            {
+                return;
+            }
+
             int w = display.Width;
             int h = display.Height;
             int count = w * h;
@@ -809,26 +837,32 @@ namespace EasyCPDLC.VNS430
             {
                 int[] src = EnsureBuffer(ref appearanceSource, count);
                 Marshal.Copy(data.Scan0, src, 0, count);
-                int[] bloomed = EnsureBuffer(ref appearanceBloomed, count);
-                if (appearanceLuma == null || appearanceLuma.Length < count)
-                {
-                    appearanceLuma = new byte[count];
-                }
 
-                byte[] luma = appearanceLuma;
-
-                // Luma is read up to five times per pixel by the dilation below, so
-                // compute it once per pixel instead of per comparison.
-                for (int i = 0; i < count; i++)
+                // Pass 1 is skipped entirely when the dilation is off, which is the
+                // default, so neither it nor its luma table costs anything.
+                int[] bloomed = src;
+                if (bloom > 0)
                 {
-                    luma[i] = (byte)Luma(src[i]);
-                }
+                    bloomed = EnsureBuffer(ref appearanceBloomed, count);
+                    if (appearanceLuma == null || appearanceLuma.Length < count)
+                    {
+                        appearanceLuma = new byte[count];
+                    }
 
-                // Pass 1: 4-neighbour brightness dilation. Each pixel blends toward
-                // the brightest of itself and its neighbours, so bright glyph and
-                // rule pixels grow slightly into the darker background.
-                for (int y = 0; y < h; y++)
-                {
+                    byte[] luma = appearanceLuma;
+
+                    // Luma is read up to five times per pixel by the dilation below, so
+                    // compute it once per pixel instead of per comparison.
+                    for (int i = 0; i < count; i++)
+                    {
+                        luma[i] = (byte)Luma(src[i]);
+                    }
+
+                    // 4-neighbour brightness dilation. Each pixel blends toward the
+                    // brightest of itself and its neighbours, so bright glyph and rule
+                    // pixels grow slightly into the darker background.
+                    for (int y = 0; y < h; y++)
+                    {
                     for (int x = 0; x < w; x++)
                     {
                         int i = (y * w) + x;
@@ -838,8 +872,15 @@ namespace EasyCPDLC.VNS430
                         if (x < w - 1 && luma[i + 1] > bestLuma) { bestLuma = luma[i + 1]; best = src[i + 1]; }
                         if (y > 0 && luma[i - w] > bestLuma) { bestLuma = luma[i - w]; best = src[i - w]; }
                         if (y < h - 1 && luma[i + w] > bestLuma) { bestLuma = luma[i + w]; best = src[i + w]; }
-                        bloomed[i] = Blend(src[i], best, LcdBloom);
+                        bloomed[i] = Blend(src[i], best, bloom);
                     }
+                    }
+                }
+
+                if (softness <= 0)
+                {
+                    Marshal.Copy(bloomed, 0, data.Scan0, count);
+                    return;
                 }
 
                 // Pass 2: 3x3 box blur for older-display softness.
@@ -866,7 +907,7 @@ namespace EasyCPDLC.VNS430
                             }
                         }
                         int blurred = unchecked((int)0xFF000000) | ((r / n) << 16) | ((g / n) << 8) | (b / n);
-                        soft[i] = Blend(bloomed[i], blurred, LcdSoftness);
+                        soft[i] = Blend(bloomed[i], blurred, softness);
                     }
                 }
 
