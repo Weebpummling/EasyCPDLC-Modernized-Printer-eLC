@@ -68,6 +68,10 @@ Drag the top of the window to move it. Artwork, key, and scale choices persist f
 
 ### DCDU printing
 
+![Airbus and Boeing DCDU showing the print options on an open message](assets/screenshots/dcdu-print-options.png)
+
+Opening a received item shows the print options in place: the Airbus DCDU maps `PRINT` to a left line-select key, and the Boeing DCDU adds `REPRINT` beneath it plus dedicated `PRINT` / `REPRINT` keys on the bezel.
+
 The printer integration is isolated behind a small printer service and offers three modes:
 
 - **ESC/POS** sends raw bytes through the selected Windows printer queue using the Windows spooler. This is the preferred mode for the Citizen CT-S4000 and Rongta RP326 profiles.
