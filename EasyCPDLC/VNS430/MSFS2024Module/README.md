@@ -31,9 +31,24 @@ config in `easycpdlc-vns430-provenance.json`. `Validate-Package.ps1` compares
 those against the installed PMDG configs and fails when they no longer match,
 so an add-on update is reported rather than silently overridden by a stale copy.
 
-Rebuild this package after installing, updating, or removing any add-on that
-writes to the PMDG 737-800, GSX included. To validate a package built on
-another machine, pass `-SkipSourceDriftCheck`.
+GSX writes at install or update time, in one batch, rather than per session, so
+picking its work up is a matter of rebuilding after it changes rather than
+watching it continuously. `Sync-Package.ps1` does that in one step:
+
+```powershell
+.\Sync-Package.ps1
+```
+
+It compares the installed package against the live PMDG configuration and, only
+when they differ, rebuilds, validates, and reinstalls. With nothing to do it
+says so and exits. `-WhatIf` reports without changing anything, and `-Force`
+rebuilds regardless. The installed copy is replaced only after the new one
+passes validation, so a failed build cannot leave the simulator without a
+working package.
+
+Run it after installing, updating, or removing any add-on that writes to the
+PMDG 737-800, GSX included. To validate a package built on another machine,
+pass `-SkipSourceDriftCheck`.
 
 Rebuilding is safe to repeat: a previously appended EasyCPDLC block is removed
 before a new one is added, so configs cannot accumulate duplicates, and the
