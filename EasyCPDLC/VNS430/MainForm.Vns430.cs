@@ -90,6 +90,25 @@ namespace EasyCPDLC
                 return;
             }
 
+            // LSK-only CDU mode owns the whole screen: route its twelve LSKs to the grid
+            // page tree and ignore the (hidden) Airbus/Boeing bezel commands.
+            if (IsCduModeActive())
+            {
+                if (command >= Vns430Command.DcduLeftLsk1 && command <= Vns430Command.DcduRightLsk6)
+                {
+                    bool cduRight = command >= Vns430Command.DcduRightLsk1;
+                    int cduIndex = cduRight
+                        ? (int)command - (int)Vns430Command.DcduRightLsk1 + 1
+                        : (int)command - (int)Vns430Command.DcduLeftLsk1 + 1;
+                    HandleCduLineSelect(cduRight, cduIndex);
+                }
+                else if (command == Vns430Command.DcduHide)
+                {
+                    Hide();
+                }
+                return;
+            }
+
             if (command >= Vns430Command.DcduLeftLsk1 && command <= Vns430Command.DcduRightLsk6)
             {
                 bool rightSide = command >= Vns430Command.DcduRightLsk1;

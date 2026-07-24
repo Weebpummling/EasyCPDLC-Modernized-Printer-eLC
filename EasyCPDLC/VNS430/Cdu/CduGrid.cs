@@ -69,6 +69,21 @@ namespace EasyCPDLC.VNS430.Cdu
         }
     }
 
+    // Fixed row layout shared by the renderer, the LSK hotspots and the page tree.
+    // 12 rows: row 0 is the title/status line; each of the 6 LSKs owns a label row and a
+    // data row beneath it (left half = left LSK, right half = right LSK).
+    internal static class CduLayout
+    {
+        public const int TitleRow = 0;
+        public const int LskCount = 6;
+
+        // Data row for LSK i (1..6): rows 1,3,5,7,9,11.
+        public static int DataRow(int lsk) => (2 * lsk) - 1;
+
+        // Small label row above LSK i's data row: rows 0,2,4,6,8,10.
+        public static int LabelRow(int lsk) => (2 * lsk) - 2;
+    }
+
     internal struct CduCell
     {
         public char Glyph;

@@ -91,6 +91,11 @@ namespace EasyCPDLC
         public const string Airbus = "AIRBUS";
         public const string Boeing = "BOEING";
 
+        // Third display style: an LSK-only, character-grid "CDU" front end that reuses the
+        // same backend as the Airbus/Boeing DCDU skins. Selecting it leaves the Airbus and
+        // Boeing layouts completely untouched (they remain in their own branches).
+        public const string Cdu = "CDU";
+
         private static string currentStyle = LoadStyle();
 
         public static string CurrentStyle
@@ -105,11 +110,17 @@ namespace EasyCPDLC
 
         public static bool IsBoeing => string.Equals(CurrentStyle, Boeing, StringComparison.OrdinalIgnoreCase);
 
+        public static bool IsCdu => string.Equals(CurrentStyle, Cdu, StringComparison.OrdinalIgnoreCase);
+
         public static string NormalizeStyle(string style)
         {
             if (string.Equals(style, Boeing, StringComparison.OrdinalIgnoreCase))
             {
                 return Boeing;
+            }
+            if (string.Equals(style, Cdu, StringComparison.OrdinalIgnoreCase))
+            {
+                return Cdu;
             }
             return Airbus;
         }

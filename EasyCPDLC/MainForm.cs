@@ -4357,6 +4357,19 @@ private System.Windows.Forms.Label airbusAocSendLabel;
 
         public void ApplyDisplayStyle()
         {
+            if (DcduStyleManager.IsCdu)
+            {
+                // LSK-only CDU mode: bare grid screen, no Airbus/Boeing chrome.
+                ApplyMainWindowBounds(false);
+                MountCduMode();
+                ConfigureMsfsClickGuard();
+                Invalidate(true);
+                return;
+            }
+
+            // Restore normal chrome if we are switching back from CDU mode.
+            TeardownCduMode();
+
             bool isBoeing = DcduStyleManager.IsBoeing;
             ApplyMainWindowBounds(isBoeing);
             if (dcduFrame != null)
@@ -18049,7 +18062,9 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
         private void ApplyMainWindowBounds(bool isBoeing)
         {
-            Size baseTargetSize = MainWindowBaseSize(isBoeing, ShowPanelArtwork);
+            Size baseTargetSize = DcduStyleManager.IsCdu
+                ? CduBaseSize
+                : MainWindowBaseSize(isBoeing, ShowPanelArtwork);
             Size targetSize = new(
                 (int)Math.Round(baseTargetSize.Width * WindowScaleFactor(), MidpointRounding.AwayFromZero),
                 (int)Math.Round(baseTargetSize.Height * WindowScaleFactor(), MidpointRounding.AwayFromZero));
@@ -18087,6 +18102,10 @@ string oldCallsign = (callsign ?? string.Empty).Trim().ToUpperInvariant();
 
             DcduWindowHelper.ApplyDeviceWindow(this, dcduFrame, S(22));
         }
+
+        // The LSK-only CDU is a bare screen (no bezel artwork): a 28x12 character grid plus
+        // a left/right LSK gutter, sized so the cells stay legible at 100%.
+        internal static readonly Size CduBaseSize = new(500, 320);
 
         internal static Size MainWindowBaseSize(bool isBoeing, bool showArtwork)
         {
