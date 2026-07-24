@@ -1,9 +1,9 @@
 # VNS430 virtual datalink instrument
 
 VNS430 is the optional virtual instrument shipped beneath EasyCPDLC
-Print + eLoadControl. The name deliberately distinguishes this datalink
-interface from real Garmin GNS 430 units and from the stock GNS430 model that
-Microsoft Flight Simulator may supply as 3D artwork.
+Print + eLoadControl. VNS430 is the name used for every EasyCPDLC-owned type,
+protocol, and L-var; `GNS430` appears only where it refers to the stock
+Microsoft Flight Simulator model that supplies the 3D artwork.
 
 VNS430 is a front end only. It shares the Print/eLC application's Hoppie
 connection, CPDLC session, message store, ATC/AOC workflows, SimBrief data,
@@ -43,6 +43,34 @@ The 240×128 LCD uses a bitmap alphabet, inverse selections, page squares,
 scrollbars, annunciators, and the blue/cyan/green/yellow/magenta palette
 derived from the Garmin GNS 430 Pilot's Guide. The application recreates the
 design language for EasyCPDLC data; it does not display copied Garmin screens.
+
+### What each key does
+
+The key legends are stock GNS 430 nomenclature and do not describe the datalink
+action behind them. Every key drives one action and one
+`L:EASYCPDLC_VNS_COMMAND` value, and values 6 to 18 are each claimed exactly
+once; 1 to 5 belong to the encoder rings and the cursor push.
+
+| Key | Action | L-var |
+|---|---|---|
+| `COM` | Show or hide the panel | 18 |
+| `VLOC` | Message log, every message | 17 |
+| `CDI` | Connect or disconnect VATSIM | 14 |
+| `OBS` | Toggle the cursor | 13 |
+| `MSG` | Messages, unread first | 9 |
+| `FPL` | ATC request menu | 10 |
+| `PROC` | AOC / telex menu | 11 |
+| `D→` | Hoppie logon page | 12 |
+| `RNG −` / `RNG +` | Smaller / larger LCD text | 16 / 15 |
+| `MENU` | Menu overlay | 8 |
+| `CLR` | Back or clear | 7 |
+| `ENT` | Activate the selection | 6 |
+| Large ring | Move the selection, or change page group | 1 / 2 |
+| Small ring | Change page within the group | 3 / 4 |
+| Ring push | Toggle the cursor | 5 |
+
+`COM` and `VLOC` previously repeated `CDI` and `MSG`, which left four keys
+driving two actions while two commands had no key at all.
 
 Mouse operation:
 

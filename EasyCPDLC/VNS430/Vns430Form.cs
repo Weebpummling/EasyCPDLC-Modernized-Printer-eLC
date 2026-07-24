@@ -1735,12 +1735,31 @@ namespace EasyCPDLC.VNS430
             }
         }
 
+        // Panel face -> action -> L:EASYCPDLC_VNS_COMMAND value. Every face button sends
+        // a different command, and 6 to 18 are each claimed exactly once; 1 to 5 belong
+        // to the two encoder rings and the cursor push. The legends are stock GNS 430
+        // nomenclature and do not describe the datalink action, so this is the mapping:
+        //
+        //   COM  -> show/hide the panel            18   MENU -> menu overlay          8
+        //   VLOC -> message log, all messages      17   ENT  -> activate selection    6
+        //   CDI  -> connect/disconnect VATSIM      14   CLR  -> back/clear            7
+        //   OBS  -> toggle cursor                  13   D->  -> Hoppie logon page    12
+        //   MSG  -> messages, unread first          9   RNG- -> smaller LCD text     16
+        //   FPL  -> ATC request menu               10   RNG+ -> larger LCD text      15
+        //   PROC -> AOC/telex menu                 11
+        //
+        // Vns430Tests.PanelButtons_EachBindToADistinctCommand keeps this one-to-one.
         private List<PanelButton> CreatePanelButtons()
         {
             return new List<PanelButton>
             {
-                new() { Bounds = new RectangleF(153, 51, 54, 70), Label = "COM", ArtworkControl = "com_flip", Command = Vns430Command.Cdi },
-                new() { Bounds = new RectangleF(153, 132, 54, 72), Label = "VLOC", ArtworkControl = "vloc_flip", Command = Vns430Command.Message },
+                // COM and VLOC used to repeat CDI and MSG, so four faces drove two
+                // actions and two commands had no face at all. They now take the two
+                // that were unbound, which gives every face its own command and leaves
+                // 6-18 covered exactly once. Label is the legend printed on the artwork,
+                // not the function; the mapping is documented above this method.
+                new() { Bounds = new RectangleF(153, 51, 54, 70), Label = "COM", ArtworkControl = "com_flip", Command = Vns430Command.Power },
+                new() { Bounds = new RectangleF(153, 132, 54, 72), Label = "VLOC", ArtworkControl = "vloc_flip", Command = Vns430Command.Nearest },
                 new() { Bounds = new RectangleF(779, 151, 76, 55), Label = "CLR", ArtworkControl = "clear", Command = Vns430Command.Clear },
                 new() { Bounds = new RectangleF(779, 94, 76, 53), Label = "D->", ArtworkControl = "direct_to", Command = Vns430Command.DirectTo },
                 new() { Bounds = new RectangleF(781, 40, 75, 54), Label = "RNG-", ArtworkControl = "range", Command = Vns430Command.RangeOut },

@@ -319,6 +319,60 @@ namespace EasyCPDLC.Tests
             rotate.Invoke(form, new object[] { direction });
         }
 
+        private static List<Vns430Command> PanelButtonCommands()
+        {
+            object form = RuntimeHelpers.GetUninitializedObject(typeof(Vns430Form));
+            MethodInfo create = typeof(Vns430Form)
+                .GetMethod("CreatePanelButtons", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.True(create != null, "Vns430Form.CreatePanelButtons was renamed; update this test.");
+
+            List<Vns430Command> commands = new();
+            foreach (object button in (System.Collections.IEnumerable)create.Invoke(form, null))
+            {
+                PropertyInfo property = button.GetType()
+                    .GetProperty("Command", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                Assert.True(property != null, "PanelButton.Command was renamed; update this test.");
+                commands.Add((Vns430Command)property.GetValue(button));
+            }
+
+            return commands;
+        }
+
+        [Fact]
+        public void PanelButtons_EachBindToADistinctCommand()
+        {
+            List<Vns430Command> commands = PanelButtonCommands();
+            Assert.NotEmpty(commands);
+
+            string[] duplicated = commands
+                .GroupBy(command => command)
+                .Where(group => group.Count() > 1)
+                .Select(group => $"{group.Key} ({(int)group.Key}) on {group.Count()} buttons")
+                .ToArray();
+
+            Assert.True(duplicated.Length == 0,
+                "Panel buttons must each drive a different command, otherwise two faces do " +
+                "the same job and a command has no button at all. Duplicated: " +
+                string.Join("; ", duplicated));
+        }
+
+        [Fact]
+        public void PanelButtons_CoverEveryNonEncoderCommand()
+        {
+            // 1-4 are the two encoder rings and 5 is the cursor push, so the face buttons
+            // own 6 through 18. Anything left over is a command no one can reach from the
+            // desktop panel.
+            List<Vns430Command> commands = PanelButtonCommands();
+            List<Vns430Command> expected = Enum.GetValues(typeof(Vns430Command))
+                .Cast<Vns430Command>()
+                .Where(command => (int)command >= 6 && (int)command <= 18)
+                .ToList();
+
+            Vns430Command[] unreachable = expected.Except(commands).ToArray();
+            Assert.True(unreachable.Length == 0,
+                "No panel button sends: " + string.Join(", ", unreachable.Select(c => $"{c} ({(int)c})")));
+        }
+
         [Fact]
         public void UtilityPage_LargeKnobMovesTheSelection()
         {
