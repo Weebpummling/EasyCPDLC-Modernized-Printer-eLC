@@ -58,6 +58,7 @@ namespace EasyCPDLC
             {
                 cduDisplayPanel = new CduDisplayPanel { Dock = DockStyle.Fill };
                 cduDisplayPanel.LskPressed += CduDisplayPanel_LskPressed;
+                cduDisplayPanel.KeyPressed += (_, cmd) => HandleDcduCompanionCommand(cmd);
                 cduDisplayPanel.CharTyped += (_, c) => CduScratchpadType(c);
                 cduDisplayPanel.ScratchpadBackspace += (_, __) => CduScratchpadBackspace();
                 cduDisplayPanel.ScratchpadClear += (_, __) => CduScratchpadClearAll();
@@ -867,6 +868,61 @@ namespace EasyCPDLC
         {
             string text = (ex?.Message ?? "FAILED").Trim().ToUpperInvariant();
             return text.Length <= CduGrid.Cols ? text : text.Substring(0, CduGrid.Cols);
+        }
+
+        // ---- Boeing CDU keypad --------------------------------------------
+
+        // Handles a physical/on-screen CDU key. Character keys feed the scratchpad; a few
+        // Boeing function keys map to our datalink pages and EXEC acts on the current page.
+        // The remaining FMC keys are exposed as L-vars for hardware completeness but carry
+        // no datalink action.
+        private void HandleCduKey(Vns430Command command)
+        {
+            char ch = CduKeyMap.CharFor(command);
+            if (ch != '\0')
+            {
+                CduScratchpadType(ch);
+                return;
+            }
+
+            switch (command)
+            {
+                case Vns430Command.CduClear:
+                    CduScratchpadBackspace();
+                    break;
+                case Vns430Command.CduDelete:
+                    CduScratchpadClearAll();
+                    break;
+                case Vns430Command.CduPlusMinus:
+                    CduScratchpadType('-');
+                    break;
+                case Vns430Command.CduMenu:
+                    cduPage = CduPageId.Menu;
+                    RefreshCduDisplay();
+                    break;
+                case Vns430Command.CduAtcPage:
+                    cduPage = CduPageId.Atc;
+                    RefreshCduDisplay();
+                    break;
+                case Vns430Command.CduFmcComm:
+                    cduPage = CduPageId.Messages;
+                    RefreshCduDisplay();
+                    break;
+                case Vns430Command.CduInitRef:
+                    cduPage = CduPageId.Dlk;
+                    RefreshCduDisplay();
+                    break;
+                case Vns430Command.CduExec:
+                    if (cduPage == CduPageId.Request)
+                    {
+                        CduSendCurrentWorkflow();
+                    }
+                    else if (cduPage == CduPageId.Load)
+                    {
+                        CduGenerateLoadsheet();
+                    }
+                    break;
+            }
         }
 
         // ---- Helpers -------------------------------------------------------

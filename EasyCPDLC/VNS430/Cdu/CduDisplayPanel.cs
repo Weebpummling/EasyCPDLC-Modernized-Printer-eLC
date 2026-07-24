@@ -48,6 +48,9 @@ namespace EasyCPDLC.VNS430.Cdu
 
         public event EventHandler<CduLskEventArgs> LskPressed;
 
+        // A Boeing CDU keypad key was pressed (on-screen or via a bound hardware key).
+        public event EventHandler<Vns430Command> KeyPressed;
+
         // Scratchpad entry (real-CDU style): typed characters, backspace and clear. The
         // page tree owns the scratchpad string and decides when a character is relevant.
         public event EventHandler<char> CharTyped;
@@ -59,15 +62,45 @@ namespace EasyCPDLC.VNS430.Cdu
 
         private int GutterWidth => Math.Max(30, (int)(Width * 0.10));
 
+        // The keypad occupies the bottom of the panel; the CDU screen (grid + LSK gutters)
+        // takes the region above it.
+        private const int KeypadRows = 10;
+        private const int KeypadCols = 9;
+        private const int KeypadPad = 6;
+
+        private int KeypadHeight
+        {
+            get
+            {
+                float keyWidth = (Width - (2 * KeypadPad)) / (float)KeypadCols;
+                float keyHeight = keyWidth * 0.72f;
+                return (int)((KeypadRows * keyHeight) + (2 * KeypadPad));
+            }
+        }
+
+        private Rectangle KeypadRegion => new(0, Math.Max(0, Height - KeypadHeight), Width, Math.Min(Height, KeypadHeight));
+
         private Rectangle ScreenRectangle
         {
             get
             {
                 int gutter = GutterWidth;
                 int width = Math.Max(1, Width - (2 * gutter));
-                int height = Math.Max(1, Height - (2 * ScreenMargin));
+                int height = Math.Max(1, (Height - KeypadHeight) - (2 * ScreenMargin));
                 return new Rectangle(gutter, ScreenMargin, width, height);
             }
+        }
+
+        private Rectangle KeyBounds(int row, int col)
+        {
+            Rectangle kp = KeypadRegion;
+            float keyWidth = (kp.Width - (2 * KeypadPad)) / (float)KeypadCols;
+            float keyHeight = (kp.Height - (2 * KeypadPad)) / (float)KeypadRows;
+            return new Rectangle(
+                (int)(kp.Left + KeypadPad + (col * keyWidth)) + 1,
+                (int)(kp.Top + KeypadPad + (row * keyHeight)) + 1,
+                (int)keyWidth - 2,
+                (int)keyHeight - 2);
         }
 
         private Rectangle LskKeyBounds(int lsk, bool rightSide)
@@ -107,9 +140,47 @@ namespace EasyCPDLC.VNS430.Cdu
 
             DrawCells(g, screen, cellWidth, cellHeight);
             DrawLskKeys(g);
+            DrawKeypad(g);
 
             // Mirror the same grid to any external display (WinWing CDU, etc.).
             Sink?.Push(Grid.ToWinwingData());
+        }
+
+        // Procedural placeholder key faces. Licensed Boeing CDU artwork will be blitted onto
+        // these same KeyBounds zones once supplied; the layout and hit-testing do not change.
+        private void DrawKeypad(Graphics g)
+        {
+            using Font keyFont = new("Segoe UI", Math.Max(6f, KeyBounds(0, 0).Height * 0.28f), FontStyle.Bold, GraphicsUnit.Pixel);
+            using StringFormat format = new()
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center
+            };
+
+            foreach (CduKey key in CduKeyMap.Keys)
+            {
+                Rectangle bounds = KeyBounds(key.Row, key.Col);
+                if (bounds.Width < 2 || bounds.Height < 2)
+                {
+                    continue;
+                }
+
+                Color top = key.Command == Vns430Command.CduExec
+                    ? Color.FromArgb(40, 96, 54)
+                    : Color.FromArgb(70, 74, 78);
+                Color bottom = key.Command == Vns430Command.CduExec
+                    ? Color.FromArgb(24, 60, 34)
+                    : Color.FromArgb(34, 37, 40);
+
+                using GraphicsPath path = RoundedRect(bounds, 3);
+                using LinearGradientBrush face = new(bounds, top, bottom, LinearGradientMode.Vertical);
+                using Pen edge = new(Color.FromArgb(18, 20, 22), 1f);
+                g.FillPath(face, path);
+                g.DrawPath(edge, path);
+
+                using SolidBrush text = new(Color.FromArgb(226, 230, 233));
+                g.DrawString(key.Legend, keyFont, text, bounds, format);
+            }
         }
 
         private void DrawCells(Graphics g, Rectangle screen, float cellWidth, float cellHeight)
@@ -209,6 +280,15 @@ namespace EasyCPDLC.VNS430.Cdu
                 if (LskKeyBounds(lsk, true).Contains(e.Location))
                 {
                     RaiseLsk(lsk, true);
+                    return;
+                }
+            }
+
+            foreach (CduKey key in CduKeyMap.Keys)
+            {
+                if (KeyBounds(key.Row, key.Col).Contains(e.Location))
+                {
+                    KeyPressed?.Invoke(this, key.Command);
                     return;
                 }
             }

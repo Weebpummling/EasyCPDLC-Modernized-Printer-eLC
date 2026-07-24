@@ -40,6 +40,38 @@ namespace EasyCPDLC.VNS430
         DcduReloadFlightPlan = 35,
         DcduPrint = 36,
         DcduReprint = 37,
-        DcduHide = 38
+        DcduHide = 38,
+
+        // Boeing CDU (PFP/FMC) keypad, used by the LSK-only CDU display mode. The alpha and
+        // digit keys occupy contiguous ranges so the app can map a command straight to a
+        // character; the bridge exposes one EASYCPDLC_CDU_* L-var per key.
+        CduAlphaA = 39,  // A..Z occupy 39..64
+        CduAlphaZ = 64,
+        CduDigit0 = 65,  // 0..9 occupy 65..74
+        CduDigit9 = 74,
+        CduSpace = 75,
+        CduDot = 76,
+        CduSlash = 77,
+        CduPlusMinus = 78,
+        CduClear = 79,
+        CduDelete = 80,
+
+        CduInitRef = 81,
+        CduRoute = 82,
+        CduDepArr = 83,
+        CduAtcPage = 84,
+        CduVnav = 85,
+        CduFix = 86,
+        CduLegs = 87,
+        CduHold = 88,
+        CduFmcComm = 89,
+        CduProg = 90,
+        CduExec = 91,
+        CduMenu = 92,
+        CduNavRad = 93,
+        CduPrevPage = 94,
+        CduNextPage = 95,
+        CduBrightnessUp = 96,
+        CduBrightnessDown = 97
     }
 }

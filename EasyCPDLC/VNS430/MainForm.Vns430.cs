@@ -102,6 +102,10 @@ namespace EasyCPDLC
                         : (int)command - (int)Vns430Command.DcduLeftLsk1 + 1;
                     HandleCduLineSelect(cduRight, cduIndex);
                 }
+                else if (EasyCPDLC.VNS430.Cdu.CduKeyMap.IsCduKeypadCommand(command))
+                {
+                    HandleCduKey(command);
+                }
                 else if (command == Vns430Command.DcduHide)
                 {
                     Hide();
