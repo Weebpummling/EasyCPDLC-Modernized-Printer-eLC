@@ -28,6 +28,29 @@ namespace EasyCPDLC.VNS430
         private const int WmszBottomLeft = 7;
         private const int WmszBottomRight = 8;
 
+        // Screen mode strips the title bar in place (keeping the sizable frame)
+        // rather than changing FormBorderStyle, so the window handle is not
+        // recreated and the companion SimConnect registration survives.
+        private const int WmNcHitTest = 0x0084;
+        private const int HtClient = 1;
+        private const int HtCaption = 2;
+        private const int GwlStyle = -16;
+        private const int WsCaption = 0x00C00000;
+        private const uint SwpFrameChanged = 0x0020;
+        private const uint SwpNoMove = 0x0002;
+        private const uint SwpNoSize = 0x0001;
+        private const uint SwpNoZOrder = 0x0004;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetWindowPos(
+            IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct Rect
         {
@@ -170,6 +193,12 @@ namespace EasyCPDLC.VNS430
             {
                 companionInput.TryEnable(Handle, WmAppSimConnect, out _);
             }
+
+            // Honour a persisted screen-mode choice on startup.
+            if (preferences.ScreenOnlyMode)
+            {
+                ApplyScreenModeChrome();
+            }
         }
 
         protected override void Dispose(bool disposing)
@@ -195,9 +224,25 @@ namespace EasyCPDLC.VNS430
                 return;
             }
 
-            if (m.Msg == WmSizing)
+            // Screen mode resizes freely; the LCD is letterboxed, so the panel
+            // aspect no longer has to be enforced.
+            if (m.Msg == WmSizing && !preferences.ScreenOnlyMode)
             {
                 ConstrainToPanelAspect(ref m);
+                return;
+            }
+
+            // With the title bar stripped in screen mode, let the sizable frame
+            // resize from the edges and treat the body as a caption so the window
+            // can be dragged by its centre.
+            if (m.Msg == WmNcHitTest && preferences.ScreenOnlyMode)
+            {
+                base.WndProc(ref m);
+                if (m.Result.ToInt32() == HtClient)
+                {
+                    m.Result = (IntPtr)HtCaption;
+                }
+
                 return;
             }
 
@@ -1159,7 +1204,31 @@ namespace EasyCPDLC.VNS430
 
             preferences.ScreenOnlyMode = enabled;
             preferences.Save(Bounds);
+            ApplyScreenModeChrome();
             Invalidate();
+        }
+
+        // Add or remove the title bar in place without recreating the window
+        // handle. The sizable frame is left intact, so the panel stays resizable.
+        private void ApplyScreenModeChrome()
+        {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
+            int style = GetWindowLong(Handle, GwlStyle);
+            int updated = preferences.ScreenOnlyMode
+                ? style & ~WsCaption
+                : style | WsCaption;
+            if (updated == style)
+            {
+                return;
+            }
+
+            SetWindowLong(Handle, GwlStyle, updated);
+            SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0,
+                SwpNoMove | SwpNoSize | SwpNoZOrder | SwpFrameChanged);
         }
 
         private void DrawPanelSurface(Graphics graphics)
