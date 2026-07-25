@@ -900,18 +900,6 @@ namespace EasyCPDLC
                     cduPage = CduPageId.Menu;
                     RefreshCduDisplay();
                     break;
-                case Vns430Command.CduAtcPage:
-                    cduPage = CduPageId.Atc;
-                    RefreshCduDisplay();
-                    break;
-                case Vns430Command.CduFmcComm:
-                    cduPage = CduPageId.Messages;
-                    RefreshCduDisplay();
-                    break;
-                case Vns430Command.CduInitRef:
-                    cduPage = CduPageId.Dlk;
-                    RefreshCduDisplay();
-                    break;
                 case Vns430Command.CduExec:
                     if (cduPage == CduPageId.Request)
                     {

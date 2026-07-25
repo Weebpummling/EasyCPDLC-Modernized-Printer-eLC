@@ -2413,7 +2413,7 @@
                                                 {
                                                     "button":  {
                                                                    "onPress":  {
-                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_ATC)",
+                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_CLB)",
                                                                                    "Type":  "MSFS2020CustomInputAction"
                                                                                },
                                                                    "onRelease":  null,
@@ -2425,13 +2425,13 @@
                                                                },
                                                     "Device":  {
                                                                    "Type":  "Button",
-                                                                   "Name":  "BTN_ATC"
+                                                                   "Name":  "BTN_CLB"
                                                                },
                                                     "DeviceType":  "Button",
-                                                    "DeviceName":  "BTN_ATC",
+                                                    "DeviceName":  "BTN_CLB",
                                                     "GUID":  "ec440000-0000-4000-8000-000000000057",
                                                     "Active":  true,
-                                                    "Name":  "EASYCPDLC_CDU_ATC",
+                                                    "Name":  "EASYCPDLC_CDU_CLB",
                                                     "Type":  "InputConfigItem",
                                                     "Controller":  {
                                                                        "Name":  "EasyCPDLC WinWing CDU Template",
@@ -2455,7 +2455,7 @@
                                                 {
                                                     "button":  {
                                                                    "onPress":  {
-                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_VNAV)",
+                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_CRZ)",
                                                                                    "Type":  "MSFS2020CustomInputAction"
                                                                                },
                                                                    "onRelease":  null,
@@ -2467,13 +2467,13 @@
                                                                },
                                                     "Device":  {
                                                                    "Type":  "Button",
-                                                                   "Name":  "BTN_VNAV"
+                                                                   "Name":  "BTN_CRZ"
                                                                },
                                                     "DeviceType":  "Button",
-                                                    "DeviceName":  "BTN_VNAV",
+                                                    "DeviceName":  "BTN_CRZ",
                                                     "GUID":  "ec440000-0000-4000-8000-000000000058",
                                                     "Active":  true,
-                                                    "Name":  "EASYCPDLC_CDU_VNAV",
+                                                    "Name":  "EASYCPDLC_CDU_CRZ",
                                                     "Type":  "InputConfigItem",
                                                     "Controller":  {
                                                                        "Name":  "EasyCPDLC WinWing CDU Template",
@@ -2623,7 +2623,7 @@
                                                 {
                                                     "button":  {
                                                                    "onPress":  {
-                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_FMC_COMM)",
+                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_DES)",
                                                                                    "Type":  "MSFS2020CustomInputAction"
                                                                                },
                                                                    "onRelease":  null,
@@ -2635,13 +2635,13 @@
                                                                },
                                                     "Device":  {
                                                                    "Type":  "Button",
-                                                                   "Name":  "BTN_FMC_COMM"
+                                                                   "Name":  "BTN_DES"
                                                                },
                                                     "DeviceType":  "Button",
-                                                    "DeviceName":  "BTN_FMC_COMM",
+                                                    "DeviceName":  "BTN_DES",
                                                     "GUID":  "ec440000-0000-4000-8000-000000000062",
                                                     "Active":  true,
-                                                    "Name":  "EASYCPDLC_CDU_FMC_COMM",
+                                                    "Name":  "EASYCPDLC_CDU_DES",
                                                     "Type":  "InputConfigItem",
                                                     "Controller":  {
                                                                        "Name":  "EasyCPDLC WinWing CDU Template",
@@ -2791,7 +2791,7 @@
                                                 {
                                                     "button":  {
                                                                    "onPress":  {
-                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_NAV_RAD)",
+                                                                                   "Command":  "1 (>L:EASYCPDLC_CDU_N1_LIMIT)",
                                                                                    "Type":  "MSFS2020CustomInputAction"
                                                                                },
                                                                    "onRelease":  null,
@@ -2803,13 +2803,13 @@
                                                                },
                                                     "Device":  {
                                                                    "Type":  "Button",
-                                                                   "Name":  "BTN_NAV_RAD"
+                                                                   "Name":  "BTN_N1_LIMIT"
                                                                },
                                                     "DeviceType":  "Button",
-                                                    "DeviceName":  "BTN_NAV_RAD",
+                                                    "DeviceName":  "BTN_N1_LIMIT",
                                                     "GUID":  "ec440000-0000-4000-8000-000000000066",
                                                     "Active":  true,
-                                                    "Name":  "EASYCPDLC_CDU_NAV_RAD",
+                                                    "Name":  "EASYCPDLC_CDU_N1_LIMIT",
                                                     "Type":  "InputConfigItem",
                                                     "Controller":  {
                                                                        "Name":  "EasyCPDLC WinWing CDU Template",

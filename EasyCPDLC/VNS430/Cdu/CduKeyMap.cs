@@ -38,16 +38,16 @@ namespace EasyCPDLC.VNS430.Cdu
             // Function block (rows 0..2, six columns).
             Fn("INIT\nREF", Vns430Command.CduInitRef, 0, 0);
             Fn("RTE", Vns430Command.CduRoute, 0, 1);
-            Fn("DEP\nARR", Vns430Command.CduDepArr, 0, 2);
-            Fn("ATC", Vns430Command.CduAtcPage, 0, 3);
-            Fn("VNAV", Vns430Command.CduVnav, 0, 4);
+            Fn("CLB", Vns430Command.CduClb, 0, 2);
+            Fn("CRZ", Vns430Command.CduCrz, 0, 3);
+            Fn("DES", Vns430Command.CduDes, 0, 4);
             Fn("FIX", Vns430Command.CduFix, 0, 5);
             Fn("LEGS", Vns430Command.CduLegs, 1, 0);
             Fn("HOLD", Vns430Command.CduHold, 1, 1);
-            Fn("FMC\nCOMM", Vns430Command.CduFmcComm, 1, 2);
+            Fn("DEP\nARR", Vns430Command.CduDepArr, 1, 2);
             Fn("PROG", Vns430Command.CduProg, 1, 3);
             Fn("MENU", Vns430Command.CduMenu, 1, 4);
-            Fn("NAV\nRAD", Vns430Command.CduNavRad, 1, 5);
+            Fn("N1\nLIMIT", Vns430Command.CduN1Limit, 1, 5);
             Fn("BRT-", Vns430Command.CduBrightnessDown, 2, 0);
             Fn("PREV\nPAGE", Vns430Command.CduPrevPage, 2, 1);
             Fn("NEXT\nPAGE", Vns430Command.CduNextPage, 2, 2);

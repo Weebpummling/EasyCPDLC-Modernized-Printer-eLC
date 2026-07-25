@@ -128,15 +128,15 @@ The profiles turn a physical board into the VNS430 keys. Import one of:
 - `MobiFlight\EasyCPDLC-DCDU-Module.mfproj` for twelve DCDU LSKs plus connect,
   AOC, ATC, settings, reload, print, reprint, and hide.
 - `MobiFlight\EasyCPDLC-WinWing-CDU-Module.mfproj` for the LSK-only **CDU display
-  mode**: the twelve LSKs plus the full Boeing CDU keypad (A-Z, 0-9, `SP`/`DEL`/
-  `CLR`/`/`/`.`/`+/-`, and the function keys `INIT REF`/`RTE`/`DEP ARR`/`ATC`/
-  `VNAV`/`FIX`/`LEGS`/`HOLD`/`FMC COMM`/`PROG`/`EXEC`/`MENU`/`NAV RAD`/
+  mode**: the twelve LSKs plus the full **Boeing 737NG** CDU keypad (A-Z, 0-9,
+  `SP`/`DEL`/`CLR`/`/`/`.`/`+/-`, and the function keys `INIT REF`/`RTE`/`CLB`/
+  `CRZ`/`DES`/`MENU`/`LEGS`/`DEP ARR`/`HOLD`/`PROG`/`EXEC`/`N1 LIMIT`/`FIX`/
   `PREV`/`NEXT PAGE`/`BRT`). Each key is one momentary `L:EASYCPDLC_CDU_*` input
-  (`EASYCPDLC_CDU_A` … `_Z`, `_0` … `_9`, `_SP`, `_EXEC`, …), so a **WinWing CDU**
-  can be bound directly: reassign the placeholder controller to your WinWing
-  device and map its keys, exactly like other aircraft's WinWing CDU profiles.
-  These keys are gated by the same DCDU-mode flag and require the CDU display
-  style (`SETUP > DCDU STYLE > CDU`, or `DcduStyle.txt = CDU`).
+  (`EASYCPDLC_CDU_A` … `_Z`, `_0` … `_9`, `_SP`, `_CLB`, `_EXEC`, …), so a
+  **WinWing 737 CDU** can be bound directly: reassign the placeholder controller
+  to your WinWing device and map its keys, exactly like other aircraft's WinWing
+  CDU profiles. These keys are gated by the same DCDU-mode flag and require the
+  CDU display style (`SETUP > DCDU STYLE > CDU`, or `DcduStyle.txt = CDU`).
 
 ### 1. Open the profile
 

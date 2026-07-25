@@ -119,12 +119,12 @@ namespace
         { "EASYCPDLC_CDU_SLASH", 77, InvalidLVarId }, { "EASYCPDLC_CDU_PLUSMINUS", 78, InvalidLVarId },
         { "EASYCPDLC_CDU_CLR", 79, InvalidLVarId }, { "EASYCPDLC_CDU_DEL", 80, InvalidLVarId },
         { "EASYCPDLC_CDU_INIT_REF", 81, InvalidLVarId }, { "EASYCPDLC_CDU_RTE", 82, InvalidLVarId },
-        { "EASYCPDLC_CDU_DEP_ARR", 83, InvalidLVarId }, { "EASYCPDLC_CDU_ATC", 84, InvalidLVarId },
-        { "EASYCPDLC_CDU_VNAV", 85, InvalidLVarId }, { "EASYCPDLC_CDU_FIX", 86, InvalidLVarId },
+        { "EASYCPDLC_CDU_DEP_ARR", 83, InvalidLVarId }, { "EASYCPDLC_CDU_CLB", 84, InvalidLVarId },
+        { "EASYCPDLC_CDU_CRZ", 85, InvalidLVarId }, { "EASYCPDLC_CDU_FIX", 86, InvalidLVarId },
         { "EASYCPDLC_CDU_LEGS", 87, InvalidLVarId }, { "EASYCPDLC_CDU_HOLD", 88, InvalidLVarId },
-        { "EASYCPDLC_CDU_FMC_COMM", 89, InvalidLVarId }, { "EASYCPDLC_CDU_PROG", 90, InvalidLVarId },
+        { "EASYCPDLC_CDU_DES", 89, InvalidLVarId }, { "EASYCPDLC_CDU_PROG", 90, InvalidLVarId },
         { "EASYCPDLC_CDU_EXEC", 91, InvalidLVarId }, { "EASYCPDLC_CDU_MENU", 92, InvalidLVarId },
-        { "EASYCPDLC_CDU_NAV_RAD", 93, InvalidLVarId }, { "EASYCPDLC_CDU_PREV_PAGE", 94, InvalidLVarId },
+        { "EASYCPDLC_CDU_N1_LIMIT", 93, InvalidLVarId }, { "EASYCPDLC_CDU_PREV_PAGE", 94, InvalidLVarId },
         { "EASYCPDLC_CDU_NEXT_PAGE", 95, InvalidLVarId }, { "EASYCPDLC_CDU_BRT_UP", 96, InvalidLVarId },
         { "EASYCPDLC_CDU_BRT_DN", 97, InvalidLVarId }
     };
